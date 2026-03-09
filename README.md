@@ -29,6 +29,7 @@ Aurora is designed to reduce friction: import quickly, organize clearly, sync re
 - DAP sync support for podcast episodes (`Podcasts` target folder)
 - Enhanced album controls with repeat and multi-mode shuffle
 - Improved settings UX, import flows, and smart cover generation
+- Multilanguage Support (en, fr, es, it, de)
 
 ![Screenshot Placeholder - Version 1.3 Features](docs/images/placeholder-v1-3-features.png)
 
@@ -38,12 +39,12 @@ Aurora is designed to reduce friction: import quickly, organize clearly, sync re
 
 - Local music library scanning from user-selected folders
 - Supported formats: `flac`, `mp3`, `m4a`, `wav`
-- Album, artist, and playlist browsing with fast navigation
+- Album, artist, and playlist browsing and editing with fast navigation
 - Queue management and contextual playback controls
 - Manual and smart playlists
 - CD import with metadata-driven naming templates
 - Podcast discovery, subscriptions, and episode sync
-- DAP sync with progress, ETA, and resume support
+- Your DAP always in sync with progress, ETA, and resume support
 
 ---
 
