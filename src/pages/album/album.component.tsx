@@ -69,6 +69,19 @@ function getShuffleIndicator(shuffleMode: AlbumShuffleMode): string {
   return '*';
 }
 
+function getAlbumDisplayTitle(albumName?: string, artistName?: string) {
+  if (!artistName || !albumName) {
+    return albumName;
+  }
+
+  const artistPrefix = `${artistName} - `;
+  if (albumName.startsWith(artistPrefix)) {
+    return albumName.substring(artistPrefix.length);
+  }
+
+  return albumName;
+}
+
 function shuffleTracksAcrossAlbums(mediaTracks: IMediaTrack[]): IMediaTrack[] {
   const mediaTracksByAlbumId = _.mapValues(_.groupBy(mediaTracks, mediaTrack => mediaTrack.track_album.id), albumTracks => _.shuffle(albumTracks));
   const albumIds = Object.keys(mediaTracksByAlbumId);
@@ -243,6 +256,11 @@ export function AlbumPage() {
     return (<></>);
   }
 
+  const albumDisplayTitle = getAlbumDisplayTitle(
+    mediaSelectedAlbum.album_name,
+    mediaSelectedAlbum.album_artist?.artist_name,
+  );
+
   return (
     <div className="container-fluid">
       <AlbumHeaderPlaybackControls albumId={albumId} mediaSelectedAlbumTracks={mediaSelectedAlbumTracks}/>
@@ -262,7 +280,7 @@ export function AlbumPage() {
             </div>
             <div className={cx('album-header-name')}>
               <TextClamp>
-                {mediaSelectedAlbum.album_name}
+                {albumDisplayTitle}
               </TextClamp>
             </div>
             <div className={cx('album-header-artist')}>

@@ -2,7 +2,6 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 import classNames from 'classnames/bind';
@@ -22,6 +21,7 @@ import {
   MediaAlbumService,
   MediaCollectionService,
   I18nService,
+  MediaPlayerService,
   MediaPlaylistService,
   MediaTrackService,
   PodcastService,
@@ -229,8 +229,7 @@ export function MediaPlaylistSideView({ playlistId, onClose }: MediaSideViewPlay
 export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcastProps) {
   const [subscription, setSubscription] = useState<IPodcastSubscription | undefined>();
   const [channelDescription, setChannelDescription] = useState('');
-  const [playingEpisodeId, setPlayingEpisodeId] = useState('');
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [podcastPlaybackSnapshot, setPodcastPlaybackSnapshot] = useState(() => PodcastService.getPlaybackSnapshot());
 
   useEffect(() => {
     const updateSubscription = () => {
@@ -242,12 +241,17 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
 
     updateSubscription();
     const unsubscribe = PodcastService.subscribe(updateSubscription);
+    const unsubscribePlayback = PodcastService.subscribePlayback(() => {
+      setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
+    });
+    setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
     PodcastService.refreshSubscriptions().catch(() => undefined);
 
     document.body.classList.add('sideview-open');
     return () => {
       document.body.classList.remove('sideview-open');
       unsubscribe();
+      unsubscribePlayback();
     };
   }, [podcastId]);
 
@@ -274,43 +278,17 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
       .catch(() => setChannelDescription(''));
   }, [subscription?.feedUrl]);
 
-  useEffect(() => () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = '';
-      audioRef.current = null;
-    }
-  }, []);
-
   const toggleEpisodePlayback = useCallback((episode: IPodcastEpisode) => {
-    if (playingEpisodeId === episode.id) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-      setPlayingEpisodeId('');
+    if (!subscription) {
       return;
     }
-
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-
-    const audio = new Audio(episode.audioUrl);
-    audio.onended = () => {
-      setPlayingEpisodeId('');
-    };
-
-    audio.play()
+    MediaPlayerService.stopMediaPlayer();
+    PodcastService.toggleEpisodePlayback(subscription, episode)
       .then(() => {
-        audioRef.current = audio;
-        setPlayingEpisodeId(episode.id);
+        setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
       })
-      .catch(() => {
-        setPlayingEpisodeId('');
-      });
-  }, [playingEpisodeId]);
+      .catch(() => undefined);
+  }, [subscription]);
 
   const latestEpisodes = useMemo(
     () => (subscription?.episodes || []).slice(0, 8),
@@ -382,6 +360,8 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
           {latestEpisodes.map((episode) => {
             const dateLabel = episode.publishedAt ? new Date(episode.publishedAt).toLocaleDateString() : '';
             const summary = toPlainText(episode.description);
+            const isEpisodeActive = podcastPlaybackSnapshot.episode?.id === episode.id;
+            const isEpisodePlaying = isEpisodeActive && podcastPlaybackSnapshot.isPlaying;
             return (
               <div key={episode.id} className={cx('sideview-episode-item')}>
                 <Button
@@ -389,7 +369,7 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
                   variant={['rounded', 'outline']}
                   onButtonSubmit={() => toggleEpisodePlayback(episode)}
                 >
-                  <Icon name={playingEpisodeId === episode.id ? Icons.MediaPause : Icons.MediaPlay}/>
+                  <Icon name={isEpisodePlaying ? Icons.MediaPause : Icons.MediaPlay}/>
                 </Button>
                 <div className={cx('sideview-episode-content')}>
                   <div className={cx('sideview-episode-title')}>{episode.title}</div>

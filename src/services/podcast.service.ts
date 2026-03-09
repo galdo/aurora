@@ -18,11 +18,25 @@ type PodcastSyncResult = {
   downloadedEpisodes: number;
 };
 
+export type PodcastPlaybackSnapshot = {
+  episode?: IPodcastEpisode;
+  subscription?: IPodcastSubscription;
+  isActive: boolean;
+  isPlaying: boolean;
+  currentTime: number;
+  duration: number;
+};
+
 export class PodcastService {
   static readonly podcastStorageKey = 'aurora:podcasts';
   static readonly podcastChangeEventName = 'aurora:podcasts-updated';
+  static readonly podcastPlaybackChangeEventName = 'aurora:podcast-playback-updated';
   static readonly podcastDirectoryName = 'Podcasts';
   static readonly podcastSyncEpisodeLimit = 5;
+  private static podcastPlaybackAudio: HTMLAudioElement | null = null;
+  private static podcastPlaybackEpisode: IPodcastEpisode | undefined;
+  private static podcastPlaybackSubscription: IPodcastSubscription | undefined;
+  private static podcastPlaybackTickInterval: number | undefined;
 
   private static normalizeDirectorySource(source: unknown): IPodcastDirectorySource {
     if (source === 'de' || source === 'eu') {
@@ -72,6 +86,132 @@ export class PodcastService {
     const handler = () => listener();
     window.addEventListener(this.podcastChangeEventName, handler);
     return () => window.removeEventListener(this.podcastChangeEventName, handler);
+  }
+
+  static subscribePlayback(listener: () => void): () => void {
+    const handler = () => listener();
+    window.addEventListener(this.podcastPlaybackChangeEventName, handler);
+    return () => window.removeEventListener(this.podcastPlaybackChangeEventName, handler);
+  }
+
+  static getPlaybackSnapshot(): PodcastPlaybackSnapshot {
+    const audio = this.podcastPlaybackAudio;
+    return {
+      episode: this.podcastPlaybackEpisode,
+      subscription: this.podcastPlaybackSubscription,
+      isActive: !!audio && !!this.podcastPlaybackEpisode,
+      isPlaying: !!audio && !audio.paused && !audio.ended,
+      currentTime: audio?.currentTime || 0,
+      duration: Number.isFinite(audio?.duration) ? Number(audio?.duration) : 0,
+    };
+  }
+
+  static async playEpisode(subscription: IPodcastSubscription, episode: IPodcastEpisode): Promise<boolean> {
+    this.stopPlayback();
+    const audio = new Audio(episode.audioUrl);
+    this.podcastPlaybackAudio = audio;
+    this.podcastPlaybackEpisode = episode;
+    this.podcastPlaybackSubscription = subscription;
+
+    audio.onended = () => {
+      this.stopPlayback();
+    };
+
+    audio.ontimeupdate = () => {
+      this.dispatchPlaybackUpdate();
+    };
+
+    audio.onpause = () => {
+      this.dispatchPlaybackUpdate();
+    };
+
+    audio.onplay = () => {
+      this.dispatchPlaybackUpdate();
+    };
+
+    audio.onloadedmetadata = () => {
+      this.dispatchPlaybackUpdate();
+    };
+
+    this.startPlaybackTick();
+    this.dispatchPlaybackUpdate();
+
+    try {
+      await audio.play();
+      this.dispatchPlaybackUpdate();
+      return true;
+    } catch (_error) {
+      this.stopPlayback();
+      return false;
+    }
+  }
+
+  static async toggleEpisodePlayback(subscription: IPodcastSubscription, episode: IPodcastEpisode): Promise<boolean> {
+    if (this.podcastPlaybackEpisode?.id === episode.id && this.podcastPlaybackAudio) {
+      if (this.podcastPlaybackAudio.paused) {
+        await this.resumePlayback();
+      } else {
+        await this.pausePlayback();
+      }
+      return true;
+    }
+
+    return this.playEpisode(subscription, episode);
+  }
+
+  static async pausePlayback(): Promise<boolean> {
+    const audio = this.podcastPlaybackAudio;
+    if (!audio) {
+      return false;
+    }
+    audio.pause();
+    this.dispatchPlaybackUpdate();
+    return true;
+  }
+
+  static async resumePlayback(): Promise<boolean> {
+    const audio = this.podcastPlaybackAudio;
+    if (!audio) {
+      return false;
+    }
+    try {
+      await audio.play();
+      this.dispatchPlaybackUpdate();
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  static seekPlayback(time: number): boolean {
+    const audio = this.podcastPlaybackAudio;
+    if (!audio) {
+      return false;
+    }
+    audio.currentTime = Math.max(0, Math.min(time, Number.isFinite(audio.duration) ? audio.duration : time));
+    this.dispatchPlaybackUpdate();
+    return true;
+  }
+
+  static stopPlayback(): boolean {
+    if (!this.podcastPlaybackAudio) {
+      return false;
+    }
+
+    const audio = this.podcastPlaybackAudio;
+    audio.pause();
+    audio.src = '';
+    audio.onended = null;
+    audio.ontimeupdate = null;
+    audio.onpause = null;
+    audio.onplay = null;
+    audio.onloadedmetadata = null;
+    this.podcastPlaybackAudio = null;
+    this.podcastPlaybackEpisode = undefined;
+    this.podcastPlaybackSubscription = undefined;
+    this.stopPlaybackTick();
+    this.dispatchPlaybackUpdate();
+    return true;
   }
 
   static hasNewEpisodes(): boolean {
@@ -350,6 +490,24 @@ export class PodcastService {
   private static setSubscriptions(subscriptions: IPodcastSubscription[]) {
     localStorage.setItem(this.podcastStorageKey, JSON.stringify(subscriptions));
     window.dispatchEvent(new CustomEvent(this.podcastChangeEventName));
+  }
+
+  private static startPlaybackTick() {
+    this.stopPlaybackTick();
+    this.podcastPlaybackTickInterval = window.setInterval(() => {
+      this.dispatchPlaybackUpdate();
+    }, 500);
+  }
+
+  private static stopPlaybackTick() {
+    if (this.podcastPlaybackTickInterval) {
+      window.clearInterval(this.podcastPlaybackTickInterval);
+    }
+    this.podcastPlaybackTickInterval = undefined;
+  }
+
+  private static dispatchPlaybackUpdate() {
+    window.dispatchEvent(new CustomEvent(this.podcastPlaybackChangeEventName));
   }
 
   private static sanitizePathPart(value: string): string {

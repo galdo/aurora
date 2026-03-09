@@ -17,6 +17,7 @@ import {
 import { I18nService } from './i18n.service';
 import { MediaProviderService } from './media-provider.service';
 import { NotificationService } from './notification.service';
+import { PodcastService } from './podcast.service';
 
 const debug = require('debug')('aurora:service:media_player');
 
@@ -28,6 +29,8 @@ class MediaPlayerService {
   // media queue control API
 
   playMediaTrack(mediaTrack: IMediaTrack): void {
+    this.stopPodcastPlayback();
+
     const {
       mediaPlayer,
     } = store.getState();
@@ -62,6 +65,8 @@ class MediaPlayerService {
     if (_.isEmpty(mediaTracks)) {
       throw new Error('MediaPlayerService encountered error at playMediaTracks - Empty track list was provided');
     }
+
+    this.stopPodcastPlayback();
 
     const {
       mediaPlayer,
@@ -98,6 +103,8 @@ class MediaPlayerService {
     if (_.isEmpty(mediaTracks)) {
       throw new Error('MediaPlayerService encountered error at playMediaTracks - Empty track list was provided');
     }
+
+    this.stopPodcastPlayback();
 
     const mediaTrack = mediaTracks[mediaTrackPointer];
     if (!mediaTrack) {
@@ -140,6 +147,8 @@ class MediaPlayerService {
   }
 
   playMediaTrackFromQueue(mediaQueueTrack: IMediaQueueTrack) {
+    this.stopPodcastPlayback();
+
     const {
       mediaPlayer,
     } = store.getState();
@@ -1201,6 +1210,10 @@ class MediaPlayerService {
 
   private getSortedMediaTracks(mediaTracks: IMediaQueueTrack[]): IMediaQueueTrack[] {
     return _.sortBy(mediaTracks, mediaTrack => mediaTrack.queue_insertion_index);
+  }
+
+  private stopPodcastPlayback() {
+    PodcastService.stopPlayback();
   }
 }
 

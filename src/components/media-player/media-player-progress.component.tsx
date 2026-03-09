@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Col, Row } from 'react-bootstrap';
 import classNames from 'classnames/bind';
 import { useSelector } from 'react-redux';
@@ -6,7 +6,7 @@ import { useSelector } from 'react-redux';
 import { MediaUtils } from '../../utils';
 import { MediaEnums } from '../../enums';
 import { RootState } from '../../reducers';
-import { MediaPlayerService } from '../../services';
+import { MediaPlayerService, PodcastService } from '../../services';
 
 import { Slider } from '../slider/slider.component';
 
@@ -21,6 +21,8 @@ export function MediaPlayerProgress() {
     mediaPlaybackCurrentMediaProgress,
     mediaPlaybackPreparationStatus,
   } = useSelector((state: RootState) => state.mediaPlayer);
+  const [podcastPlaybackSnapshot, setPodcastPlaybackSnapshot] = useState(() => PodcastService.getPlaybackSnapshot());
+  const isPodcastMode = podcastPlaybackSnapshot.isActive && !mediaPlaybackCurrentMediaTrack;
 
   const [mediaProgressDragValue, setMediaProgressDragValue] = useState<number | undefined>(undefined);
 
@@ -33,32 +35,54 @@ export function MediaPlayerProgress() {
   ]);
 
   const handleProgressDragCommit = useCallback((value: number) => {
-    MediaPlayerService.seekMediaTrack(value);
+    if (isPodcastMode) {
+      PodcastService.seekPlayback(value);
+    } else {
+      MediaPlayerService.seekMediaTrack(value);
+    }
     setMediaProgressDragValue(undefined);
   }, [
+    isPodcastMode,
     setMediaProgressDragValue,
   ]);
 
-  if (!mediaPlaybackCurrentMediaTrack) {
+  useEffect(() => {
+    const unsubscribePlayback = PodcastService.subscribePlayback(() => {
+      setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
+    });
+    setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
+    return () => {
+      unsubscribePlayback();
+    };
+  }, []);
+
+  if (!mediaPlaybackCurrentMediaTrack && !isPodcastMode) {
     return (<></>);
   }
 
   const preparationProgress = Math.max(0, Math.min(100, mediaPlaybackPreparationStatus?.progress || 0));
-  const isPreparingPlayback = !!mediaPlaybackPreparationStatus;
+  const isPreparingPlayback = !isPodcastMode && !!mediaPlaybackPreparationStatus;
+  const mediaProgressValue = isPodcastMode
+    ? podcastPlaybackSnapshot.currentTime
+    : (mediaPlaybackCurrentMediaProgress || 0);
+  const mediaDurationValue = isPodcastMode
+    ? podcastPlaybackSnapshot.duration
+    : (mediaPlaybackCurrentMediaTrack?.track_duration || 0);
+  const dragOrProgressValue = mediaProgressDragValue !== undefined
+    ? mediaProgressDragValue
+    : mediaProgressValue;
   const startCounter = isPreparingPlayback
     ? `${mediaPlaybackPreparationStatus?.phase === 'converting' ? 'Converting' : 'Preparing'} ${preparationProgress}%`
-    : MediaUtils.formatMediaTrackDuration(mediaProgressDragValue !== undefined
-      ? mediaProgressDragValue
-      : (mediaPlaybackCurrentMediaProgress || 0));
+    : MediaUtils.formatMediaTrackDuration(dragOrProgressValue);
   const endCounter = isPreparingPlayback
     ? '100%'
-    : MediaUtils.formatMediaTrackDuration(mediaPlaybackCurrentMediaTrack.track_duration);
+    : MediaUtils.formatMediaTrackDuration(mediaDurationValue);
   const sliderValue = isPreparingPlayback
     ? preparationProgress
-    : mediaPlaybackCurrentMediaProgress;
+    : mediaProgressValue;
   const sliderMaxValue = isPreparingPlayback
     ? 100
-    : mediaPlaybackCurrentMediaTrack.track_duration;
+    : Math.max(1, mediaDurationValue);
 
   return (
     <Row className={cx('media-player-progress-container')}>

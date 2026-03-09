@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Col, Row } from 'react-bootstrap';
 import { useSelector } from 'react-redux';
 import classNames from 'classnames/bind';
@@ -6,7 +6,7 @@ import _ from 'lodash';
 
 import { Icons } from '../../constants';
 import { RootState } from '../../reducers';
-import { MediaPlayerService } from '../../services';
+import { MediaPlayerService, PodcastService } from '../../services';
 import { MediaEnums } from '../../enums';
 import { DOM, Events } from '../../utils';
 
@@ -23,6 +23,8 @@ export function MediaPlayerControls() {
     mediaPlaybackQueueOnShuffle,
     mediaPlaybackQueueRepeatType,
   } = useSelector((state: RootState) => state.mediaPlayer);
+  const [podcastPlaybackSnapshot, setPodcastPlaybackSnapshot] = useState(() => PodcastService.getPlaybackSnapshot());
+  const isPodcastMode = podcastPlaybackSnapshot.isActive;
 
   const isPlaybackDisabled = mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading;
 
@@ -47,6 +49,16 @@ export function MediaPlayerControls() {
     isPlaybackDisabled,
   ]);
 
+  useEffect(() => {
+    const unsubscribePlayback = PodcastService.subscribePlayback(() => {
+      setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
+    });
+    setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
+    return () => {
+      unsubscribePlayback();
+    };
+  }, []);
+
   return (
     <Row className={cx('media-player-controls-container')}>
       <Col className={cx('col-12', 'media-player-controls-column')}>
@@ -54,6 +66,7 @@ export function MediaPlayerControls() {
           className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', {
             active: mediaPlaybackQueueOnShuffle,
           })}
+          disabled={isPodcastMode}
           onButtonSubmit={() => {
             MediaPlayerService.toggleShuffle();
           }}
@@ -62,18 +75,25 @@ export function MediaPlayerControls() {
         </Button>
         <Button
           className={cx('media-player-control', 'media-player-control-md')}
+          disabled={isPodcastMode}
           onButtonSubmit={() => {
             MediaPlayerService.playPreviousTrack();
           }}
         >
           <Icon name={Icons.PlayerPrevious}/>
         </Button>
-        {mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing
+        {(isPodcastMode
+          ? podcastPlaybackSnapshot.isPlaying
+          : mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing)
           ? (
             <Button
               className={cx('media-player-control', 'media-player-control-lg')}
               onButtonSubmit={() => {
-                MediaPlayerService.pauseMediaPlayer();
+                if (isPodcastMode) {
+                  PodcastService.pausePlayback();
+                } else {
+                  MediaPlayerService.pauseMediaPlayer();
+                }
               }}
             >
               <Icon name={Icons.PlayerPause}/>
@@ -84,7 +104,11 @@ export function MediaPlayerControls() {
               disabled={isPlaybackDisabled}
               className={cx('media-player-control', 'media-player-control-lg')}
               onButtonSubmit={() => {
-                MediaPlayerService.resumeMediaPlayer();
+                if (isPodcastMode) {
+                  PodcastService.resumePlayback();
+                } else {
+                  MediaPlayerService.resumeMediaPlayer();
+                }
               }}
             >
               <Icon name={Icons.PlayerPlay}/>
@@ -92,7 +116,7 @@ export function MediaPlayerControls() {
           )}
         <Button
           className={cx('media-player-control', 'media-player-control-md')}
-          disabled={!MediaPlayerService.hasNextTrack()}
+          disabled={isPodcastMode || !MediaPlayerService.hasNextTrack()}
           onButtonSubmit={() => {
             MediaPlayerService.playNextTrack();
           }}
@@ -103,6 +127,7 @@ export function MediaPlayerControls() {
           className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-repeat-toggle', {
             active: !_.isNil(mediaPlaybackQueueRepeatType),
           })}
+          disabled={isPodcastMode}
           onButtonSubmit={() => {
             MediaPlayerService.toggleRepeat();
           }}

@@ -1,7 +1,7 @@
 .sidebar {
-  width: 12vw;
-  min-width: 12vw;
-  max-width: 12vw;
+  width: clamp(240px, 17vw, 320px);
+  min-width: 240px;
+  max-width: 320px;
   background-color: var(--sidebar-glass-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -124,6 +124,7 @@
 .sidebar-navigation-item-label {
   align-items: center;
   display: inline-flex;
+  white-space: nowrap;
 }
 
 .sidebar-item-new-dot {

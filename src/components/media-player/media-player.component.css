@@ -65,6 +65,27 @@
   margin: 15px;
 }
 
+.media-player-podcast-episode {
+  color: var(--text-dark-color);
+  font-weight: 600;
+  font-size: 14px;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-player-podcast-show {
+  color: var(--text-dark-color);
+  opacity: 0.75;
+  font-size: 12px;
+  margin-top: 4px;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .media-track-like-column {
   text-align: end;
 }

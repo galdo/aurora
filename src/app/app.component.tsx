@@ -10,7 +10,12 @@ import { ContextMenuProvider, ModalProvider, NotificationProvider } from '../con
 import { IAppStatePersistor } from '../interfaces';
 import { MediaLocalProvider } from '../providers';
 import { RootState } from '../reducers';
-import { I18nService, MediaLibraryService, MediaProviderService } from '../services';
+import {
+  I18nService,
+  MediaLibraryService,
+  MediaProviderService,
+  PodcastService,
+} from '../services';
 import { ThemeService } from '../services/theme.service';
 import { IPCCommChannel, IPCRenderer, IPCRendererCommChannel } from '../modules/ipc';
 import { MediaLibraryActions } from '../enums';
@@ -133,7 +138,18 @@ function Player({ active = false }) {
 
 function Window() {
   const playerCurrentTrack = useSelector((state: RootState) => state.mediaPlayer.mediaPlaybackCurrentMediaTrack);
-  const playerIsActive = !!playerCurrentTrack;
+  const [podcastPlayerActive, setPodcastPlayerActive] = useState(() => PodcastService.getPlaybackSnapshot().isActive);
+  const playerIsActive = !!playerCurrentTrack || podcastPlayerActive;
+
+  useEffect(() => {
+    const unsubscribePlayback = PodcastService.subscribePlayback(() => {
+      setPodcastPlayerActive(PodcastService.getPlaybackSnapshot().isActive);
+    });
+    setPodcastPlayerActive(PodcastService.getPlaybackSnapshot().isActive);
+    return () => {
+      unsubscribePlayback();
+    };
+  }, []);
 
   return (
     <Router>

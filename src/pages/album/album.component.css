@@ -49,7 +49,8 @@
 
 .album-header-artist {
   color: #35c26b;
-  font-size: 16px;
+  font-size: 14px;
+  font-weight: 500;
   line-height: 1.2;
   margin-top: 2px;
   margin-bottom: 10px;

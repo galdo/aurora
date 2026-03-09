@@ -177,28 +177,6 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
         {I18nService.getString('label_settings_directories')}
       </div>
       <div className={cx('settings-content')}>
-        <div className={cx('settings-row')}>
-          <div>
-            <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_group_compilations')}</div>
-            <div className={cx('settings-description')}>{I18nService.getString('label_settings_group_compilations_details')}</div>
-          </div>
-          <div className={cx('theme-switch')}>
-            <button
-              type="button"
-              className={cx('theme-switch-item', { active: settings?.library?.group_compilations_by_folder || false })}
-              onClick={() => {
-                mediaLocalStore.dispatch({
-                  type: MediaLocalStateActionType.ToggleGroupCompilations,
-                });
-              }}
-            >
-              {settings?.library?.group_compilations_by_folder
-                ? I18nService.getString('label_toggle_on')
-                : I18nService.getString('label_toggle_off')}
-            </button>
-          </div>
-        </div>
-
         <div style={{ marginTop: '20px' }}>
           <div className={cx('settings-subheading')} style={{ marginBottom: '10px' }}>
             {I18nService.getString('label_settings_managed_directories')}

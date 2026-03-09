@@ -17,6 +17,7 @@ import { IDapSyncProgressSnapshot } from '../../services/media-library.service';
 import { AppLocale } from '../../services/i18n.service';
 import { ThemeService, ThemeMode } from '../../services/theme.service';
 import { IPCCommChannel, IPCRenderer } from '../../modules/ipc';
+import { mediaLocalStore, MediaLocalStateActionType } from '../../providers/media-local/media-local.store';
 
 import styles from './settings.component.css';
 
@@ -66,6 +67,10 @@ export function SettingsPage() {
   const [dapAutoSyncEnabled, setDapAutoSyncEnabled] = React.useState(false);
   const [dapDeleteMissingOnDevice, setDapDeleteMissingOnDevice] = React.useState(true);
   const [dapSyncProgress, setDapSyncProgress] = React.useState<IDapSyncProgressSnapshot>(MediaLibraryService.getDapSyncProgressSnapshot());
+  const mediaLocalState = React.useSyncExternalStore(
+    mediaLocalStore.subscribe,
+    mediaLocalStore.getState,
+  );
 
   React.useEffect(() => {
     const saved = localStorage.getItem(UI_SETTINGS_KEY);
@@ -148,6 +153,7 @@ export function SettingsPage() {
   };
   const dapProgressStatusLabel = dapProgressStatusLabels[dapSyncProgress.phase] || 'Bereit';
   const originalRepositoryLink = Links.ProjectOriginal || Links.Project;
+  const groupCompilationsByFolder = mediaLocalState.settings?.library?.group_compilations_by_folder || false;
 
   return (
     <div className={cx('settings-container', 'container-fluid')}>
@@ -221,6 +227,27 @@ export function SettingsPage() {
                     onClick={toggleHideArtist}
                   >
                     {hideArtist
+                      ? I18nService.getString('label_toggle_on')
+                      : I18nService.getString('label_toggle_off')}
+                  </button>
+                </div>
+              </div>
+              <div className={cx('settings-row')}>
+                <div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_group_compilations')}</div>
+                  <div className={cx('settings-description')}>{I18nService.getString('label_settings_group_compilations_details')}</div>
+                </div>
+                <div className={cx('theme-switch')}>
+                  <button
+                    type="button"
+                    className={cx('theme-switch-item', { active: groupCompilationsByFolder })}
+                    onClick={() => {
+                      mediaLocalStore.dispatch({
+                        type: MediaLocalStateActionType.ToggleGroupCompilations,
+                      });
+                    }}
+                  >
+                    {groupCompilationsByFolder
                       ? I18nService.getString('label_toggle_on')
                       : I18nService.getString('label_toggle_off')}
                   </button>
@@ -417,7 +444,7 @@ export function SettingsPage() {
                   {' '}
                   UI-Optimierungen inklusive Light- und Dark-Mode ergänzt.
                 </div>
-                <Link href={originalRepositoryLink}>
+                <Link href={originalRepositoryLink} className={cx('settings-info-link')}>
                   Original Repository öffnen
                 </Link>
               </div>
@@ -446,7 +473,7 @@ export function SettingsPage() {
                 <div className={cx('settings-info-title')}>
                   {`${AppService.details.display_name} ${AppService.details.version} (${AppService.details.build})`}
                 </div>
-                <Link href={Links.ProjectReportIssue}>
+                <Link href={Links.ProjectReportIssue} className={cx('settings-info-link')}>
                   {I18nService.getString('link_report_issue')}
                 </Link>
               </div>
