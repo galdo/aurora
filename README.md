@@ -119,8 +119,8 @@ Some metadata enrichment flows may perform explicit online lookups when that fea
 | Platform | Architecture | Status | Minimum OS |
 |---------|---------------|--------|------------|
 | macOS   | Apple Silicon (ARM64) | ✅ Available | macOS 12.0 (Monterey) |
-| macOS   | Intel (x64) | 🚧 Coming soon | macOS 12.0 (Monterey) |
-| Windows | x64 | 🚧 Coming soon | Windows 10 |
+| macOS   | Intel (x64) | ✅ Available | macOS 12.0 (Monterey) |
+| Windows | x64 | ✅ Available | Windows 10 |
 | Linux   | x64 | 🚧 Coming soon | Ubuntu 20.04+ (glibc 2.31+) |
 
 ---
