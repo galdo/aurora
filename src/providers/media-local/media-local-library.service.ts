@@ -138,6 +138,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
         // consolidate compilation albums
         await this.consolidateCompilationAlbums(settings);
+        await this.repairAlbumArtists();
 
         // process compilation album covers
         await this.processCompilationAlbumCovers(settings);
@@ -425,11 +426,20 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       // debug(`[DEBUG-IMPORT] Grouping enabled. Folder: ${effectiveFolderForGrouping}, Album Name: ${audioMetadata.common.album}`);
     }
 
-    // #1: add media artists
-    // - track artist(s) are at udioMetadata.common.artists - always present
-    // - album artist is at audioMetadata.common.albumartist - sometimes present, if not - first one from track artist
-    const mediaArtists = await MediaLibraryService.checkAndInsertMediaArtists(audioMetadata.common.artists
-      ? audioMetadata.common.artists.map(audioArtist => ({
+    const rawTrackArtists = (() => {
+      const artists = (audioMetadata.common as any)?.artists;
+      if (Array.isArray(artists) && artists.length > 0) {
+        return artists.map((artist: any) => String(artist || '').trim()).filter(Boolean);
+      }
+      const artist = (audioMetadata.common as any)?.artist;
+      if (artist) {
+        return [String(artist).trim()].filter(Boolean);
+      }
+      return [];
+    })();
+
+    const mediaArtists = await MediaLibraryService.checkAndInsertMediaArtists(rawTrackArtists.length > 0
+      ? rawTrackArtists.map(audioArtist => ({
         artist_name: audioArtist,
         provider: MediaLocalConstants.Provider,
         provider_id: MediaLocalLibraryService.getMediaId(audioArtist),
@@ -442,12 +452,20 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         sync_timestamp: scanTimestamp,
       }]);
 
-    const mediaAlbumArtist = isEmpty(audioMetadata.common.albumartist)
+    const rawAlbumArtist = (() => {
+      const albumartist = (audioMetadata.common as any)?.albumartist;
+      if (Array.isArray(albumartist) && albumartist.length > 0) {
+        return String(albumartist[0] || '').trim();
+      }
+      return albumartist ? String(albumartist).trim() : '';
+    })();
+
+    const mediaAlbumArtist = isEmpty(rawAlbumArtist)
       ? mediaArtists[0]
       : await MediaLibraryService.checkAndInsertMediaArtist({
-        artist_name: audioMetadata.common.albumartist as string,
+        artist_name: rawAlbumArtist,
         provider: MediaLocalConstants.Provider,
-        provider_id: MediaLocalLibraryService.getMediaId(audioMetadata.common.albumartist as string),
+        provider_id: MediaLocalLibraryService.getMediaId(rawAlbumArtist),
         sync_timestamp: scanTimestamp,
       });
 
@@ -515,6 +533,111 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
   private static getAudioCoverPictureFromMetadata(audioMetadata: IAudioMetadata): IPicture | null {
     return selectCover(audioMetadata.common.picture);
+  }
+
+  private async repairAlbumArtists(): Promise<void> {
+    const localArtists = await MediaArtistDatastore.findMediaArtists({
+      provider: MediaLocalConstants.Provider,
+    });
+
+    const badArtistIds = new Set<string>();
+    localArtists.forEach((artist: any) => {
+      const artistId = String(artist?.id || _.get(artist, '_id') || '').trim();
+      if (!artistId) {
+        return;
+      }
+
+      const artistName = String(artist?.artist_name || '').trim();
+      if (!artistName || artistName.toLowerCase() === 'unknown artist') {
+        badArtistIds.add(artistId);
+      }
+    });
+
+    if (badArtistIds.size === 0) {
+      return;
+    }
+
+    const localAlbums = await MediaAlbumDatastore.findMediaAlbums({
+      provider: MediaLocalConstants.Provider,
+    });
+
+    await Promise.map(localAlbums, async (album: any) => {
+      const albumId = String(album?.id || _.get(album, '_id') || '').trim();
+      if (!albumId) {
+        return;
+      }
+
+      const albumArtistId = String(album?.album_artist_id || '').trim();
+      if (albumArtistId && !badArtistIds.has(albumArtistId)) {
+        return;
+      }
+
+      const albumName = String(album?.album_name || '').trim();
+      const splitMatch = albumName.match(/^(.+?)\s+-\s+(.+)$/);
+      if (splitMatch) {
+        const parsedArtistName = String(splitMatch[1] || '').trim();
+        const parsedAlbumName = String(splitMatch[2] || '').trim();
+        if (parsedArtistName && parsedAlbumName) {
+          const parsedArtist = await MediaLibraryService.checkAndInsertMediaArtist({
+            artist_name: parsedArtistName,
+            provider: MediaLocalConstants.Provider,
+            provider_id: MediaLocalLibraryService.getMediaId(parsedArtistName),
+            sync_timestamp: Date.now(),
+          });
+
+          await MediaAlbumService.updateMediaAlbum({
+            id: albumId,
+          }, {
+            album_artist_id: parsedArtist.id,
+            album_name: parsedAlbumName,
+            sync_timestamp: Date.now(),
+          });
+          return;
+        }
+      }
+
+      const tracks = await MediaTrackDatastore.findMediaTracks({
+        track_album_id: albumId,
+      });
+
+      const artistCounts = new Map<string, number>();
+      tracks.forEach((track: any) => {
+        const artistIds: string[] = Array.isArray(track?.track_artist_ids) ? track.track_artist_ids : [];
+        artistIds
+          .map(id => String(id || '').trim())
+          .filter(id => id && !badArtistIds.has(id))
+          .forEach((id) => {
+            artistCounts.set(id, (artistCounts.get(id) || 0) + 1);
+          });
+      });
+
+      let bestArtistId = '';
+      let bestCount = 0;
+      artistCounts.forEach((count, id) => {
+        if (count > bestCount) {
+          bestCount = count;
+          bestArtistId = id;
+        }
+      });
+
+      if (!bestArtistId) {
+        return;
+      }
+
+      const candidateArtist = await MediaArtistDatastore.findMediaArtistById(bestArtistId);
+      if (!candidateArtist || !String((candidateArtist as any).artist_name || '').trim()) {
+        return;
+      }
+
+      await MediaAlbumService.updateMediaAlbum({
+        id: albumId,
+      }, {
+        album_artist_id: bestArtistId,
+        sync_timestamp: Date.now(),
+      });
+    }, {
+      concurrency: 10,
+    });
   }
 
   private async consolidateCompilationAlbums(settings: IMediaLocalSettings): Promise<void> {

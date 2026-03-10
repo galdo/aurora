@@ -2,10 +2,13 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+  height: 100%;
+  min-height: 0;
   width: 100%;
   max-width: 100%;
   margin: 0;
   padding: 20px 24px;
+  overflow: hidden;
 }
 
 .settings-layout {
@@ -13,6 +16,8 @@
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
   gap: 28px;
   align-items: start;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .settings-main-column {
@@ -20,6 +25,10 @@
   flex-direction: column;
   gap: 24px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 10px;
 }
 
 .settings-info-column {
@@ -28,20 +37,21 @@
   gap: 12px;
   padding: 8px 4px;
   position: sticky;
-  top: 24px;
-  min-height: calc(100vh - 48px);
+  top: 0;
+  min-height: 100%;
   align-self: start;
-  overflow: hidden; /* Ensure logo doesn't overflow */
+  overflow: hidden;
 }
 
 .settings-info-logo {
   position: absolute;
   inset: 0;
   background-repeat: no-repeat;
-  background-position: center 20%; /* Move logo up slightly */
-  background-size: min(300px, 80%); /* Reduce size */
-  opacity: 0.05; /* Reduce opacity further */
-  filter: grayscale(1) brightness(0.8);
+  background-position: center 24%;
+  background-size: min(360px, 92%);
+  opacity: 0.1;
+  filter: grayscale(1) contrast(1.1) brightness(0.72);
+  mix-blend-mode: multiply;
   pointer-events: none;
   z-index: 0;
 }
@@ -254,10 +264,17 @@
   .settings-layout {
     grid-template-columns: 1fr;
     gap: 20px;
+    overflow: auto;
   }
 
   .settings-info-column {
     position: static;
     padding-top: 0;
+    min-height: auto;
+  }
+
+  .settings-main-column {
+    overflow: visible;
+    padding-right: 0;
   }
 }

@@ -12,10 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CD-Import: Fortschrittsbalken und grüne Haken für bereits importierte Tracks
 - CD-Import/Edit: Cover-Bilder werden beim Speichern in FLAC-Dateien auf max. 400x400 skaliert geschrieben
 
+### Changed
+- Settings: Info-Texte zum Aurora-Fork in DE/EN auf sachliche, ausführliche Beschreibung umgestellt
+- Settings: Layout so angepasst, dass nur die linke Spalte scrollt und die Info-Spalte fest bleibt
+- Settings: Hintergrundlogo in der Info-Spalte als sichtbare Gravur verstärkt
+
 ### Fixed
 - Metadaten-Änderungen (Künstler, Album, Titel, Jahr, Genre) werden jetzt permanent in FLAC- und MP3-Dateien gespeichert
 - Album-Ansicht: Künstlername wird wieder grün, kleiner und unter dem Titel dargestellt
 - Lokalisierung der Info-Texte in den Einstellungen (inkl. DAP Sync) vervollständigt
+- DAP-Sync: Zielpfad im Fortschrittsstatus verwendet konsistent den konfigurierten Ordner
+- DAP-Sync: Legacy-Podcastdateien im alten Musikpfad werden beim Sync bereinigt
+- Bibliothek: Alben mit leerem oder „Unknown Artist“-Artist werden automatisch repariert
+- repair_db.js: ESLint-Verstöße bereinigt (u. a. arrow-parens, unused-vars, underscore-dangle)
 
 ## [1.3.1] - 2026-03-09
 

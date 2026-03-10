@@ -356,13 +356,29 @@ export class PodcastService {
     targetDirectory: string,
     deleteMissingOnDevice?: boolean,
   }): Promise<PodcastSyncResult> {
-    const targetDirectory = String(input.targetDirectory || '').trim();
+    let targetDirectory = String(input.targetDirectory || '').trim();
     if (!targetDirectory) {
       return {
         copiedFiles: 0,
         deletedFiles: 0,
         downloadedEpisodes: 0,
       };
+    }
+
+    if (path.basename(targetDirectory).toLowerCase() === 'music') {
+      targetDirectory = path.dirname(targetDirectory);
+    }
+
+    const legacySyncRootPath = path.join(targetDirectory, 'Music', this.podcastDirectoryName);
+    const legacySyncRootExists = await fs.promises
+      .stat(legacySyncRootPath)
+      .then(stats => stats.isDirectory())
+      .catch(() => false);
+    let deletedLegacyFiles = 0;
+    if (legacySyncRootExists) {
+      const legacyFiles = await this.getFilesRecursive(legacySyncRootPath);
+      deletedLegacyFiles = legacyFiles.length;
+      await fs.promises.rm(legacySyncRootPath, { recursive: true, force: true }).catch(() => undefined);
     }
 
     const subscriptions = await this.refreshSubscriptions();
@@ -418,7 +434,7 @@ export class PodcastService {
       downloadedEpisodes: 0,
     });
 
-    let deletedFiles = 0;
+    let deletedFiles = deletedLegacyFiles;
 
     if (input.deleteMissingOnDevice !== false) {
       const existingFiles = await this.getFilesRecursive(syncRootPath);
@@ -429,7 +445,7 @@ export class PodcastService {
         }
         return false;
       }));
-      deletedFiles = deleteResult.filter(Boolean).length;
+      deletedFiles += deleteResult.filter(Boolean).length;
     }
 
     const subscriptionsCleared = this.getSubscriptions().map(subscription => ({

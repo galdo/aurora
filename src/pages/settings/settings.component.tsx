@@ -161,7 +161,7 @@ export function SettingsPage() {
         {I18nService.getString('label_settings_header')}
       </div>
       <div className={cx('settings-layout')}>
-        <div className={cx('settings-main-column')}>
+        <div className={cx('settings-main-column', 'app-scrollable')}>
           <div className={cx('settings-section', 'settings-card')}>
             <div className={cx('settings-heading')}>{I18nService.getString('label_settings_view_interface')}</div>
             <div className={cx('settings-content')}>
@@ -406,7 +406,7 @@ export function SettingsPage() {
             </div>
           </div>
         </div>
-        <aside className={cx('settings-info-column')}>
+        <aside className={cx('settings-info-column', 'app-scrollable', 'locked')}>
           <div className={cx('settings-info-logo')} style={{ backgroundImage: `url(${AppLogo})` }}/>
           <div className={cx('settings-info-heading')}>
             {I18nService.getString('label_settings_info')}

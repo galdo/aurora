@@ -321,9 +321,14 @@ export class MediaLibraryService {
     }
 
     const settings = this.getDapSyncSettings();
-    const targetDirectory = String(options?.targetDirectory || settings.targetDirectory || '').trim();
-    if (!targetDirectory) {
+    const configuredTargetDirectory = String(options?.targetDirectory || settings.targetDirectory || '').trim();
+    if (!configuredTargetDirectory) {
       throw new Error('No DAP target directory configured');
+    }
+
+    let dapTargetDirectory = configuredTargetDirectory;
+    if (path.basename(dapTargetDirectory).toLowerCase() === this.dapSyncDirectoryName.toLowerCase()) {
+      dapTargetDirectory = path.dirname(dapTargetDirectory);
     }
 
     const abortController = new AbortController();
@@ -332,11 +337,11 @@ export class MediaLibraryService {
 
     const syncPromise = (async () => {
       const deleteMissingOnDevice = options?.deleteMissingOnDevice ?? settings.deleteMissingOnDevice;
-      const syncRootPath = path.join(targetDirectory, this.dapSyncDirectoryName);
+      const syncRootPath = path.join(dapTargetDirectory, this.dapSyncDirectoryName);
       const startedAt = Date.now();
       await fs.promises.mkdir(syncRootPath, { recursive: true });
 
-      const currentCheckpoint = this.loadDapSyncCheckpoint(targetDirectory, syncRootPath);
+      const currentCheckpoint = this.loadDapSyncCheckpoint(dapTargetDirectory, syncRootPath);
       const completedRelativePathSet = new Set(currentCheckpoint?.completedRelativePaths || []);
       let copiedFiles = currentCheckpoint?.copiedFiles || 0;
       let deletedFiles = currentCheckpoint?.deletedFiles || 0;
@@ -350,7 +355,7 @@ export class MediaLibraryService {
         copiedFiles,
         deletedFiles,
         startedAt,
-        targetDirectory,
+        targetDirectory: dapTargetDirectory,
         syncRootPath,
         canResume: false,
         resumedFromProcessedItems: completedRelativePathSet.size,
@@ -413,7 +418,7 @@ export class MediaLibraryService {
       const pendingTrackItems = resumeValidation.filter(item => !item.alreadyCompleted);
 
       this.persistDapSyncCheckpoint({
-        targetDirectory,
+        targetDirectory: dapTargetDirectory,
         syncRootPath,
         completedRelativePaths: resumedValidRelativePaths,
         copiedFiles,
@@ -428,7 +433,7 @@ export class MediaLibraryService {
         copiedFiles,
         deletedFiles,
         startedAt,
-        targetDirectory,
+        targetDirectory: dapTargetDirectory,
         syncRootPath,
         canResume: false,
         resumedFromProcessedItems: resumedValidRelativePathSet.size,
@@ -461,7 +466,7 @@ export class MediaLibraryService {
 
         resumedValidRelativePathSet.add(trackItem.relativePath);
         this.persistDapSyncCheckpoint({
-          targetDirectory,
+          targetDirectory: dapTargetDirectory,
           syncRootPath,
           completedRelativePaths: [...resumedValidRelativePathSet],
           copiedFiles,
@@ -475,7 +480,7 @@ export class MediaLibraryService {
           copiedFiles,
           deletedFiles,
           startedAt,
-          targetDirectory,
+          targetDirectory: dapTargetDirectory,
           syncRootPath,
           canResume: false,
           resumedFromProcessedItems: resumedValidRelativePathSet.size,
@@ -502,7 +507,7 @@ export class MediaLibraryService {
           copiedFiles,
           deletedFiles,
           startedAt,
-          targetDirectory,
+          targetDirectory: dapTargetDirectory,
           syncRootPath,
           canResume: false,
           resumedFromProcessedItems: resumedValidRelativePathSet.size,
@@ -518,7 +523,7 @@ export class MediaLibraryService {
           deletedFiles += 1;
 
           this.persistDapSyncCheckpoint({
-            targetDirectory,
+            targetDirectory: dapTargetDirectory,
             syncRootPath,
             completedRelativePaths: [...resumedValidRelativePathSet],
             copiedFiles,
@@ -532,7 +537,7 @@ export class MediaLibraryService {
             copiedFiles,
             deletedFiles,
             startedAt,
-            targetDirectory,
+            targetDirectory: dapTargetDirectory,
             syncRootPath,
             canResume: false,
             resumedFromProcessedItems: resumedValidRelativePathSet.size,
@@ -541,10 +546,12 @@ export class MediaLibraryService {
         }, { concurrency: 1 });
       }
 
-      await PodcastService.syncPodcastsToDap({
-        targetDirectory,
+      const podcastSyncResult = await PodcastService.syncPodcastsToDap({
+        targetDirectory: dapTargetDirectory,
         deleteMissingOnDevice,
       });
+      copiedFiles += podcastSyncResult.copiedFiles;
+      deletedFiles += podcastSyncResult.deletedFiles;
 
       this.clearDapSyncCheckpoint();
       const result = {
@@ -561,7 +568,7 @@ export class MediaLibraryService {
         copiedFiles: result.copiedFiles,
         deletedFiles: result.deletedFiles,
         startedAt,
-        targetDirectory,
+        targetDirectory: dapTargetDirectory,
         syncRootPath,
         canResume: false,
         resumedFromProcessedItems: 0,
@@ -576,7 +583,7 @@ export class MediaLibraryService {
     })()
       .catch((error) => {
         if (error?.message === 'DAP_SYNC_ABORTED') {
-          const checkpoint = this.loadDapSyncCheckpoint(targetDirectory, path.join(targetDirectory, this.dapSyncDirectoryName));
+          const checkpoint = this.loadDapSyncCheckpoint(dapTargetDirectory, path.join(dapTargetDirectory, this.dapSyncDirectoryName));
           this.updateDapSyncProgress({
             phase: 'aborted',
             isRunning: false,
