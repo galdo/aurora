@@ -230,27 +230,10 @@ export function AlbumsPage() {
     settings.sortDirection,
   ]);
 
-  // Read hideArtist setting from UI settings
-  const [hideArtist, setHideArtist] = useState(false);
-  useEffect(() => {
-    const checkSettings = () => {
-      const saved = localStorage.getItem('aurora:ui-settings');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setHideArtist(!!parsed.hideArtist);
-        } catch (e) { /* ignore */ }
-      }
-    };
-    checkSettings();
-    window.addEventListener('aurora:settings-changed', checkSettings);
-    return () => window.removeEventListener('aurora:settings-changed', checkSettings);
-  }, []);
-
   return (
     <div className="container-fluid">
       <AlbumsHeaderControls settings={settings} updateSettings={updateSettings}/>
-      <MediaAlbums mediaAlbums={sortedAlbums} coverSize={settings.coverSize} hideArtist={hideArtist}/>
+      <MediaAlbums mediaAlbums={sortedAlbums} coverSize={settings.coverSize} hideArtist={false}/>
     </div>
   );
 }

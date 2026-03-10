@@ -898,6 +898,7 @@ export class DeviceModule implements IAppModule {
     filePath: string;
     tags: {
       artist?: string;
+      albumArtist?: string;
       album?: string;
       title?: string;
       year?: string;
@@ -911,6 +912,7 @@ export class DeviceModule implements IAppModule {
     }
 
     let coverImagePath: string | undefined;
+    let metaflacPicturePath: string | undefined;
     if (coverImage) {
       try {
         coverImagePath = await this.app.getModule(ImageModule).getSharpModule().scaleImage(coverImage, {
@@ -922,45 +924,61 @@ export class DeviceModule implements IAppModule {
       }
     }
 
-    if (this.commandExists('metaflac')) {
-      const metaflacArgs: string[] = [];
-
-      if (tags.artist) {
-        metaflacArgs.push('--remove-tag=ARTIST', `--set-tag=ARTIST=${tags.artist}`);
-      }
-      if (tags.album) {
-        metaflacArgs.push('--remove-tag=ALBUM', `--set-tag=ALBUM=${tags.album}`);
-      }
-      if (tags.title) {
-        metaflacArgs.push('--remove-tag=TITLE', `--set-tag=TITLE=${tags.title}`);
-      }
-      if (tags.year) {
-        metaflacArgs.push('--remove-tag=DATE', `--set-tag=DATE=${tags.year}`);
-      }
-      if (tags.genre) {
-        metaflacArgs.push('--remove-tag=GENRE', `--set-tag=GENRE=${tags.genre}`);
-      }
-
+    try {
       if (coverImagePath) {
-        metaflacArgs.push('--remove', '--block-type=PICTURE');
-        metaflacArgs.push(`--import-picture-from=3:image/jpeg:Cover (front)::${coverImagePath}`);
+        await fs.promises.access(coverImagePath, fs.constants.R_OK);
+        const ext = (path.extname(coverImagePath) || '.jpg').toLowerCase();
+        metaflacPicturePath = path.join(this.app.createDataDir('Temp'), `metaflac-cover-${Date.now()}${ext}`);
+        await fs.promises.copyFile(coverImagePath, metaflacPicturePath);
       }
 
-      if (metaflacArgs.length > 0) {
-        metaflacArgs.push(filePath);
-        const result = spawnSync('metaflac', metaflacArgs, { encoding: 'utf-8' });
-        if (result.status !== 0) {
-          throw new Error(result.stderr || 'metaflac failed to update metadata');
+      if (this.commandExists('metaflac')) {
+        const metaflacTagArgs: string[] = [];
+
+        if (tags.artist) {
+          metaflacTagArgs.push('--remove-tag=ARTIST', `--set-tag=ARTIST=${tags.artist}`);
         }
+        if (tags.albumArtist) {
+          metaflacTagArgs.push('--remove-tag=ALBUMARTIST', `--set-tag=ALBUMARTIST=${tags.albumArtist}`);
+        }
+        if (tags.album) {
+          metaflacTagArgs.push('--remove-tag=ALBUM', `--set-tag=ALBUM=${tags.album}`);
+        }
+        if (tags.title) {
+          metaflacTagArgs.push('--remove-tag=TITLE', `--set-tag=TITLE=${tags.title}`);
+        }
+        if (tags.year) {
+          metaflacTagArgs.push('--remove-tag=DATE', `--set-tag=DATE=${tags.year}`);
+        }
+        if (tags.genre) {
+          metaflacTagArgs.push('--remove-tag=GENRE', `--set-tag=GENRE=${tags.genre}`);
+        }
+
+        if (metaflacTagArgs.length > 0) {
+          const result = spawnSync('metaflac', [...metaflacTagArgs, filePath], { encoding: 'utf-8' });
+          if (result.status !== 0) {
+            throw new Error(result.stderr || 'metaflac failed to update metadata');
+          }
+        }
+
+        if (metaflacPicturePath) {
+          const removePictureResult = spawnSync('metaflac', ['--remove', '--block-type=PICTURE', filePath], { encoding: 'utf-8' });
+          if (removePictureResult.status !== 0) {
+            throw new Error(removePictureResult.stderr || 'metaflac failed to remove picture block');
+          }
+
+          const importPictureResult = spawnSync('metaflac', [`--import-picture-from=${metaflacPicturePath}`, filePath], { encoding: 'utf-8' });
+          if (importPictureResult.status !== 0) {
+            throw new Error(importPictureResult.stderr || 'metaflac failed to import picture block');
+          }
+        }
+      } else {
+        throw new Error('metaflac is required for updating FLAC metadata in-place');
       }
-    } else {
-      // ffmpeg metadata update (requires copying stream)
-      // ffmpeg -i input.flac -c copy -metadata key=value output.flac
-      // This is more complex as it requires a temp file.
-      // For now, throw error if metaflac is missing, or implement ffmpeg logic if really needed.
-      // The user likely has metaflac if they are doing this.
-      // But let's be safe.
-      throw new Error('metaflac is required for updating FLAC metadata in-place');
+    } finally {
+      if (metaflacPicturePath) {
+        await fs.promises.unlink(metaflacPicturePath).catch(() => undefined);
+      }
     }
   }
 

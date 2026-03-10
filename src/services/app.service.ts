@@ -20,6 +20,8 @@ export class AppService {
   }
 
   static resetAppData(): void {
+    localStorage.clear();
+    sessionStorage.clear();
     IPCRenderer.sendSyncMessage(IPCCommChannel.AppResetSettings);
   }
 }

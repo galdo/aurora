@@ -51,9 +51,10 @@ export function MediaCollectionTile(props: MediaCollectionTileProps) {
     if (!subtitle || !mediaItem.name) {
       return mediaItem.name;
     }
-    const artistPrefix = `${subtitle} - `;
-    if (mediaItem.name.startsWith(artistPrefix)) {
-      return mediaItem.name.substring(artistPrefix.length);
+    const escapedSubtitle = subtitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefixedTitlePattern = new RegExp(`^${escapedSubtitle}\\s*[-–—]\\s*`, 'i');
+    if (prefixedTitlePattern.test(mediaItem.name)) {
+      return mediaItem.name.replace(prefixedTitlePattern, '').trim();
     }
     return mediaItem.name;
   }, [mediaItem.name, subtitle]);

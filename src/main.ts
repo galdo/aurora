@@ -32,6 +32,7 @@ import {
   app,
   shell,
   BrowserWindow,
+  screen,
 } from 'electron';
 
 import {
@@ -82,10 +83,9 @@ class App implements IAppMain {
   private readonly htmlFilePath: string;
   private readonly builders: IAppBuilder[] = [];
   private readonly modules: IAppModule[] = [];
-  private readonly windowWidth = 1024;
-  private readonly windowHeight = 642;
-  private readonly windowMinWidth = 1024;
-  private readonly windowMinHeight = 642;
+  private readonly windowDefaultSizeRatio = 0.6;
+  private readonly windowMinWidth = 900;
+  private readonly windowMinHeight = 560;
   private readonly dataPath: string;
   private isQuitting = false;
   private localProtocols = new Set(['file:', 'app:']);
@@ -429,11 +429,20 @@ class App implements IAppMain {
   private async createWindow(): Promise<BrowserWindow> {
     await this.installExtensions();
     const isDarwin = this.platform === PlatformOS.Darwin;
+    const primaryDisplayWorkArea = screen.getPrimaryDisplay().workAreaSize;
+    const defaultWidth = Math.max(
+      this.windowMinWidth,
+      Math.round(primaryDisplayWorkArea.width * this.windowDefaultSizeRatio),
+    );
+    const defaultHeight = Math.max(
+      this.windowMinHeight,
+      Math.round(primaryDisplayWorkArea.height * this.windowDefaultSizeRatio),
+    );
 
     const mainWindow = new BrowserWindow({
       show: false,
-      width: this.windowWidth,
-      height: this.windowHeight,
+      width: defaultWidth,
+      height: defaultHeight,
       minWidth: this.windowMinWidth,
       minHeight: this.windowMinHeight,
       icon: this.iconPath,

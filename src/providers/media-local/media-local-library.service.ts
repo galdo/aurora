@@ -539,6 +539,14 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     const localArtists = await MediaArtistDatastore.findMediaArtists({
       provider: MediaLocalConstants.Provider,
     });
+    const artistNameById = new Map<string, string>();
+    localArtists.forEach((artist: any) => {
+      const artistId = String(artist?.id || _.get(artist, '_id') || '').trim();
+      if (!artistId) {
+        return;
+      }
+      artistNameById.set(artistId, String(artist?.artist_name || '').trim());
+    });
 
     const badArtistIds = new Set<string>();
     localArtists.forEach((artist: any) => {
@@ -568,16 +576,49 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       }
 
       const albumArtistId = String(album?.album_artist_id || '').trim();
+      const albumArtistName = String(artistNameById.get(albumArtistId) || '').trim();
+      const albumName = String(album?.album_name || '').trim();
+      const escapedAlbumArtistName = _.escapeRegExp(albumArtistName);
+      const normalizedAlbumNameMatch = albumArtistName
+        ? albumName.match(new RegExp(`^${escapedAlbumArtistName}\\s*[-–—]\\s*(.+)$`, 'i'))
+        : null;
+
+      if (normalizedAlbumNameMatch && normalizedAlbumNameMatch[1]) {
+        const normalizedAlbumName = String(normalizedAlbumNameMatch[1]).trim();
+        if (normalizedAlbumName) {
+          await MediaAlbumService.updateMediaAlbum({
+            id: albumId,
+          }, {
+            album_name: normalizedAlbumName,
+            provider_id: MediaLocalLibraryService.getMediaId(albumArtistName, normalizedAlbumName),
+            sync_timestamp: Date.now(),
+          });
+          return;
+        }
+      }
+
       if (albumArtistId && !badArtistIds.has(albumArtistId)) {
         return;
       }
 
-      const albumName = String(album?.album_name || '').trim();
+      const tracks = await MediaTrackDatastore.findMediaTracks({
+        track_album_id: albumId,
+      });
+
       const splitMatch = albumName.match(/^(.+?)\s+-\s+(.+)$/);
       if (splitMatch) {
         const parsedArtistName = String(splitMatch[1] || '').trim();
         const parsedAlbumName = String(splitMatch[2] || '').trim();
-        if (parsedArtistName && parsedAlbumName) {
+        const parsedArtistNameLower = parsedArtistName.toLowerCase();
+        const trackArtistNameMatches = tracks.some((track: any) => {
+          const artistIds: string[] = Array.isArray(track?.track_artist_ids) ? track.track_artist_ids : [];
+          return artistIds.some((artistId) => {
+            const trackArtistName = String(artistNameById.get(String(artistId || '').trim()) || '').trim().toLowerCase();
+            return trackArtistName === parsedArtistNameLower;
+          });
+        });
+
+        if (parsedArtistName && parsedAlbumName && (trackArtistNameMatches || tracks.length === 0)) {
           const parsedArtist = await MediaLibraryService.checkAndInsertMediaArtist({
             artist_name: parsedArtistName,
             provider: MediaLocalConstants.Provider,
@@ -590,15 +631,12 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           }, {
             album_artist_id: parsedArtist.id,
             album_name: parsedAlbumName,
+            provider_id: MediaLocalLibraryService.getMediaId(parsedArtistName, parsedAlbumName),
             sync_timestamp: Date.now(),
           });
           return;
         }
       }
-
-      const tracks = await MediaTrackDatastore.findMediaTracks({
-        track_album_id: albumId,
-      });
 
       const artistCounts = new Map<string, number>();
       tracks.forEach((track: any) => {
@@ -633,6 +671,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         id: albumId,
       }, {
         album_artist_id: bestArtistId,
+        provider_id: MediaLocalLibraryService.getMediaId(String((candidateArtist as any).artist_name || '').trim(), albumName),
         sync_timestamp: Date.now(),
       });
     }, {

@@ -11,6 +11,19 @@ import MediaLocalConstants from '../../providers/media-local/media-local.constan
 
 import { Button } from '../button/button.component';
 
+function getSanitizedAlbumName(albumName?: string, artistName?: string): string {
+  const normalizedAlbumName = String(albumName || '').trim();
+  const normalizedArtistName = String(artistName || '').trim();
+  if (!normalizedAlbumName || !normalizedArtistName) {
+    return normalizedAlbumName;
+  }
+
+  const escapedArtistName = normalizedArtistName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const artistPrefixPattern = new RegExp(`^${escapedArtistName}\\s*[-–—]\\s*`, 'i');
+
+  return normalizedAlbumName.replace(artistPrefixPattern, '').trim();
+}
+
 export const MediaAlbumEditModal: ModalComponent<{
   mediaAlbumId: string;
 }, {
@@ -39,20 +52,30 @@ export const MediaAlbumEditModal: ModalComponent<{
       return;
     }
 
+    const nextAlbumName = String(inputData.album_name || '').trim();
+    const nextAlbumArtistName = String(inputData.album_artist_name || '').trim();
+    const initialAlbumArtistName = String(initialData.album_artist_name || '').trim();
+
     const updateData: any = {
-      album_name: inputData.album_name,
-      album_genre: inputData.album_genre,
+      album_name: nextAlbumName,
+      album_genre: String(inputData.album_genre || '').trim(),
       album_year: inputData.album_year ? Number(inputData.album_year) : undefined,
+      sync_timestamp: Date.now(),
     };
 
-    if (inputData.album_artist_name !== initialData.album_artist_name && inputData.album_artist_name) {
+    if (nextAlbumArtistName !== initialAlbumArtistName && nextAlbumArtistName) {
       const artist = await MediaLibraryService.checkAndInsertMediaArtist({
-        artist_name: inputData.album_artist_name,
+        artist_name: nextAlbumArtistName,
         provider: MediaLocalConstants.Provider,
-        provider_id: CryptoService.sha256(inputData.album_artist_name),
+        provider_id: CryptoService.sha256(nextAlbumArtistName),
         sync_timestamp: Date.now(),
       });
       updateData.album_artist_id = artist.id;
+    }
+
+    const providerArtistName = nextAlbumArtistName || initialAlbumArtistName;
+    if (providerArtistName && nextAlbumName) {
+      updateData.provider_id = CryptoService.sha256(providerArtistName, nextAlbumName);
     }
 
     const updatedAlbum = await MediaAlbumService.updateMediaAlbum({
@@ -79,9 +102,10 @@ export const MediaAlbumEditModal: ModalComponent<{
           return;
         }
 
+        const albumArtistName = String(mediaAlbum.album_artist?.artist_name || '').trim();
         const data = {
-          album_name: mediaAlbum.album_name,
-          album_artist_name: mediaAlbum.album_artist.artist_name,
+          album_name: getSanitizedAlbumName(mediaAlbum.album_name, albumArtistName),
+          album_artist_name: albumArtistName,
           album_genre: mediaAlbum.album_genre || '',
           album_year: mediaAlbum.album_year,
         };

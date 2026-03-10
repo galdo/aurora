@@ -1,3 +1,4 @@
+import fs from 'fs';
 import _ from 'lodash';
 import NodeID3 from 'node-id3';
 
@@ -115,6 +116,7 @@ export class MediaAlbumService {
 
       const tags = {
         artist: mediaAlbum.album_artist.artist_name,
+        albumArtist: mediaAlbum.album_artist.artist_name,
         album: mediaAlbum.album_name,
         performerInfo: mediaAlbum.album_artist.artist_name,
         genre: mediaAlbum.album_genre,
@@ -141,6 +143,17 @@ export class MediaAlbumService {
             coverImage,
           });
         }
+
+        const fileStats = await fs.promises.stat(filePath);
+        await MediaTrackDatastore.updateMediaTrack({
+          id: mediaTrackData.id,
+        }, {
+          extra: {
+            ...extra,
+            file_mtime: fileStats.mtimeMs,
+            file_size: fileStats.size,
+          },
+        });
       } catch (error) {
         console.error(`Error updating tags for ${filePath}`, error);
       }

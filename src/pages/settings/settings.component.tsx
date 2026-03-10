@@ -22,7 +22,7 @@ import { mediaLocalStore, MediaLocalStateActionType } from '../../providers/medi
 import styles from './settings.component.css';
 
 const cx = classNames.bind(styles);
-const AppLogo = require('../../../assets/icons/icon.png');
+const AppLogo = require('../../../assets/icons/icon.iconset/icon_512x512.png');
 
 const languageOptions: AppLocale[] = ['de', 'en', 'fr', 'it', 'es'];
 
@@ -407,7 +407,6 @@ export function SettingsPage() {
           </div>
         </div>
         <aside className={cx('settings-info-column', 'app-scrollable', 'locked')}>
-          <div className={cx('settings-info-logo')} style={{ backgroundImage: `url(${AppLogo})` }}/>
           <div className={cx('settings-info-heading')}>
             {I18nService.getString('label_settings_info')}
           </div>
@@ -447,6 +446,9 @@ export function SettingsPage() {
                 </Link>
               </div>
             </div>
+          </div>
+          <div className={cx('settings-info-logo')}>
+            <img src={AppLogo} alt="Aurora Logo" className={cx('settings-info-logo-image')}/>
           </div>
         </aside>
       </div>
