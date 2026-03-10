@@ -96,6 +96,7 @@ export function MediaCollectionTile(props: MediaCollectionTileProps) {
             mediaPicture={mediaItem.picture}
             mediaPictureAltText={mediaItem.name}
             mediaCoverPlaceholderIcon={coverPlaceholderIcon}
+            isLoading={mediaItem.pictureLoading}
             className={cx('collection-tile-cover-picture')}
           />
           {genre && (

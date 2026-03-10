@@ -58,11 +58,13 @@ export class MediaCollectionService {
   }
 
   static getMediaItemFromArtist(mediaArtist: IMediaArtist): IMediaCollectionItem {
+    const artistExtra = mediaArtist.extra as { artist_feature_picture_loading?: boolean } | undefined;
     return {
       id: mediaArtist.id,
       name: mediaArtist.artist_name,
       type: MediaCollectionItemType.Artist,
       picture: mediaArtist.artist_feature_picture,
+      pictureLoading: !mediaArtist.artist_feature_picture && !!artistExtra?.artist_feature_picture_loading,
     };
   }
 

@@ -168,6 +168,7 @@ export interface IMediaCollectionItem {
   type: MediaCollectionItemType;
   name: string;
   picture?: IMediaPicture;
+  pictureLoading?: boolean;
   hidden?: boolean;
 }
 

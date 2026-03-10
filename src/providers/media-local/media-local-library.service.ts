@@ -905,15 +905,26 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     const artistsWithoutPicture = mediaArtists.filter(artist => !artist.artist_feature_picture && !!String(artist.artist_name || '').trim());
 
     await Promise.map(artistsWithoutPicture, async (artist) => {
-      const artistPicture = await this.fetchArtistFeaturePicture(artist.artist_name);
-      if (!artistPicture) {
-        return;
-      }
-
       await MediaArtistService.updateMediaArtists({
         id: artist.id,
       }, {
-        artist_feature_picture: artistPicture,
+        extra: {
+          ...(artist.extra as Record<string, unknown> | undefined),
+          artist_feature_picture_loading: true,
+        },
+      });
+
+      const artistPicture = await this.fetchArtistFeaturePicture(artist.artist_name);
+      await MediaArtistService.updateMediaArtists({
+        id: artist.id,
+      }, {
+        ...(artistPicture ? {
+          artist_feature_picture: artistPicture,
+        } : {}),
+        extra: {
+          ...(artist.extra as Record<string, unknown> | undefined),
+          artist_feature_picture_loading: false,
+        },
       });
     }, { concurrency: 3 });
   }
@@ -924,11 +935,15 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       return undefined;
     }
 
+    const requestAbortController = new AbortController();
+    const requestTimeout = setTimeout(() => requestAbortController.abort(), 15000);
     try {
       const deezerApiUrl = new URL('https://api.deezer.com/search/artist');
       deezerApiUrl.searchParams.set('q', normalizedArtistName);
       deezerApiUrl.searchParams.set('limit', '1');
-      const deezerResponse = await fetch(deezerApiUrl.toString());
+      const deezerResponse = await fetch(deezerApiUrl.toString(), {
+        signal: requestAbortController.signal,
+      });
       if (!deezerResponse.ok) {
         return undefined;
       }
@@ -946,7 +961,9 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         return undefined;
       }
 
-      const imageResponse = await fetch(artistImageUrl);
+      const imageResponse = await fetch(artistImageUrl, {
+        signal: requestAbortController.signal,
+      });
       if (!imageResponse.ok) {
         return undefined;
       }
@@ -961,6 +978,8 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     } catch (error) {
       debug('processArtistFeaturePictures - failed for %s - %o', normalizedArtistName, error);
       return undefined;
+    } finally {
+      clearTimeout(requestTimeout);
     }
   }
 

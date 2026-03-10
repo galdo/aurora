@@ -42,6 +42,10 @@
   color: var(--text-dark-color);
 }
 
+.media-cover-loader {
+  color: var(--text-dark-color);
+}
+
 .media-cover-picture:not(.has_content) .media-cover-picture-content {
   display: none;
 }

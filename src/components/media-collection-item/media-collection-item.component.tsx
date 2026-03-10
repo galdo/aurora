@@ -119,6 +119,7 @@ export function MediaCollectionItem(props: MediaCollectionItemProps) {
               mediaPicture={mediaItem.picture}
               mediaPictureAltText={mediaItem.name}
               mediaCoverPlaceholderIcon={coverPlaceholderIcon}
+              isLoading={mediaItem.pictureLoading}
               className={cx('collection-item-cover')}
               contentClassName={cx('collection-item-cover-content')}
             >
