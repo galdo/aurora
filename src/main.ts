@@ -83,7 +83,7 @@ class App implements IAppMain {
   private readonly htmlFilePath: string;
   private readonly builders: IAppBuilder[] = [];
   private readonly modules: IAppModule[] = [];
-  private readonly windowDefaultSizeRatio = 0.6;
+  private readonly windowDefaultSizeRatio = 0.8;
   private readonly windowMinWidth = 900;
   private readonly windowMinHeight = 560;
   private readonly dataPath: string;

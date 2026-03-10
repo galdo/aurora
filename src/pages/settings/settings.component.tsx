@@ -22,7 +22,7 @@ import { mediaLocalStore, MediaLocalStateActionType } from '../../providers/medi
 import styles from './settings.component.css';
 
 const cx = classNames.bind(styles);
-const AppLogo = require('../../../assets/icons/icon.iconset/icon_512x512.png');
+const AppLogo = require('../../../assets/icons/icon-squircle.png');
 
 const languageOptions: AppLocale[] = ['de', 'en', 'fr', 'it', 'es'];
 
