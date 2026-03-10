@@ -1,7 +1,7 @@
 # Aurora
 
-[![Downloads](https://img.shields.io/github/downloads/bbbneo333/aurora/total)](https://github.com/bbbneo333/aurora/releases)
-[![CI](https://github.com/bbbneo333/aurora/actions/workflows/checks.yml/badge.svg)](https://github.com/bbbneo333/aurora/actions/workflows/checks.yml)
+[![Downloads](https://img.shields.io/github/downloads/galdo/aurora/total)](https://github.com/galdo/aurora/releases)
+[![CI](https://github.com/galdo/aurora/actions/workflows/checks.yml/badge.svg)](https://github.com/galdo/aurora/actions/workflows/checks.yml)
 
 Aurora is a local-first desktop music player built for people who want full control over their library, playback flow, and data.
 Version **1.3** expands Aurora into a broader media hub with podcasts, advanced sync workflows, and smarter library tooling while keeping the app fast and private.
