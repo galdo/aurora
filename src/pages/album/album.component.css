@@ -35,7 +35,7 @@
 }
 
 .album-header-name {
-  font-size: 24px;
+  font-size: 32px;
   font-weight: bold;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -48,12 +48,19 @@
 }
 
 .album-header-artist {
-  color: #35c26b;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.2;
-  margin-top: 2px;
-  margin-bottom: 10px;
+  margin-bottom: 20px;
+}
+
+.album-header-artist .media-track-artist-link {
+  color: var(--color-primary-highlight) !important;
+  font-size: 16px !important;
+  font-weight: normal !important;
+  opacity: 0.9;
+}
+
+.album-header-artist .media-track-artist-link:hover {
+  text-decoration: underline;
+  opacity: 1;
 }
 
 .album-header-genres {

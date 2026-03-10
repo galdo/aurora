@@ -5,6 +5,7 @@ import React, {
   useState,
 } from 'react';
 import classNames from 'classnames/bind';
+import _ from 'lodash';
 import { useHistory, useLocation } from 'react-router-dom';
 
 import routes from '../app.routes';
@@ -213,6 +214,18 @@ function BrowserHeader() {
       <div className={cx('browser-header-actions')}>
         <div id="browser-header-context-actions" className={cx('browser-header-context-actions')}/>
         <BrowserLinks/>
+        <Button
+          variant={['rounded', 'outline']}
+          tooltip={I18nService.getString('tooltip_global_shuffle') || 'Alle Titel zufällig wiedergeben'}
+          onButtonSubmit={async () => {
+            const tracks = await MediaTrackService.searchTracksByName('');
+            if (tracks && tracks.length > 0) {
+              MediaPlayerService.playMediaTracks(_.shuffle(tracks));
+            }
+          }}
+        >
+          <Icon name={Icons.PlayerShuffle}/>
+        </Button>
         <Button
           variant={['rounded', 'outline']}
           tooltip="Bibliothek und DAP synchronisieren"

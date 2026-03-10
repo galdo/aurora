@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-03-10
+
+### Added
+- "Global Shuffle"-Button in der Topbar zum zufälligen Abspielen aller Titel
+- CD-Import: Fortschrittsbalken und grüne Haken für bereits importierte Tracks
+- CD-Import/Edit: Cover-Bilder werden beim Speichern in FLAC-Dateien auf max. 400x400 skaliert geschrieben
+
+### Fixed
+- Metadaten-Änderungen (Künstler, Album, Titel, Jahr, Genre) werden jetzt permanent in FLAC- und MP3-Dateien gespeichert
+- Album-Ansicht: Künstlername wird wieder grün, kleiner und unter dem Titel dargestellt
+- Lokalisierung der Info-Texte in den Einstellungen (inkl. DAP Sync) vervollständigt
+
 ## [1.3.1] - 2026-03-09
 
 ### Changed

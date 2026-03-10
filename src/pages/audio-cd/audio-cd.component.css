@@ -98,98 +98,116 @@
 
 .audio-cd-dialog-text {
   color: var(--text-light-color);
-  margin-bottom: 12px;
 }
 
 .audio-cd-dialog-actions {
-  margin: 14px 0;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
 }
 
 .audio-cd-dialog-summary {
-  background: var(--stage-overlay-color);
-  border: 1px solid var(--stage-overlay-outline-color);
-  border-radius: 8px;
-  color: var(--text-normal-color);
-  margin-bottom: 12px;
-  padding: 10px 12px;
+  background-color: var(--dialog-bg-color);
+  border: 1px solid var(--dialog-border-color);
+  border-radius: 4px;
+  margin-top: 14px;
+  padding: 10px;
 }
 
 .audio-cd-release-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-height: 360px;
+  gap: 8px;
+  margin-top: 14px;
+  max-height: 300px;
   overflow-y: auto;
-  padding-right: 4px;
 }
 
 .audio-cd-release-item {
-  align-items: center;
-  background: var(--stage-overlay-color);
-  border: 1px solid var(--stage-overlay-outline-color);
-  border-radius: 8px;
-  color: var(--text-normal-color);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
   cursor: pointer;
   display: flex;
   gap: 12px;
-  padding: 10px;
+  padding: 8px;
   text-align: left;
-  transition: border-color .2s ease, transform .15s ease;
+  transition: background-color 0.2s;
   width: 100%;
 }
 
 .audio-cd-release-item:hover {
-  border-color: var(--accent-normal-color);
-  transform: translateY(-1px);
+  background-color: var(--selectable-hovered-bg-color);
 }
 
 .audio-cd-release-item.selected {
-  border-color: var(--accent-normal-color);
-  box-shadow: 0 0 0 1px var(--accent-normal-color) inset;
+  background-color: var(--selectable-focused-bg-color);
+  border-color: var(--primary-color);
 }
 
 .audio-cd-release-cover {
-  align-items: center;
-  background: var(--background-color);
-  border-radius: 6px;
+  background-color: var(--stage-overlay-color);
+  border-radius: 2px;
+  flex: 0 0 40px;
+  height: 40px;
+  width: 40px;
   display: flex;
-  flex: 0 0 56px;
-  height: 56px;
+  align-items: center;
   justify-content: center;
   overflow: hidden;
-  width: 56px;
 }
 
 .audio-cd-release-cover-image {
   height: 100%;
-  object-fit: cover;
   width: 100%;
+  object-fit: cover;
 }
 
 .audio-cd-release-content {
   display: flex;
   flex: 1;
   flex-direction: column;
+  justify-content: center;
   min-width: 0;
 }
 
 .audio-cd-release-title {
   color: var(--text-normal-color);
-  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
-  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .audio-cd-release-meta {
   color: var(--text-light-color);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
 }
 
 .audio-cd-status {
-  color: var(--text-light-color);
-  margin-top: 14px;
+  background-color: var(--dialog-bg-color);
+  border: 1px solid var(--dialog-border-color);
+  border-radius: 4px;
+  margin-top: 20px;
+  padding: 10px;
 }
 
 .audio-cd-tracklist {
   margin-top: 20px;
+}
+
+.audio-cd-progress {
+  margin-top: 20px;
+  margin-bottom: 20px;
+}
+
+.audio-cd-progress-bar {
+  height: 20px;
+}
+
+.audio-cd-progress-text {
+  margin-top: 5px;
+  color: var(--text-light-color);
+  font-size: var(--font-size-sm);
+  text-align: center;
 }

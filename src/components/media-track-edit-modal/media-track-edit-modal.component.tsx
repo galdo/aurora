@@ -57,6 +57,11 @@ export const MediaTrackEditModal: ModalComponent<{
       id: mediaTrackId,
     }, updateData);
 
+    // Sync metadata to file
+    if (updatedTrack) {
+      await MediaTrackService.syncTrackMetadata(updatedTrack.id);
+    }
+
     onComplete({ updatedTrack });
   }, [
     inputData,

@@ -15,6 +15,10 @@ export class ImageModule implements IAppModule {
     this.registerMessageHandlers();
   }
 
+  getSharpModule(): SharpModule {
+    return this.sharp;
+  }
+
   private registerMessageHandlers() {
     IPCMain.addAsyncMessageHandler(IPCCommChannel.ImageScale, this.sharp.scaleImage, this.sharp);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.ImageGetColors, this.vibrant.getImageColors, this.vibrant);

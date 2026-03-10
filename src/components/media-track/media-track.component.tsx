@@ -127,6 +127,16 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
           />
         </div>
         <div className={cx('media-track-section', 'end')}>
+          {(mediaTrack.extra as any)?.status === 'completed' && (
+            <div className={cx('media-track-status')} style={{ color: '#28a745' }}>
+              <Icon name={Icons.Completed}/>
+            </div>
+          )}
+          {(mediaTrack.extra as any)?.status === 'in-progress' && (
+            <div className={cx('media-track-status')} style={{ color: '#007bff' }}>
+              <Icon name={Icons.Refreshing}/>
+            </div>
+          )}
           <div className={cx('media-track-like')}>
             <MediaTrackLikeButton
               mediaTrack={mediaTrack}

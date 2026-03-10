@@ -9,6 +9,7 @@ import store from '../store';
 
 import { MediaArtistService } from './media-artist.service';
 import { DataStoreFilterData, DataStoreUpdateData } from '../modules/datastore';
+import { IPCRenderer, IPCCommChannel } from '../modules/ipc';
 
 export class MediaAlbumService {
   static async searchAlbumsByName(query: string): Promise<IMediaAlbum[]> {
@@ -105,21 +106,40 @@ export class MediaAlbumService {
       }
 
       const filePath = extra.file_path;
-      if (!filePath.toLowerCase().endsWith('.mp3')) {
+      const isMp3 = filePath.toLowerCase().endsWith('.mp3');
+      const isFlac = filePath.toLowerCase().endsWith('.flac');
+
+      if (!isMp3 && !isFlac) {
         return;
       }
 
       const tags = {
+        artist: mediaAlbum.album_artist.artist_name,
         album: mediaAlbum.album_name,
         performerInfo: mediaAlbum.album_artist.artist_name,
         genre: mediaAlbum.album_genre,
         year: mediaAlbum.album_year ? String(mediaAlbum.album_year) : undefined,
       };
 
+      const coverImage = mediaAlbum.album_cover_picture
+        ? mediaAlbum.album_cover_picture.image_data?.replace(/^file:\/\//, '')
+        : undefined;
+
       try {
-        const result = NodeID3.update(tags, filePath);
-        if ((result as any) !== true) {
-          console.warn(`Failed to update tags for ${filePath}`, result);
+        if (isMp3) {
+          const result = NodeID3.update(tags, filePath);
+          if ((result as any) !== true) {
+            console.warn(`Failed to update tags for ${filePath}`, result);
+          }
+        } else if (isFlac) {
+          await IPCRenderer.sendAsyncMessage(IPCCommChannel.DeviceWriteFlacMetadata, {
+            filePath,
+            tags: {
+              ...tags,
+              title: mediaTrackData.track_name,
+            },
+            coverImage,
+          });
         }
       } catch (error) {
         console.error(`Error updating tags for ${filePath}`, error);

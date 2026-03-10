@@ -275,9 +275,6 @@ export function AlbumPage() {
             />
           </div>
           <div className={cx('col', 'album-header-info-column')}>
-            <div className={cx('album-header-label')}>
-              {I18nService.getString('label_album_header')}
-            </div>
             <div className={cx('album-header-name')}>
               <TextClamp>
                 {albumDisplayTitle}

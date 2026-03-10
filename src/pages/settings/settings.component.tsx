@@ -143,15 +143,15 @@ export function SettingsPage() {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
   };
   const dapProgressStatusLabels = {
-    idle: 'Bereit',
-    planning: 'Planen',
-    copying: 'Kopieren',
-    cleaning: 'Bereinigen',
-    done: 'Abgeschlossen',
-    aborted: 'Abgebrochen',
-    error: 'Fehler',
+    idle: I18nService.getString('label_settings_dap_status_idle'),
+    planning: I18nService.getString('label_settings_dap_status_planning'),
+    copying: I18nService.getString('label_settings_dap_status_copying'),
+    cleaning: I18nService.getString('label_settings_dap_status_cleaning'),
+    done: I18nService.getString('label_settings_dap_status_done'),
+    aborted: I18nService.getString('label_settings_dap_status_aborted'),
+    error: I18nService.getString('label_settings_dap_status_error'),
   };
-  const dapProgressStatusLabel = dapProgressStatusLabels[dapSyncProgress.phase] || 'Bereit';
+  const dapProgressStatusLabel = dapProgressStatusLabels[dapSyncProgress.phase] || I18nService.getString('label_settings_dap_status_idle');
   const originalRepositoryLink = Links.ProjectOriginal || Links.Project;
   const groupCompilationsByFolder = mediaLocalState.settings?.library?.group_compilations_by_folder || false;
 
@@ -270,9 +270,9 @@ export function SettingsPage() {
             <div className={cx('settings-content')}>
               <div className={cx('settings-row')}>
                 <div>
-                  <div className={cx('settings-subheading')}>Zielordner</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_target_directory')}</div>
                   <div className={cx('settings-description')}>
-                    {dapTargetDirectory || 'Kein Ordner ausgewählt'}
+                    {dapTargetDirectory || I18nService.getString('label_settings_dap_no_directory')}
                   </div>
                 </div>
                 <Button
@@ -289,14 +289,14 @@ export function SettingsPage() {
                     });
                   }}
                 >
-                  Ordner auswählen
+                  {I18nService.getString('button_settings_dap_select_directory')}
                 </Button>
               </div>
               <div className={cx('settings-row')}>
                 <div>
-                  <div className={cx('settings-subheading')}>Automatische Synchronisierung</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_auto_sync')}</div>
                   <div className={cx('settings-description')}>
-                    Nach Bibliotheks-Updates wird automatisch auf USB/SD synchronisiert.
+                    {I18nService.getString('label_settings_dap_auto_sync_desc')}
                   </div>
                 </div>
                 <div className={cx('theme-switch')}>
@@ -319,9 +319,9 @@ export function SettingsPage() {
               </div>
               <div className={cx('settings-row')}>
                 <div>
-                  <div className={cx('settings-subheading')}>Gelöschte Dateien auf DAP entfernen</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_delete_missing')}</div>
                   <div className={cx('settings-description')}>
-                    Entfernt Titel im Sync-Ordner, die nicht mehr in Aurora vorhanden sind.
+                    {I18nService.getString('label_settings_dap_delete_missing_desc')}
                   </div>
                 </div>
                 <div className={cx('theme-switch')}>
@@ -365,18 +365,14 @@ export function SettingsPage() {
                     {dapSyncProgress.totalItems}
                   </span>
                   <span>
-                    Restzeit:
+                    {I18nService.getString('label_settings_dap_time_remaining')}
                     {' '}
                     {formatDuration(dapSyncProgress.etaMs)}
                   </span>
                 </div>
                 {!!dapSyncProgress.resumedFromProcessedItems && !dapSyncProgress.isRunning && (
                   <div className={cx('settings-description')}>
-                    Fortsetzbar ab
-                    {' '}
-                    {dapSyncProgress.resumedFromProcessedItems}
-                    {' '}
-                    bereits verarbeiteten Dateien.
+                    {I18nService.getString('label_settings_dap_resumable').replace('{count}', String(dapSyncProgress.resumedFromProcessedItems))}
                   </div>
                 )}
                 {dapSyncProgress.errorMessage && (
@@ -419,51 +415,24 @@ export function SettingsPage() {
             <div className={cx('settings-info-item')}>
               <Icon name={Icons.Github}/>
               <div>
-                <div className={cx('settings-info-title')}>Fork-Information</div>
+                <div className={cx('settings-info-title')}>{I18nService.getString('settings_info_fork_title')}</div>
                 <div className={cx('settings-description')}>
-                  Ich habe das Projekt geforkt, weil ich einen echten All-in-One-FLAC-Player gesucht habe und in Aurora dafür eine starke technische Basis gesehen habe.
+                  {I18nService.getString('settings_info_fork_desc_1')}
                 </div>
                 <div className={cx('settings-description')}>
-                  Für meine tägliche Nutzung fehlten mir jedoch mehrere Kernfunktionen, die ich nicht nur konfigurieren, sondern tief in der Architektur erweitern wollte.
-                </div>
-                <div className={cx('settings-description')}>
-                  Aus diesem Grund ist aus dem ursprünglichen Projekt
-                  {' '}
-                  ein klar fokussierter Fork entstanden, der auf Stabilität,
-                  {' '}
-                  gute Bedienbarkeit und einen reproduzierbaren
-                  {' '}
-                  Bibliotheks-Workflow ausgelegt ist.
-                </div>
-                <div className={cx('settings-description')}>
-                  Seit dem Fork wurden unter anderem CD-Import
-                  {' '}
-                  mit Discogs-Integration, robusteres Datenbank-Handling,
-                  {' '}
-                  DAP-Sync, Podcast-Verzeichnisse sowie zahlreiche
-                  {' '}
-                  UI-Optimierungen inklusive Light- und Dark-Mode ergänzt.
+                  {I18nService.getString('settings_info_fork_desc_2')}
                 </div>
                 <Link href={originalRepositoryLink} className={cx('settings-info-link')}>
-                  Original Repository öffnen
+                  {I18nService.getString('link_open_original_repo')}
                 </Link>
               </div>
             </div>
             <div className={cx('settings-info-item')}>
               <Icon name={Icons.Refresh}/>
               <div>
-                <div className={cx('settings-info-title')}>Entwicklung mit KI-Unterstützung</div>
+                <div className={cx('settings-info-title')}>{I18nService.getString('settings_info_ai_title')}</div>
                 <div className={cx('settings-description')}>
-                  Die Weiterentwicklung erfolgt mit KI-Unterstützung, damit Ideen schneller in lauffähige Implementierungen überführt werden können.
-                </div>
-                <div className={cx('settings-description')}>
-                  Das beschleunigt Iterationen in Bereichen wie UI-Feinschliff, Datenfluss, Importlogik und Qualitätsverbesserungen.
-                </div>
-                <div className={cx('settings-description')}>
-                  Gleichzeitig bleibt die technische Entscheidungshoheit bewusst im Projekt: neue Änderungen werden geprüft, getestet und auf den praktischen Nutzen im Alltag ausgerichtet.
-                </div>
-                <div className={cx('settings-description')}>
-                  So entsteht ein schneller Entwicklungszyklus, ohne die Kontrolle über Funktion, Stabilität und langfristige Wartbarkeit zu verlieren.
+                  {I18nService.getString('settings_info_ai_desc')}
                 </div>
               </div>
             </div>

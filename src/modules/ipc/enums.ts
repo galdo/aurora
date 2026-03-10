@@ -31,6 +31,7 @@ export enum IPCCommChannel {
   DeviceSearchDiscogsReleases = 'device:search_discogs_releases',
   DeviceGetDiscogsRelease = 'device:get_discogs_release',
   DeviceImportAudioCd = 'device:import_audio_cd',
+  DeviceWriteFlacMetadata = 'device:write_flac_metadata',
 }
 
 export enum IPCRendererCommChannel {
@@ -41,4 +42,5 @@ export enum IPCRendererCommChannel {
   UIOpenSettings = 'ui:open_settings',
   // device
   DeviceAudioCdUpdate = 'device:audio_cd_update',
+  DeviceAudioCdImportProgress = 'device:audio_cd_import_progress',
 }

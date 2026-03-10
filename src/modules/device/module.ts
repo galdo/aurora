@@ -4,6 +4,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { IAppMain, IAppModule } from '../../interfaces';
 import { IPCCommChannel, IPCMain, IPCRendererCommChannel } from '../ipc';
+import { ImageModule } from '../image/module';
 
 const debug = require('debug')('aurora:module:device');
 
@@ -37,6 +38,7 @@ export class DeviceModule implements IAppModule {
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceSearchDiscogsReleases, this.searchDiscogsReleases, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceGetDiscogsRelease, this.getDiscogsRelease, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceImportAudioCd, this.importAudioCd, this);
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceWriteFlacMetadata, this.writeFlacMetadata, this);
   }
 
   private writeCdMatchingCli(label: string, payload: unknown) {
@@ -54,7 +56,7 @@ export class DeviceModule implements IAppModule {
     return {
       present: !!this.currentCdPath,
       path: this.currentCdPath,
-      name: this.currentCdName
+      name: this.currentCdName,
     };
   }
 
@@ -122,7 +124,7 @@ export class DeviceModule implements IAppModule {
   }
 
   private async ejectAudioCd() {
-    const currentCdPath = this.currentCdPath;
+    const { currentCdPath } = this;
     const commandResults: Array<{ command: string, status: number | null, stderr: string }> = [];
     const runCommand = (command: string, args: string[]) => {
       const result = spawnSync(command, args, { encoding: 'utf-8' });
@@ -630,6 +632,7 @@ export class DeviceModule implements IAppModule {
       ].filter(Boolean).join(', '),
       cover_image: highResCoverImage,
       tracks: tracklist
+        // eslint-disable-next-line no-underscore-dangle
         .filter((t: any) => t.type_ === 'track')
         .map((t: any, index: number) => ({
           number: index + 1,
@@ -648,6 +651,7 @@ export class DeviceModule implements IAppModule {
       title?: string;
       year?: number;
       genre?: string;
+      cover_image_url?: string;
       tracks?: Array<{ title?: string }>;
     };
   }) {
@@ -666,6 +670,21 @@ export class DeviceModule implements IAppModule {
     const albumYear = input.metadata?.year ? String(input.metadata.year) : '';
     const albumGenre = (input.metadata?.genre || '').trim();
     const namingTemplate = (input.namingTemplate || '<Künstler> - <Album-Title> (<Erscheinungsjahr>)').trim();
+
+    let coverImagePath: string | undefined;
+    if (input.metadata?.cover_image_url) {
+      try {
+        const tempCoverPath = await this.downloadImage(input.metadata.cover_image_url);
+        coverImagePath = await this.app.getModule(ImageModule).getSharpModule().scaleImage(tempCoverPath, {
+          width: 400,
+          height: 400,
+        });
+        // clean up temp download
+        await fs.promises.unlink(tempCoverPath).catch(() => {});
+      } catch (err) {
+        console.error('Failed to process cover image', err);
+      }
+    }
 
     const albumDirectoryName = this.sanitizePathSegment(
       this.resolveNamingTemplate(namingTemplate, {
@@ -700,6 +719,12 @@ export class DeviceModule implements IAppModule {
       const outputName = `${String(index + 1).padStart(2, '0')} - ${this.sanitizePathSegment(trackTitle)}.flac`;
       const outputPath = path.join(targetDirectory, outputName);
 
+      this.app.sendMessageToRenderer(IPCRendererCommChannel.DeviceAudioCdImportProgress, {
+        total: audioFiles.length,
+        current: index + 1,
+        trackName: trackTitle,
+      });
+
       this.convertToFlac(sourceTrack.path, outputPath, {
         artist: albumArtist,
         albumArtist,
@@ -708,7 +733,7 @@ export class DeviceModule implements IAppModule {
         year: albumYear,
         genre: albumGenre,
         track: `${index + 1}/${audioFiles.length}`,
-      });
+      }, coverImagePath);
 
       convertedFiles.push(outputPath);
     }
@@ -720,21 +745,38 @@ export class DeviceModule implements IAppModule {
     };
   }
 
+  private async downloadImage(url: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const tempPath = path.join(this.app.createDataDir('Temp'), `cover-${Date.now()}.jpg`);
+      const file = fs.createWriteStream(tempPath);
+      https.get(url, (response) => {
+        response.pipe(file);
+        file.on('finish', () => {
+          file.close();
+          resolve(tempPath);
+        });
+      }).on('error', (err) => {
+        fs.unlink(tempPath, () => {});
+        reject(err);
+      });
+    });
+  }
+
   private resolveNamingTemplate(template: string, values: {
     artist: string;
     album: string;
     year: string;
   }) {
     const replacements: Record<string, string> = {
-      'künstler': values.artist,
-      'artist': values.artist,
+      künstler: values.artist,
+      artist: values.artist,
       'album-artist': values.artist,
       'album artist': values.artist,
       'album-title': values.album,
       'album title': values.album,
-      'album': values.album,
-      'erscheinungsjahr': values.year,
-      'year': values.year,
+      album: values.album,
+      erscheinungsjahr: values.year,
+      year: values.year,
     };
 
     return template.replace(/<([^>]+)>/g, (_matched, key) => {
@@ -745,7 +787,8 @@ export class DeviceModule implements IAppModule {
 
   private sanitizePathSegment(value: string): string {
     return value
-      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
+      // eslint-disable-next-line no-control-regex
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -763,12 +806,34 @@ export class DeviceModule implements IAppModule {
     year?: string;
     genre?: string;
     track: string;
-  }) {
+  }, coverImagePath?: string) {
     if (this.commandExists('ffmpeg')) {
       const ffmpegArgs = [
         '-y',
         '-i',
         source,
+      ];
+
+      if (coverImagePath) {
+        ffmpegArgs.push(
+          '-i',
+          coverImagePath,
+          '-map',
+          '0:0',
+          '-map',
+          '1:0',
+          '-c:v',
+          'copy',
+          '-disposition:v',
+          'attached_pic',
+          '-metadata:s:v',
+          'title="Album cover"',
+          '-metadata:s:v',
+          'comment="Cover (front)"',
+        );
+      }
+
+      ffmpegArgs.push(
         '-c:a',
         'flac',
         '-metadata',
@@ -781,7 +846,7 @@ export class DeviceModule implements IAppModule {
         `title=${tags.title}`,
         '-metadata',
         `track=${tags.track}`,
-      ];
+      );
 
       if (tags.year) {
         ffmpegArgs.push('-metadata', `date=${tags.year}`);
@@ -798,40 +863,104 @@ export class DeviceModule implements IAppModule {
       return;
     }
 
-    if (!this.commandExists('afconvert')) {
-      throw new Error('afconvert is not available on this system');
+    if (this.commandExists('metaflac')) {
+      // fallback to afconvert + metaflac (macOS only)
+      const wavTemp = target.replace('.flac', '.wav');
+      spawnSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16', source, wavTemp]);
+      spawnSync('flac', ['-f', wavTemp, '-o', target]);
+      fs.unlinkSync(wavTemp);
+
+      const metaflacArgs = [
+        '--remove-all-tags',
+        `--set-tag=ARTIST=${tags.artist}`,
+        `--set-tag=ALBUMARTIST=${tags.albumArtist}`,
+        `--set-tag=ALBUM=${tags.album}`,
+        `--set-tag=TITLE=${tags.title}`,
+        `--set-tag=TRACKNUMBER=${tags.track}`,
+      ];
+
+      if (tags.year) {
+        metaflacArgs.push(`--set-tag=DATE=${tags.year}`);
+      }
+      if (tags.genre) {
+        metaflacArgs.push(`--set-tag=GENRE=${tags.genre}`);
+      }
+      if (coverImagePath) {
+        metaflacArgs.push(`--import-picture-from=3:image/jpeg:Cover (front)::${coverImagePath}`);
+      }
+
+      metaflacArgs.push(target);
+      spawnSync('metaflac', metaflacArgs);
+    }
+  }
+
+  private async writeFlacMetadata(input: {
+    filePath: string;
+    tags: {
+      artist?: string;
+      album?: string;
+      title?: string;
+      year?: string;
+      genre?: string;
+    };
+    coverImage?: string | Buffer;
+  }) {
+    const { filePath, tags, coverImage } = input;
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`File not found: ${filePath}`);
     }
 
-    const convertResult = spawnSync('afconvert', ['-f', 'flac', '-d', 'LEI16', source, '-o', target], {
-      encoding: 'utf-8',
-    });
-    if (convertResult.status !== 0) {
-      throw new Error(convertResult.stderr || 'afconvert failed to convert track');
+    let coverImagePath: string | undefined;
+    if (coverImage) {
+      try {
+        coverImagePath = await this.app.getModule(ImageModule).getSharpModule().scaleImage(coverImage, {
+          width: 400,
+          height: 400,
+        });
+      } catch (err) {
+        console.error('Failed to process cover image for metadata update', err);
+      }
     }
 
-    if (!this.commandExists('metaflac')) {
-      throw new Error('metaflac is required to write FLAC metadata');
-    }
+    if (this.commandExists('metaflac')) {
+      const metaflacArgs: string[] = [];
 
-    const metaflacArgs = [
-      '--remove-all-tags',
-      `--set-tag=ARTIST=${tags.artist}`,
-      `--set-tag=ALBUMARTIST=${tags.albumArtist}`,
-      `--set-tag=ALBUM=${tags.album}`,
-      `--set-tag=TITLE=${tags.title}`,
-      `--set-tag=TRACKNUMBER=${tags.track.split('/')[0]}`,
-    ];
-    if (tags.year) {
-      metaflacArgs.push(`--set-tag=DATE=${tags.year}`);
-    }
-    if (tags.genre) {
-      metaflacArgs.push(`--set-tag=GENRE=${tags.genre}`);
-    }
-    metaflacArgs.push(target);
+      if (tags.artist) {
+        metaflacArgs.push('--remove-tag=ARTIST', `--set-tag=ARTIST=${tags.artist}`);
+      }
+      if (tags.album) {
+        metaflacArgs.push('--remove-tag=ALBUM', `--set-tag=ALBUM=${tags.album}`);
+      }
+      if (tags.title) {
+        metaflacArgs.push('--remove-tag=TITLE', `--set-tag=TITLE=${tags.title}`);
+      }
+      if (tags.year) {
+        metaflacArgs.push('--remove-tag=DATE', `--set-tag=DATE=${tags.year}`);
+      }
+      if (tags.genre) {
+        metaflacArgs.push('--remove-tag=GENRE', `--set-tag=GENRE=${tags.genre}`);
+      }
 
-    const tagResult = spawnSync('metaflac', metaflacArgs, { encoding: 'utf-8' });
-    if (tagResult.status !== 0) {
-      throw new Error(tagResult.stderr || 'metaflac failed to write FLAC metadata');
+      if (coverImagePath) {
+        metaflacArgs.push('--remove', '--block-type=PICTURE');
+        metaflacArgs.push(`--import-picture-from=3:image/jpeg:Cover (front)::${coverImagePath}`);
+      }
+
+      if (metaflacArgs.length > 0) {
+        metaflacArgs.push(filePath);
+        const result = spawnSync('metaflac', metaflacArgs, { encoding: 'utf-8' });
+        if (result.status !== 0) {
+          throw new Error(result.stderr || 'metaflac failed to update metadata');
+        }
+      }
+    } else {
+      // ffmpeg metadata update (requires copying stream)
+      // ffmpeg -i input.flac -c copy -metadata key=value output.flac
+      // This is more complex as it requires a temp file.
+      // For now, throw error if metaflac is missing, or implement ffmpeg logic if really needed.
+      // The user likely has metaflac if they are doing this.
+      // But let's be safe.
+      throw new Error('metaflac is required for updating FLAC metadata in-place');
     }
   }
 
@@ -887,7 +1016,7 @@ export class DeviceModule implements IAppModule {
 
     // Initial check
     this.checkVolumes();
-    
+
     // Start watching
     this.startWatching();
 
@@ -951,10 +1080,12 @@ export class DeviceModule implements IAppModule {
       let cdPath = '';
       let cdName = '';
 
-      for (const dir of visibleDirectories) {
+      for (let i = 0; i < visibleDirectories.length; i += 1) {
+        const dir = visibleDirectories[i];
         const fullPath = path.join(this.volumesPath, dir.name);
+        // eslint-disable-next-line no-await-in-loop
         const isAudioCd = await this.isAudioCd(fullPath, dir.name);
-        
+
         if (isAudioCd) {
           debug('Audio CD found at: %s', fullPath);
           foundCd = true;
@@ -974,14 +1105,12 @@ export class DeviceModule implements IAppModule {
           this.sendUpdate(true, cdPath, cdName);
         }
         this.currentCdLastSeenAt = Date.now();
-      } else {
-        if (this.currentCdPath !== null) {
-          const cdWasSeenRecently = (Date.now() - this.currentCdLastSeenAt) < this.cdAbsenceGracePeriodMs;
-          if (!cdWasSeenRecently) {
-            this.currentCdPath = null;
-            this.currentCdName = null;
-            this.sendUpdate(false);
-          }
+      } else if (this.currentCdPath !== null) {
+        const cdWasSeenRecently = (Date.now() - this.currentCdLastSeenAt) < this.cdAbsenceGracePeriodMs;
+        if (!cdWasSeenRecently) {
+          this.currentCdPath = null;
+          this.currentCdName = null;
+          this.sendUpdate(false);
         }
       }
     } catch (error) {
@@ -1007,7 +1136,7 @@ export class DeviceModule implements IAppModule {
       return false;
     }
 
-    const code = (error as { code?: string }).code;
+    const { code } = (error as { code?: string });
     return code === 'EACCES' || code === 'EPERM';
   }
 
@@ -1106,8 +1235,8 @@ export class DeviceModule implements IAppModule {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  private sendUpdate(present: boolean, path?: string, name?: string) {
-    debug('Sending CD update:', { present, path, name });
-    this.app.sendMessageToRenderer(IPCRendererCommChannel.DeviceAudioCdUpdate, { present, path, name });
+  private sendUpdate(present: boolean, cdPath?: string, name?: string) {
+    debug('Sending CD update:', { present, cdPath, name });
+    this.app.sendMessageToRenderer(IPCRendererCommChannel.DeviceAudioCdUpdate, { present, path: cdPath, name });
   }
 }

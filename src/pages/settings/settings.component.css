@@ -30,17 +30,18 @@
   position: sticky;
   top: 24px;
   min-height: calc(100vh - 48px);
-  overflow: hidden;
+  align-self: start;
+  overflow: hidden; /* Ensure logo doesn't overflow */
 }
 
 .settings-info-logo {
   position: absolute;
   inset: 0;
   background-repeat: no-repeat;
-  background-position: center 46%;
-  background-size: min(380px, 95%);
-  opacity: 0.07;
-  filter: grayscale(1) brightness(0.72);
+  background-position: center 20%; /* Move logo up slightly */
+  background-size: min(300px, 80%); /* Reduce size */
+  opacity: 0.05; /* Reduce opacity further */
+  filter: grayscale(1) brightness(0.8);
   pointer-events: none;
   z-index: 0;
 }

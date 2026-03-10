@@ -8,10 +8,10 @@ import React, {
   useState,
 } from 'react';
 import ReactDOM from 'react-dom';
-import { Form, Modal } from 'react-bootstrap';
+import { Form, Modal, ProgressBar } from 'react-bootstrap';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../reducers';
-import { IPCRenderer, IPCCommChannel } from '../../modules/ipc';
+import { IPCRenderer, IPCCommChannel, IPCRendererCommChannel } from '../../modules/ipc';
 import {
   MediaArtistLink,
   MediaCoverPicture,
@@ -86,6 +86,11 @@ export function AudioCdPage() {
   const [discogsSearchTitle, setDiscogsSearchTitle] = useState('');
   const [discogsSearchArtist, setDiscogsSearchArtist] = useState('');
   const [hasDiscogsMetadata, setHasDiscogsMetadata] = useState(false);
+  const [importProgress, setImportProgress] = useState<{
+    total: number;
+    current: number;
+    trackName?: string;
+  } | null>(null);
   const autoDiscogsLookupKeyRef = useRef<string>('');
   const dismissedAutoDialogCdKeyRef = useRef<string>('');
   const hydratedDiscogsCacheKeyRef = useRef<string>('');
@@ -484,6 +489,16 @@ export function AudioCdPage() {
   }, [audioCd?.name, audioCd?.path, audioCd?.present, inferredArtistQuery]);
 
   useEffect(() => {
+    const handler = (progress: { total: number; current: number; trackName: string }) => {
+      setImportProgress(progress);
+    };
+    const listener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.DeviceAudioCdImportProgress, handler);
+    return () => {
+      IPCRenderer.removeMessageHandler(IPCRendererCommChannel.DeviceAudioCdImportProgress, listener);
+    };
+  }, []);
+
+  useEffect(() => {
     MediaProviderService
       .getMediaProviderSettings(MediaLocalConstants.Provider)
       .then((settings) => {
@@ -647,6 +662,17 @@ export function AudioCdPage() {
     selectedDiscogsRelease,
   ]);
 
+  useEffect(() => {
+    const handleImportProgress = (progress: { total: number; current: number; trackName?: string }) => {
+      setImportProgress(progress);
+    };
+
+    const listener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.DeviceAudioCdImportProgress, handleImportProgress);
+    return () => {
+      IPCRenderer.removeMessageHandler(IPCRendererCommChannel.DeviceAudioCdImportProgress, listener);
+    };
+  }, []);
+
   const refreshDiscogsSearch = useCallback(async () => {
     if (!discogsToken || !(discogsSearchTitle || audioCd?.name)) {
       return;
@@ -723,6 +749,7 @@ export function AudioCdPage() {
 
     setIsImporting(true);
     setStatusMessage('');
+    setImportProgress(null);
 
     try {
       const result = await IPCRenderer.sendAsyncMessage(IPCCommChannel.DeviceImportAudioCd, {
@@ -789,10 +816,26 @@ export function AudioCdPage() {
   const trackListTracks = useMemo(() => (
     tracks.map((track, index) => {
       const mappedTrackName = selectedDiscogsRelease?.tracks?.[index]?.title || track.track_name;
+      let status: 'completed' | 'in-progress' | undefined;
+
+      if (isImporting && importProgress) {
+        if (index < importProgress.current - 1) {
+          status = 'completed';
+        } else if (index === importProgress.current - 1) {
+          status = 'in-progress';
+        }
+      }
+
+      const extra = {
+        ...track.extra,
+        status,
+      };
+
       if (!discogsTrackArtist) {
         return {
           ...track,
           track_name: mappedTrackName,
+          extra,
         };
       }
 
@@ -801,9 +844,10 @@ export function AudioCdPage() {
         track_name: mappedTrackName,
         track_artist_ids: [discogsTrackArtist.id],
         track_artists: [discogsTrackArtist],
+        extra,
       };
     })
-  ), [discogsTrackArtist, selectedDiscogsRelease?.tracks, tracks]);
+  ), [discogsTrackArtist, selectedDiscogsRelease?.tracks, tracks, isImporting, importProgress]);
   const selectedDiscogsCandidate = useMemo(
     () => discogsReleases.find(release => release.id === selectedDiscogsReleaseId) || null,
     [discogsReleases, selectedDiscogsReleaseId],
@@ -1016,6 +1060,21 @@ export function AudioCdPage() {
       {statusMessage && (
         <div className={cx('audio-cd-status')}>
           {statusMessage}
+        </div>
+      )}
+
+      {isImporting && importProgress && (
+        <div className={cx('audio-cd-progress')}>
+          <ProgressBar
+            now={(importProgress.current / importProgress.total) * 100}
+            label={`${Math.round((importProgress.current / importProgress.total) * 100)}%`}
+            animated
+            variant="success"
+            className={cx('audio-cd-progress-bar')}
+          />
+          <div className={cx('audio-cd-progress-text')}>
+            {importProgress.trackName || '...'}
+          </div>
         </div>
       )}
 

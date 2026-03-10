@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import NodeID3 from 'node-id3';
 
 import { MediaArtistDatastore, MediaTrackDatastore } from '../datastores';
 import { IMediaArtist, IMediaTrack, IMediaTrackData } from '../interfaces';
@@ -6,6 +7,7 @@ import { MediaLibraryActions } from '../enums';
 import { MediaUtils } from '../utils';
 import { DataStoreFilterData, DataStoreUpdateData } from '../modules/datastore';
 import store from '../store';
+import { IPCRenderer, IPCCommChannel } from '../modules/ipc';
 
 import { MediaArtistService } from './media-artist.service';
 import { MediaAlbumService } from './media-album.service';
@@ -103,6 +105,70 @@ export class MediaTrackService {
     }
 
     return this.buildMediaTrack(mediaTrackData, true);
+  }
+
+  static async syncTrackMetadata(mediaTrackId: string): Promise<void> {
+    const mediaTrack = await this.getMediaTrack(mediaTrackId);
+    if (!mediaTrack) {
+      return;
+    }
+
+    const extra = (mediaTrack.extra as any);
+    if (!extra || !extra.file_path) {
+      return;
+    }
+
+    const filePath = extra.file_path;
+    const isMp3 = filePath.toLowerCase().endsWith('.mp3');
+    const isFlac = filePath.toLowerCase().endsWith('.flac');
+
+    if (!isMp3 && !isFlac) {
+      return;
+    }
+
+    const tags: any = {
+      title: mediaTrack.track_name,
+      trackNumber: mediaTrack.track_number ? String(mediaTrack.track_number) : undefined,
+    };
+
+    if (mediaTrack.track_artists && mediaTrack.track_artists.length > 0) {
+      tags.artist = mediaTrack.track_artists.map(a => a.artist_name).join(', ');
+      tags.performerInfo = tags.artist;
+    }
+
+    if (mediaTrack.track_album) {
+      tags.album = mediaTrack.track_album.album_name;
+      if (mediaTrack.track_album.album_year) {
+        tags.year = String(mediaTrack.track_album.album_year);
+      }
+      if (mediaTrack.track_album.album_genre) {
+        tags.genre = mediaTrack.track_album.album_genre;
+      }
+    }
+
+    let coverImage: string | undefined;
+    if (mediaTrack.track_cover_picture && mediaTrack.track_cover_picture.image_data) {
+      coverImage = mediaTrack.track_cover_picture.image_data.replace(/^file:\/\//, '');
+    } else if (mediaTrack.track_album && mediaTrack.track_album.album_cover_picture && mediaTrack.track_album.album_cover_picture.image_data) {
+      coverImage = mediaTrack.track_album.album_cover_picture.image_data.replace(/^file:\/\//, '');
+    }
+
+    try {
+      if (isMp3) {
+        const result = NodeID3.update(tags, filePath);
+        if ((result as any) !== true) {
+          console.warn(`Failed to update tags for ${filePath}`, result);
+        }
+      } else if (isFlac) {
+        await IPCRenderer.sendAsyncMessage(IPCCommChannel.DeviceWriteFlacMetadata, {
+          filePath,
+          tags,
+          coverImage,
+        });
+      }
+    } catch (error) {
+      console.error(`Error updating tags for ${filePath}`, error);
+    }
   }
 
   static loadMediaAlbumTracks(mediaAlbumId: string): void {
