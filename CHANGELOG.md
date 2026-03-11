@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-03-11
+
+### Added
+- Equalizer-Seite mit mehrbandiger Regelung, Headroom-Kompensation und Reset
+- Podcast-Bereich mit Discovery-Flow, Abo-Verwaltung und Sideview-Details
+- DAP-Sync-Unterstützung für Podcast-Episoden im Zielordner `Podcasts`
+- Album-Header-Aktionen in der Topbar mit Repeat- und mehrstufigem Shuffle-Verhalten
+- Verbesserte Playlist-/Cover-Generierung für Sammlungen und konvertierte Album-Playlists
+
+### Changed
+- Topbar-Layout neu geordnet: Umschalter direkt neben Suche, Sortierung/Zoom in den rechten Actions-Bereich
+- Kontextbezogene Plus-Aktion im Header für Playlists und Podcasts direkt links neben Global Shuffle
+- Podcasts-Titel aus der Topbar entfernt und als große grüne Seitenüberschrift im Content-Bereich dargestellt
+- Player-Interaktionen überarbeitet: Like-Button neben Queue/Volume positioniert und Größen vereinheitlicht
+- Playlist-Collagen stabilisiert: Regeneration nur einmal pro App-Session statt bei jedem Ansichtswechsel
+- Build-Metadaten für macOS erweitert, um App-Name konsistent als „Aurora Pulse“ anzuzeigen
+
+### Fixed
+- M3U/M3U8/M3U8-DAP-Exporte sind auch für aus Alben erzeugte (versteckte) Playlists verfügbar
+- Numerische Track-Sortierung für aus Alben erzeugte Playlists korrigiert
+- Robusteres Cover-Clustering für Hidden-Album-Playlists verhindert fehlerhafte Einzelcover-Fälle
+- Medien-Session-Steuerung auf macOS stabilisiert (Verhalten der Hardware-Tasten verbessert)
+
 ## [1.3.2] - 2026-03-10
 
 ### Added
@@ -13,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CD-Import/Edit: Cover-Bilder werden beim Speichern in FLAC-Dateien auf max. 400x400 skaliert geschrieben
 
 ### Changed
-- Settings: Info-Texte zum Aurora-Fork in DE/EN auf sachliche, ausführliche Beschreibung umgestellt
+- Settings: Info-Texte zum Aurora-Pulse-Fork in DE/EN auf sachliche, ausführliche Beschreibung umgestellt
 - Settings: Layout so angepasst, dass nur die linke Spalte scrollt und die Info-Spalte fest bleibt
 - Settings: Hintergrundlogo in der Info-Spalte als sichtbare Gravur verstärkt
 

@@ -70,9 +70,10 @@
   --size: 2.75rem;
   --scale: 1;
 
-  inline-size: calc(var(--size) * var(--scale));
-  aspect-ratio: 1 / 1;
-  border-radius: 9999px;
+  box-sizing: border-box;
+  width: calc(var(--size) * var(--scale));
+  height: calc(var(--size) * var(--scale));
+  border-radius: 50%;
   display: inline-grid;
   place-items: center;
   padding: 0;
@@ -85,7 +86,7 @@
 }
 
 .button.rounded.lg {
-  --scale: 1.2;
+  --scale: 1.25;
 }
 
 .button.rounded.outline {

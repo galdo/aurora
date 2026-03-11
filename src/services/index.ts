@@ -13,6 +13,7 @@ import { MediaProviderService } from './media-provider.service';
 import { MediaTrackService } from './media-track.service';
 import { NotificationService } from './notification.service';
 import { PodcastService } from './podcast.service';
+import { EqualizerService } from './equalizer.service';
 
 export {
   AppService,
@@ -29,4 +30,5 @@ export {
   MediaTrackService,
   NotificationService,
   PodcastService,
+  EqualizerService,
 };

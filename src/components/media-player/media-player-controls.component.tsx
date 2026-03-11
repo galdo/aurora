@@ -12,6 +12,7 @@ import { DOM, Events } from '../../utils';
 
 import { Icon } from '../icon/icon.component';
 import { Button } from '../button/button.component';
+import { MediaPlaybackButton } from '../media-playback-button/media-playback-button.component';
 
 import styles from './media-player.component.css';
 
@@ -27,6 +28,9 @@ export function MediaPlayerControls() {
   const isPodcastMode = podcastPlaybackSnapshot.isActive;
 
   const isPlaybackDisabled = mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading;
+  const isPlaying = isPodcastMode
+    ? podcastPlaybackSnapshot.isPlaying
+    : mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing;
 
   useEffect(() => {
     const handleOnKeyDown = (event: KeyboardEvent) => {
@@ -82,38 +86,27 @@ export function MediaPlayerControls() {
         >
           <Icon name={Icons.PlayerPrevious}/>
         </Button>
-        {(isPodcastMode
-          ? podcastPlaybackSnapshot.isPlaying
-          : mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing)
-          ? (
-            <Button
-              className={cx('media-player-control', 'media-player-control-lg')}
-              onButtonSubmit={() => {
-                if (isPodcastMode) {
-                  PodcastService.pausePlayback();
-                } else {
-                  MediaPlayerService.pauseMediaPlayer();
-                }
-              }}
-            >
-              <Icon name={Icons.PlayerPause}/>
-            </Button>
-          )
-          : (
-            <Button
-              disabled={isPlaybackDisabled}
-              className={cx('media-player-control', 'media-player-control-lg')}
-              onButtonSubmit={() => {
-                if (isPodcastMode) {
-                  PodcastService.resumePlayback();
-                } else {
-                  MediaPlayerService.resumeMediaPlayer();
-                }
-              }}
-            >
-              <Icon name={Icons.PlayerPlay}/>
-            </Button>
-          )}
+        <MediaPlaybackButton
+          className={cx('media-player-control', 'media-player-control-lg')}
+          variant={['rounded', 'primary', 'lg']}
+          isPlaying={isPlaying}
+          onPlay={() => {
+            if (isPodcastMode) {
+              PodcastService.resumePlayback();
+            } else {
+              MediaPlayerService.resumeMediaPlayer();
+            }
+          }}
+          onPause={() => {
+            if (isPodcastMode) {
+              PodcastService.pausePlayback();
+            } else {
+              MediaPlayerService.pauseMediaPlayer();
+            }
+          }}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+          aria-disabled={isPlaybackDisabled}
+        />
         <Button
           className={cx('media-player-control', 'media-player-control-md')}
           disabled={isPodcastMode || !MediaPlayerService.hasNextTrack()}

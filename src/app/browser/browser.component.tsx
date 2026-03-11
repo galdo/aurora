@@ -14,9 +14,12 @@ import {
   BrowserNavigation,
   Button,
   Icon,
+  MediaPlaylistWizardModal,
+  MediaPodcastSubscribeModal,
   TextInput,
   RouterSwitchComponent,
 } from '../../components';
+import { useModal } from '../../contexts';
 import { IMediaTrack } from '../../interfaces';
 import { usePersistentScroll } from '../../hooks';
 import {
@@ -205,15 +208,52 @@ function BrowserSearch() {
 
 function BrowserHeader() {
   const [isSyncRunning, setIsSyncRunning] = useState(false);
+  const history = useHistory();
+  const location = useLocation();
+  const { showModal } = useModal();
+  const isPlaylistModule = location.pathname.startsWith(Routes.LibraryPlaylists);
+  const isPodcastModule = location.pathname.startsWith(Routes.Podcasts);
+  const shouldShowCreateButton = isPlaylistModule || isPodcastModule;
 
   return (
     <div className={cx('browser-header', 'app-window-drag')}>
       <BrowserNavigation/>
       <BrowserSearch/>
-      <div id="browser-header-inline-controls" className={cx('browser-header-inline-controls')}/>
+      <BrowserLinks/>
       <div className={cx('browser-header-actions')}>
         <div id="browser-header-context-actions" className={cx('browser-header-context-actions')}/>
-        <BrowserLinks/>
+        <div id="browser-header-inline-controls" className={cx('browser-header-inline-controls')}/>
+        {shouldShowCreateButton && (
+          <Button
+            variant={['rounded', 'outline']}
+            tooltip={isPodcastModule
+              ? I18nService.getString('tooltip_podcast_add')
+              : I18nService.getString('button_create_playlist')}
+            onButtonSubmit={() => {
+              if (isPodcastModule) {
+                showModal(MediaPodcastSubscribeModal, {}, {
+                  dialogClassName: 'podcast-discover-modal-dialog',
+                  backdropClassName: 'podcast-discover-modal-backdrop',
+                });
+                return;
+              }
+
+              showModal(MediaPlaylistWizardModal, {}, {
+                onComplete: (result) => {
+                  if (!result?.createdPlaylist) {
+                    return;
+                  }
+
+                  history.push(StringUtils.buildRoute(Routes.LibraryPlaylist, {
+                    playlistId: result.createdPlaylist.id,
+                  }));
+                },
+              });
+            }}
+          >
+            <Icon name={Icons.Add}/>
+          </Button>
+        )}
         <Button
           variant={['rounded', 'outline']}
           tooltip={I18nService.getString('tooltip_global_shuffle') || 'Alle Titel zufällig wiedergeben'}

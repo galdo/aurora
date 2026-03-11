@@ -1,16 +1,16 @@
-# Aurora
+# Aurora Pulse
 
 [![Downloads](https://img.shields.io/github/downloads/bbbneo333/aurora/total)](https://github.com/bbbneo333/aurora/releases)
 [![CI](https://github.com/bbbneo333/aurora/actions/workflows/checks.yml/badge.svg)](https://github.com/bbbneo333/aurora/actions/workflows/checks.yml)
 
-Aurora is a local-first desktop music player built for people who want full control over their library, playback flow, and data.
-Version **1.3** expands Aurora into a broader media hub with podcasts, advanced sync workflows, and smarter library tooling while keeping the app fast and private.
+Aurora Pulse is a local-first desktop music player built for people who want full control over their library, playback flow, and data.
+Version **1.4** expands Aurora Pulse into a broader media hub with podcasts, advanced sync workflows, and smarter library tooling while keeping the app fast and private.
 
 ![Screenshot Placeholder - Main Interface](docs/images/placeholder-main-interface.png)
 
 ---
 
-## Why Aurora
+## Why Aurora Pulse
 
 - Local-first playback and library management
 - No telemetry, no analytics, and no usage tracking
@@ -18,17 +18,19 @@ Version **1.3** expands Aurora into a broader media hub with podcasts, advanced 
 - Optimized for large FLAC libraries and daily listening workflows
 - Fast iteration on highly requested community features
 
-Aurora is designed to reduce friction: import quickly, organize clearly, sync reliably, and keep listening.
+Aurora Pulse is designed to reduce friction: import quickly, organize clearly, sync reliably, and keep listening.
 
 ---
 
-## What’s New in Version 1.3
+## What’s New in Version 1.4.0
 
-- Dedicated **Podcasts** page with discovery and subscription flows
-- Podcast refresh and local persistence pipeline
+- Dedicated **Podcasts** page with discovery, subscription, and sideview episode workflows
+- New **Equalizer** page with multi-band controls, reset, and headroom compensation
 - DAP sync support for podcast episodes (`Podcasts` target folder)
+- Global topbar improvements: faster navigation, contextual add actions, and cleaner module-specific controls
 - Enhanced album controls with repeat and multi-mode shuffle
-- Improved settings UX, import flows, and smart cover generation
+- Improved compilation handling, playlist cover collage generation, and hidden-album playlist behavior
+- Metadata workflows extended for stable FLAC/MP3 persistence and cleaner post-import consistency
 
 ![Screenshot Placeholder - Version 1.3 Features](docs/images/placeholder-v1-3-features.png)
 
@@ -41,8 +43,11 @@ Aurora is designed to reduce friction: import quickly, organize clearly, sync re
 - Album, artist, and playlist browsing with fast navigation
 - Queue management and contextual playback controls
 - Manual and smart playlists
+- Hidden albums displayed as playlist-like collections
+- Automatic and tolerant playlist cover collage generation
 - CD import with metadata-driven naming templates
 - Podcast discovery, subscriptions, and episode sync
+- Equalizer with multi-band tuning and headroom safety mode
 - DAP sync with progress, ETA, and resume support
 
 ---
@@ -51,7 +56,7 @@ Aurora is designed to reduce friction: import quickly, organize clearly, sync re
 
 ### Library
 
-The library is built around deterministic local indexing. You define source directories, Aurora scans and updates tracks, and the UI reflects changes quickly.
+The library is built around deterministic local indexing. You define source directories, Aurora Pulse scans and updates tracks, and the UI reflects changes quickly.
 For compilation-heavy collections, grouping options and improved sync behavior help keep metadata tidy and browsing consistent.
 
 **Benefits**
@@ -61,9 +66,20 @@ For compilation-heavy collections, grouping options and improved sync behavior h
 
 ![Screenshot Placeholder - Library](docs/images/placeholder-library.png)
 
+### Playback and Queue
+
+Aurora Pulse combines fast transport controls with practical queue tools. Hardware media keys, contextual queue actions, and a streamlined player footer are designed for uninterrupted listening.
+
+**Benefits**
+- Clear transport controls and queue visibility at all times
+- Fast liking, queueing, and playlist actions from player and lists
+- Better consistency between UI state and active playback source
+
+![Screenshot Placeholder - Playback](docs/images/placeholder-playback.png)
+
 ### Podcasts
 
-Aurora 1.3 introduces podcast support as a first-class area. You can discover shows, subscribe, refresh episodes from RSS feeds, and sync selected episodes to your target device.
+Aurora Pulse introduces podcast support as a first-class area. You can discover shows, subscribe, refresh episodes from RSS feeds, and sync selected episodes to your target device.
 Podcast content is managed with the same local-first mindset as music.
 
 **Benefits**
@@ -72,6 +88,17 @@ Podcast content is managed with the same local-first mindset as music.
 - Seamless sync to external listening devices
 
 ![Screenshot Placeholder - Podcasts](docs/images/placeholder-podcasts.png)
+
+### Equalizer
+
+Version 1.4.0 adds a dedicated equalizer workflow with a visual curve, multi-band gain control, and headroom compensation. The equalizer is tuned for quick adjustments without leaving the main listening flow.
+
+**Benefits**
+- Fast tonal shaping for different headphones and rooms
+- Safer loudness behavior with optional headroom compensation
+- Simple reset path back to neutral settings
+
+![Screenshot Placeholder - Equalizer](docs/images/placeholder-equalizer.png)
 
 ### CD Import
 
@@ -103,14 +130,14 @@ This is best for browsing an artist’s wider discography and moving between alb
 
 ## Privacy
 
-Aurora is privacy-first:
+Aurora Pulse is privacy-first:
 
 - No telemetry
 - No analytics
 - No user behavior tracking
 - Local database and local media ownership
 
-Some metadata enrichment flows may perform explicit online lookups when that feature is used, but Aurora does not send analytics or profiling data.
+Some metadata enrichment flows may perform explicit online lookups when that feature is used, but Aurora Pulse does not send analytics or profiling data.
 
 ---
 
@@ -163,6 +190,6 @@ Build artifacts are generated in `release/`.
 ## Credits and License
 
 - Original project by [bbbneo333](https://github.com/bbbneo333)
-- Aurora is licensed under the [MIT License](./LICENSE)
+- Aurora Pulse is licensed under the [MIT License](./LICENSE)
 
 Development of this fork is supported by AI-assisted workflows to accelerate implementation quality and deliver highly requested features from the original repository faster.

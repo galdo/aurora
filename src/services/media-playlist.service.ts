@@ -29,6 +29,7 @@ import { I18nService } from './i18n.service';
 import { MediaTrackService } from './media-track.service';
 import { NotificationService } from './notification.service';
 import { AppService } from './app.service';
+import { MediaLibraryService } from './media-library.service';
 
 export class MediaLibraryPlaylistDuplicateTracksError extends BaseError {
   existingTrackDataList: IMediaPlaylistTrackInputData[] = [];
@@ -270,6 +271,55 @@ export class MediaPlaylistService {
     return filePath;
   }
 
+  static async exportMediaPlaylistToDap(mediaPlaylistId: string): Promise<string> {
+    const mediaPlaylist = await this.getMediaPlaylist(mediaPlaylistId);
+    if (!mediaPlaylist) {
+      throw new Error(`MediaPlaylistService encountered error at exportMediaPlaylistToDap - Playlist not found - ${mediaPlaylistId}`);
+    }
+
+    const dapSettings = MediaLibraryService.getDapSyncSettings();
+    const targetDirectoryPath = String(dapSettings.targetDirectory || '').trim();
+    if (!targetDirectoryPath) {
+      NotificationService.showMessage(I18nService.getString('message_playlist_export_dap_target_missing'));
+      return '';
+    }
+
+    const playlistTracks = await this.resolveMediaPlaylistTracks(mediaPlaylistId);
+    const playlistDirectoryPath = path.join(targetDirectoryPath, 'Music', 'Playlists');
+    fs.mkdirSync(playlistDirectoryPath, { recursive: true });
+
+    const fileName = `${this.sanitizePlaylistFileName(mediaPlaylist.name)}.m3u8`;
+    const filePath = path.join(playlistDirectoryPath, fileName);
+
+    const lines: string[] = ['#EXTM3U'];
+    playlistTracks.forEach((track) => {
+      const trackFilePath = _.get(track, 'extra.file_path');
+      if (!trackFilePath || typeof trackFilePath !== 'string') {
+        return;
+      }
+
+      const artist = track.track_artists?.[0]?.artist_name || track.track_album?.album_artist?.artist_name || '';
+      const trackName = track.track_name || '';
+      const title = artist ? `${artist} - ${trackName}` : trackName;
+      const duration = Math.max(0, Math.round(track.track_duration || 0));
+      const relativePath = (path.relative(playlistDirectoryPath, trackFilePath) || path.basename(trackFilePath)).split(path.sep).join('/');
+
+      lines.push(`#EXTINF:${duration},${title}`);
+      lines.push(relativePath);
+    });
+
+    fs.writeFileSync(filePath, `${lines.join('\n')}\n`, {
+      encoding: 'utf8',
+    });
+
+    NotificationService.showMessage(I18nService.getString('message_playlist_exported', {
+      playlistName: mediaPlaylist.name,
+      format: 'M3U8 DAP',
+    }));
+
+    return filePath;
+  }
+
   /**
    * @throws MediaLibraryPlaylistDuplicateTracksError
    */
@@ -364,7 +414,13 @@ export class MediaPlaylistService {
       const albumTracks = await MediaTrackDatastore.findMediaTracks({
         track_album_id: mediaAlbumData.id,
       });
-      playlistTracks = albumTracks.map(track => ({
+      // ensure numeric track order for hidden albums
+      const albumTracksSorted = [...albumTracks].sort((a, b) => {
+        const aNum = Number(a.track_number) || 0;
+        const bNum = Number(b.track_number) || 0;
+        return aNum - bNum;
+      });
+      playlistTracks = albumTracksSorted.map(track => ({
         playlist_track_id: track.id,
         provider: track.provider,
         provider_id: track.provider_id,

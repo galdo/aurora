@@ -53,14 +53,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.26;
   pointer-events: none;
 }
 
 .settings-info-logo-image {
-  width: min(420px, 88%);
+  width: min(360px, 80%);
   height: auto;
   display: block;
+  opacity: 0.32;
+  background: transparent;
 }
 
 .settings-header {
@@ -147,6 +148,36 @@
   color: #35c26b !important;
   font-size: 13px;
   font-weight: 400;
+}
+
+.settings-info-subtitle {
+  color: var(--text-light-color);
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: 12px;
+  margin-bottom: 6px;
+}
+
+.settings-info-feature-list {
+  margin: 0 0 10px 0;
+  padding-left: 18px;
+  color: var(--text-dark-color);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.settings-info-source-links {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-info-source-link {
+  color: #35c26b !important;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.25;
 }
 
 .theme-switch {

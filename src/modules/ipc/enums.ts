@@ -40,6 +40,8 @@ export enum IPCRendererCommChannel {
   StateRemovePersisted = 'state:remove_persisted',
   // ui
   UIOpenSettings = 'ui:open_settings',
+  // media
+  MediaHardwareControl = 'media:hardware_control',
   // device
   DeviceAudioCdUpdate = 'device:audio_cd_update',
   DeviceAudioCdImportProgress = 'device:audio_cd_import_progress',

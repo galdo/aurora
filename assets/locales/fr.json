@@ -209,5 +209,7 @@
   "label_audio_cd_no_results_found": "Aucun résultat trouvé.",
   "label_audio_cd_unknown_year": "Année inconnue",
   "label_audio_cd_probability": "{probability}% probabilité de correspondance",
-  "button_audio_cd_select": "Sélectionner"
+  "button_audio_cd_select": "Sélectionner",
+  "label_equalizer_headroom_compensation": "Compensation de headroom",
+  "label_equalizer_headroom_compensation_description": "Réduit automatiquement le préampli lors d'un boost EQ positif"
 }

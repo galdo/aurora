@@ -155,6 +155,9 @@ export class MediaTrackService {
 
     try {
       if (isMp3) {
+        if (coverImage) {
+          tags.image = coverImage;
+        }
         const result = NodeID3.update(tags, filePath);
         if ((result as any) !== true) {
           console.warn(`Failed to update tags for ${filePath}`, result);

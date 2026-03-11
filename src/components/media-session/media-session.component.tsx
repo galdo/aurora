@@ -3,9 +3,9 @@ import { useSelector } from 'react-redux';
 
 import { MediaEnums } from '../../enums';
 import { RootState } from '../../reducers';
-import { MediaPlayerService } from '../../services';
+import { MediaPlayerService, PodcastService } from '../../services';
 import { IMediaTrack } from '../../interfaces';
-import { IPCRenderer, IPCCommChannel } from '../../modules/ipc';
+import { IPCRenderer, IPCCommChannel, IPCRendererCommChannel } from '../../modules/ipc';
 
 const debug = require('debug')('aurora:component:media_session');
 
@@ -43,6 +43,48 @@ const getSessionArtworkForMediaTrack = (mediaTrack: IMediaTrack): MediaImage | u
 export function MediaSession() {
   const mediaPlayer = useSelector((state: RootState) => state.mediaPlayer);
   const { mediaSession } = navigator;
+
+  useEffect(() => {
+    const messageListener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.MediaHardwareControl, (action: 'play_pause' | 'next_track' | 'previous_track' | 'stop') => {
+      const podcastPlaybackSnapshot = PodcastService.getPlaybackSnapshot();
+      const isPodcastMode = podcastPlaybackSnapshot.isActive && !mediaPlayer.mediaPlaybackCurrentMediaTrack;
+
+      if (action === 'play_pause') {
+        if (isPodcastMode) {
+          if (podcastPlaybackSnapshot.isPlaying) {
+            PodcastService.pausePlayback();
+          } else {
+            PodcastService.resumePlayback();
+          }
+          return;
+        }
+
+        MediaPlayerService.toggleMediaPlayback();
+        return;
+      }
+
+      if (isPodcastMode) {
+        return;
+      }
+
+      if (action === 'next_track') {
+        MediaPlayerService.playNextTrack();
+      } else if (action === 'previous_track') {
+        MediaPlayerService.playPreviousTrack(true);
+      } else if (action === 'stop') {
+        MediaPlayerService.stopMediaPlayer();
+        if (mediaSession) {
+          mediaSession.playbackState = 'none';
+        }
+      }
+    });
+
+    return () => {
+      IPCRenderer.removeMessageHandler(IPCRendererCommChannel.MediaHardwareControl, messageListener);
+    };
+  }, [
+    mediaPlayer.mediaPlaybackCurrentMediaTrack,
+  ]);
 
   useEffect(() => {
     if (!mediaSession) {
@@ -98,9 +140,7 @@ export function MediaSession() {
   ]);
 
   useEffect(() => {
-    if (!mediaSession
-      || mediaPlayer.mediaPlaybackState !== MediaEnums.MediaPlaybackState.Playing
-      || !mediaPlayer.mediaPlaybackCurrentMediaTrack) {
+    if (!mediaSession || !mediaPlayer.mediaPlaybackCurrentMediaTrack) {
       return;
     }
 
@@ -120,6 +160,23 @@ export function MediaSession() {
   }, [
     mediaSession,
     mediaPlayer.mediaPlaybackCurrentMediaTrack,
+    mediaPlayer.mediaPlaybackState,
+  ]);
+
+  useEffect(() => {
+    if (!mediaSession) {
+      return;
+    }
+
+    let state: MediaSessionPlaybackState = 'none';
+    if (mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing) {
+      state = 'playing';
+    } else if (mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Paused) {
+      state = 'paused';
+    }
+    mediaSession.playbackState = state;
+  }, [
+    mediaSession,
     mediaPlayer.mediaPlaybackState,
   ]);
 

@@ -8,10 +8,13 @@ import classNames from 'classnames/bind';
 import { isEmpty } from 'lodash';
 import { useSelector } from 'react-redux';
 import { Icons } from '../../constants';
+import { MediaEnums } from '../../enums';
+import { MediaTrackListProvider } from '../../contexts';
 import {
   IPodcastEpisode,
   IPodcastSubscription,
   IMediaAlbum,
+  IMediaPicture,
   IMediaPlaylist,
   IMediaPlaylistTrack,
   IMediaTrack,
@@ -21,15 +24,19 @@ import {
   MediaAlbumService,
   MediaCollectionService,
   I18nService,
+  MediaLibraryService,
   MediaPlayerService,
   MediaPlaylistService,
   MediaTrackService,
   PodcastService,
 } from '../../services';
+import { IPCRenderer, IPCCommChannel } from '../../modules/ipc';
+import { FSImageExtensions } from '../../modules/file-system';
 import { Button } from '../button/button.component';
 import { Icon } from '../icon/icon.component';
 import { MediaCollectionActions } from '../media-collection-actions/media-collection-actions.component';
 import { MediaCoverPicture } from '../media-cover-picture/media-cover-picture.component';
+import { MediaTrack } from '../media-track/media-track.component';
 import { MediaTrackList } from '../media-track-list/media-track-list.component';
 import styles from './media-sideview.component.css';
 
@@ -73,11 +80,93 @@ function toPlainText(value?: string): string {
   return String(parsed.body?.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
+function getTrackDiscNumber(mediaTrack: IMediaTrack): number {
+  const extra = mediaTrack.extra as any;
+  const discFromExtra = Number(extra?.disc_number);
+  if (Number.isFinite(discFromExtra) && discFromExtra > 0) {
+    return Math.floor(discFromExtra);
+  }
+
+  const filePath = String(extra?.file_path || '');
+  if (filePath) {
+    const matches = Array.from(filePath.matchAll(/(?:^|[\\/])(disc|cd)\s*(\d+)(?:[\\/]|$)/ig));
+    if (matches.length > 0) {
+      const discFromPath = Number(matches[matches.length - 1]?.[2]);
+      if (Number.isFinite(discFromPath) && discFromPath > 0) {
+        return Math.floor(discFromPath);
+      }
+    }
+  }
+
+  return 1;
+}
+
+function groupTracksByDisc(mediaTracks: IMediaTrack[]): { disc: number; tracks: IMediaTrack[] }[] {
+  const byDisc = new Map<number, IMediaTrack[]>();
+  mediaTracks.forEach((mediaTrack) => {
+    const discNumber = getTrackDiscNumber(mediaTrack);
+    const existing = byDisc.get(discNumber) || [];
+    existing.push(mediaTrack);
+    byDisc.set(discNumber, existing);
+  });
+
+  return Array.from(byDisc.entries())
+    .sort(([discA], [discB]) => discA - discB)
+    .map(([disc, discTracks]) => ({
+      disc,
+      tracks: [...discTracks].sort((trackA, trackB) => trackA.track_number - trackB.track_number),
+    }));
+}
+
 export function MediaAlbumSideView({ albumId, onClose }: MediaSideViewAlbumProps) {
   const [loadedAlbum, setLoadedAlbum] = useState<IMediaAlbum | undefined>();
   const [tracks, setTracks] = useState<IMediaTrack[]>([]);
   const mediaAlbums = useSelector((state: RootState) => state.mediaLibrary.mediaAlbums);
   const album = mediaAlbums.find(mediaAlbum => mediaAlbum.id === albumId) || loadedAlbum;
+
+  const handleAlbumPictureUpdate = useCallback(async (picture: IMediaPicture) => {
+    if (!album) {
+      return;
+    }
+
+    const updatedAlbum = await MediaAlbumService.updateMediaAlbum({
+      id: album.id,
+    }, {
+      album_cover_picture: picture,
+    });
+
+    if (!updatedAlbum) {
+      return;
+    }
+
+    setLoadedAlbum(updatedAlbum);
+    await MediaAlbumService.syncAlbumMetadata(updatedAlbum.id);
+    const refreshedTracks = await MediaTrackService.getMediaAlbumTracks(updatedAlbum.id);
+    setTracks(refreshedTracks);
+  }, [album]);
+
+  const handleManualCoverChange = useCallback(async () => {
+    if (!album) {
+      return;
+    }
+
+    const selectedFilePath = IPCRenderer.sendSyncMessage(IPCCommChannel.FSSelectFile, {
+      extensions: FSImageExtensions,
+    });
+    if (!selectedFilePath) {
+      return;
+    }
+
+    const imagePath = await IPCRenderer.sendAsyncMessage(IPCCommChannel.ImageScale, selectedFilePath, {
+      width: MediaLibraryService.mediaPictureScaleWidth,
+      height: MediaLibraryService.mediaPictureScaleHeight,
+    });
+
+    await handleAlbumPictureUpdate({
+      image_data: imagePath,
+      image_data_type: MediaEnums.MediaTrackCoverPictureImageDataType.Path,
+    });
+  }, [album, handleAlbumPictureUpdate]);
 
   useEffect(() => {
     MediaAlbumService.getMediaAlbum(albumId).then(setLoadedAlbum);
@@ -88,6 +177,20 @@ export function MediaAlbumSideView({ albumId, onClose }: MediaSideViewAlbumProps
       document.body.classList.remove('sideview-open');
     };
   }, [albumId]);
+
+  const tracksByDisc = useMemo(() => groupTracksByDisc(tracks), [tracks]);
+  const normalizedTracks = useMemo(
+    () => tracksByDisc.flatMap(group => group.tracks),
+    [tracksByDisc],
+  );
+  const normalizedTrackIndexMap = useMemo(() => {
+    const map = new Map<string, number>();
+    normalizedTracks.forEach((mediaTrack, index) => {
+      map.set(mediaTrack.id, index);
+    });
+    return map;
+  }, [normalizedTracks]);
+  const showDiscSeparators = tracksByDisc.length > 1;
 
   if (!album) {
     return null;
@@ -118,11 +221,20 @@ export function MediaAlbumSideView({ albumId, onClose }: MediaSideViewAlbumProps
           </button>
         </div>
         <div className={cx('sideview-cover')}>
-          <MediaCoverPicture
-            mediaPicture={album.album_cover_picture}
-            mediaPictureAltText={album.album_name}
-            className={cx('sideview-cover-picture')}
-          />
+          <div className={cx('sideview-cover-artwork')}>
+            <MediaCoverPicture
+              mediaPicture={album.album_cover_picture}
+              mediaPictureAltText={album.album_name}
+              className={cx('sideview-cover-picture')}
+            />
+            <Button
+              className={cx('sideview-cover-edit-fab')}
+              variant={['rounded']}
+              onButtonSubmit={handleManualCoverChange}
+            >
+              <Icon name={Icons.Edit}/>
+            </Button>
+          </div>
           <div className={cx('sideview-meta')}>
             <div className={cx('sideview-meta-title')}>{albumDisplayTitle}</div>
             <div className={cx('sideview-meta-artist')}>{album.album_artist.artist_name}</div>
@@ -141,13 +253,33 @@ export function MediaAlbumSideView({ albumId, onClose }: MediaSideViewAlbumProps
         </div>
         {!isEmpty(tracks) && (
           <div className={cx('sideview-tracklist')}>
-            <MediaTrackList
-              mediaTracks={tracks}
-              mediaTrackList={{ id: album.id }}
-              disableCovers
-              disableAlbumLinks
-              variant="sideview"
-            />
+            <MediaTrackListProvider mediaTracks={normalizedTracks} mediaTrackList={{ id: album.id }}>
+              {tracksByDisc.map(group => (
+                <div key={`disc-${group.disc}`} className={cx('sideview-disc-group')}>
+                  {showDiscSeparators && (
+                    <div className={cx('sideview-disc-separator')}>
+                      {`CD ${group.disc}`}
+                    </div>
+                  )}
+                  {group.tracks.map((mediaTrack, index) => {
+                    const mediaTrackPointer = normalizedTrackIndexMap.get(mediaTrack.id);
+                    return (
+                      <MediaTrack
+                        key={mediaTrack.id}
+                        mediaTrack={mediaTrack}
+                        mediaTrackPointer={mediaTrackPointer}
+                        disableCover
+                        disableAlbumLink
+                        variant="sideview"
+                        className={cx('sideview-track-row', {
+                          'sideview-track-row-first': index === 0,
+                        })}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
+            </MediaTrackListProvider>
           </div>
         )}
       </aside>

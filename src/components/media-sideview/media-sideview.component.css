@@ -72,6 +72,14 @@
   border-bottom: 1px solid var(--stage-overlay-outline-color);
 }
 
+.sideview-cover-artwork {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  flex: 0 0 240px;
+  overflow: visible;
+}
+
 .sideview-cover-picture {
   width: 240px !important;
   height: 240px !important;
@@ -79,6 +87,32 @@
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.25);
   object-fit: cover;
+}
+
+.sideview-cover-edit-fab {
+  position: absolute;
+  right: -10px;
+  bottom: -10px;
+  width: 40px !important;
+  height: 40px !important;
+  inline-size: 40px !important;
+  block-size: 40px !important;
+  aspect-ratio: auto !important;
+  box-sizing: border-box;
+  background: var(--stage-overlay-bg-color);
+  color: var(--button-primary-bg-color);
+  border: 3px solid var(--button-primary-bg-color);
+  border-radius: 50%;
+  padding: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.sideview-cover-edit-fab:hover {
+  background: var(--selectable-bg-color);
 }
 
 .sideview-meta {
@@ -120,6 +154,19 @@
 
 .sideview-tracklist {
   margin-top: 8px;
+}
+
+.sideview-disc-group + .sideview-disc-group {
+  margin-top: 14px;
+}
+
+.sideview-disc-separator {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dark-color);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin: 6px 0;
 }
 
 .sideview-cover-placeholder {

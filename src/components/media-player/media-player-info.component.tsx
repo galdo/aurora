@@ -11,7 +11,6 @@ import { PodcastService } from '../../services';
 import { MediaCoverPicture } from '../media-cover-picture/media-cover-picture.component';
 import { MediaTrackInfo } from '../media-track-info/media-track-info.component';
 import { MediaTrackContextMenu, MediaTrackContextMenuItem } from '../media-track-context-menu/media-track-context-menu.component';
-import { MediaTrackLikeButton } from '../media-track-like-button/media-track-like-button.component';
 
 import styles from './media-player.component.css';
 
@@ -112,9 +111,6 @@ export function MediaPlayerInfo() {
           className={cx('media-player-track-info-container')}
           onContextMenu={handleContextMenu}
         />
-        <div className={cx('media-player-control', 'media-player-control-sm')}>
-          <MediaTrackLikeButton mediaTrack={currentMediaTrack}/>
-        </div>
         <MediaTrackContextMenu
           id={mediaTrackContextMenuId}
           menuItems={[

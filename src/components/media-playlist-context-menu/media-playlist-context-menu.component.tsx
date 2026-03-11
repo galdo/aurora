@@ -33,6 +33,7 @@ export enum MediaPlaylistContextMenuItemAction {
   DeletePlaylist = 'media/playlist/deletePlaylist',
   ExportPlaylistM3U = 'media/playlist/exportM3U',
   ExportPlaylistM3U8 = 'media/playlist/exportM3U8',
+  ExportPlaylistM3U8DAP = 'media/playlist/exportM3U8DAP',
   ToggleHidden = 'media/playlist/toggleHidden',
 }
 
@@ -144,8 +145,13 @@ export function MediaPlaylistContextMenu(props: MediaPlaylistContextMenuProps) {
         break;
       case MediaPlaylistContextMenuItemAction.ExportPlaylistM3U:
       case MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8:
+      case MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP:
         if (!mediaItem) {
           throw new Error('MediaPlaylistContextMenu encountered error at ExportPlaylist - mediaItem is required');
+        }
+        if (itemAction === MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP) {
+          await MediaPlaylistService.exportMediaPlaylistToDap(mediaItem.id);
+          break;
         }
         await MediaPlaylistService.exportMediaPlaylist(
           mediaItem.id,
@@ -251,6 +257,28 @@ export function MediaPlaylistContextMenu(props: MediaPlaylistContextMenuProps) {
           >
             {I18nService.getString('label_submenu_media_collection_show')}
           </Item>
+          <MenuSeparator/>
+          <Item
+            key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U}
+            id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U}
+            onClick={handleMenuItemClick}
+          >
+            {I18nService.getString('label_playlist_export_m3u')}
+          </Item>
+          <Item
+            key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8}
+            id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8}
+            onClick={handleMenuItemClick}
+          >
+            {I18nService.getString('label_playlist_export_m3u8')}
+          </Item>
+          <Item
+            key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP}
+            id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP}
+            onClick={handleMenuItemClick}
+          >
+            {I18nService.getString('label_playlist_export_m3u8_dap')}
+          </Item>
         </>
       );
     }
@@ -285,6 +313,13 @@ export function MediaPlaylistContextMenu(props: MediaPlaylistContextMenuProps) {
           onClick={handleMenuItemClick}
         >
           {I18nService.getString('label_playlist_export_m3u8')}
+        </Item>
+        <Item
+          key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP}
+          id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP}
+          onClick={handleMenuItemClick}
+        >
+          {I18nService.getString('label_playlist_export_m3u8_dap')}
         </Item>
       </>
     );

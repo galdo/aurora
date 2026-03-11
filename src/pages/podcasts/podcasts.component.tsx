@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import classNames from 'classnames/bind';
 
-import { Button, Icon, MediaPodcastSubscribeModal } from '../../components';
+import { Icon } from '../../components';
 import { MediaPodcastSideView } from '../../components/media-sideview/media-sideview.component';
-import { useModal } from '../../contexts';
 import { IPodcastSubscription } from '../../interfaces';
 import { Icons } from '../../constants';
 import { I18nService, PodcastService } from '../../services';
@@ -44,6 +43,9 @@ export function PodcastsPage() {
 
   return (
     <div className={cx('podcasts-page')}>
+      <div className={cx('podcasts-page-title')}>
+        {I18nService.getString('link_podcasts')}
+      </div>
       {subscriptionsSorted.length === 0 && (
         <div className={cx('podcasts-empty')}>
           {I18nService.getString('label_podcasts_empty')}
@@ -104,26 +106,5 @@ export function PodcastsPage() {
 }
 
 export function PodcastsHeader() {
-  const { showModal } = useModal();
-
-  return (
-    <div className={cx('podcasts-header')}>
-      <div className={cx('podcasts-header-title')}>
-        {I18nService.getString('label_podcasts_header')}
-      </div>
-      <Button
-        className={cx('podcasts-add-button')}
-        variant={['rounded', 'outline']}
-        tooltip={I18nService.getString('tooltip_podcast_add')}
-        onButtonSubmit={() => {
-          showModal(MediaPodcastSubscribeModal, {}, {
-            dialogClassName: 'podcast-discover-modal-dialog',
-            backdropClassName: 'podcast-discover-modal-backdrop',
-          });
-        }}
-      >
-        <Icon name={Icons.Add}/>
-      </Button>
-    </div>
-  );
+  return null;
 }

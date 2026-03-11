@@ -33,6 +33,7 @@ import {
   shell,
   BrowserWindow,
   screen,
+  globalShortcut,
 } from 'electron';
 
 import {
@@ -51,9 +52,12 @@ import { DeviceModule } from './modules/device';
 import { MenuBuilder } from './main/builders';
 
 const sourceMapSupport = require('source-map-support');
-const debug = require('debug')('aurora:main');
+const debug = require('debug')('aurora_pulse:main');
 
-const APP_DISPLAY_NAME = 'Aurora';
+const APP_DISPLAY_NAME = 'Aurora Pulse';
+const APP_DATA_DIR_NAME = 'Aurora_Pulse';
+const APP_LEGACY_DATA_DIR_NAMES = ['AI_Music_Player', 'Aurora'];
+type MediaHardwareControlAction = 'play_pause' | 'next_track' | 'previous_track' | 'stop';
 
 function createElectronLogger(name: string, filePath: string) {
   const logger = electronLog.create({ logId: name });
@@ -73,9 +77,10 @@ class App implements IAppMain {
   readonly build?: string;
   readonly platform?: string;
   readonly displayName = APP_DISPLAY_NAME;
-  readonly description = 'A cross-platform music player built with Electron';
+  readonly description = 'A local-first music player built with Electron';
 
   private mainWindow?: BrowserWindow;
+  private splashWindow?: BrowserWindow;
   private readonly forceExtensionDownload: boolean;
   private readonly startMinimized?: boolean;
   private readonly resourcesPath: string;
@@ -89,7 +94,6 @@ class App implements IAppMain {
   private readonly dataPath: string;
   private isQuitting = false;
   private localProtocols = new Set(['file:', 'app:']);
-  private datastoreDataDir = 'Databases';
   private logsDataDir = 'Logs';
   private logsMainFile = 'main.log';
   private logsRendererFile = 'renderer.log';
@@ -104,11 +108,11 @@ class App implements IAppMain {
     this.forceExtensionDownload = !!process.env.UPGRADE_EXTENSIONS;
     this.startMinimized = process.env.START_MINIMIZED === 'true';
     this.resourcesPath = process.resourcesPath;
-    this.dataPath = this.debug ? `${this.displayName}-debug` : this.displayName;
+    this.dataPath = this.debug ? `${APP_DATA_DIR_NAME}-debug` : APP_DATA_DIR_NAME;
     this.htmlFilePath = path.join(__dirname, 'index.html');
 
     this.configureUserDataPath();
-    this.migrateLegacyDatastorePath();
+    this.migrateLegacyUserDataPath();
     this.configureLogger();
     this.configureApp();
     this.installSourceMapSupport();
@@ -263,7 +267,7 @@ class App implements IAppMain {
     app.name = APP_DISPLAY_NAME;
     app.setName(APP_DISPLAY_NAME);
     process.title = APP_DISPLAY_NAME;
-    app.setAppUserModelId('com.bbbneo333.aurora');
+    app.setAppUserModelId('com.bbbneo333.aurorapulse');
 
     app.setAboutPanelOptions({
       applicationName: this.displayName,
@@ -280,31 +284,41 @@ class App implements IAppMain {
     app.setPath('userData', path.join(appDataPath, this.dataPath));
   }
 
-  private migrateLegacyDatastorePath(): void {
-    const appDataPath = app.getPath('appData');
-    const legacyUserDataPath = path.join(appDataPath, 'Electron', this.dataPath);
+  private migrateLegacyUserDataPath(): void {
     const currentUserDataPath = app.getPath('userData');
-
-    if (legacyUserDataPath === currentUserDataPath) {
+    if (fs.existsSync(currentUserDataPath) && fs.readdirSync(currentUserDataPath).length > 0) {
       return;
     }
 
-    const legacyDatastorePath = path.join(legacyUserDataPath, this.datastoreDataDir);
-    if (!fs.existsSync(legacyDatastorePath)) {
+    const legacyUserDataPath = this.findLegacyUserDataPath(currentUserDataPath);
+    if (!legacyUserDataPath) {
       return;
     }
 
-    const currentDatastorePath = this.getDataPath(this.datastoreDataDir);
-    if (fs.existsSync(currentDatastorePath)) {
-      return;
-    }
-
-    this.createDataDir(this.datastoreDataDir);
     try {
-      this.copyDirectoryRecursive(legacyDatastorePath, currentDatastorePath);
+      this.copyDirectoryRecursive(legacyUserDataPath, currentUserDataPath);
     } catch (error: any) {
-      console.error('migrateLegacyDatastorePath - encountered error - %o', error);
+      console.error('migrateLegacyUserDataPath - encountered error - %o', error);
     }
+  }
+
+  private findLegacyUserDataPath(currentUserDataPath: string): string | undefined {
+    const appDataPath = app.getPath('appData');
+    const debugSuffix = this.debug ? '-debug' : '';
+    const legacyBaseNames = APP_LEGACY_DATA_DIR_NAMES.map(name => `${name}${debugSuffix}`);
+    const candidates = [
+      ...legacyBaseNames.map(name => path.join(appDataPath, name)),
+      ...legacyBaseNames.map(name => path.join(appDataPath, 'Electron', name)),
+    ];
+    const uniqueCandidates = _.uniq(candidates);
+
+    return uniqueCandidates.find((candidatePath) => {
+      if (candidatePath === currentUserDataPath || !fs.existsSync(candidatePath)) {
+        return false;
+      }
+
+      return fs.readdirSync(candidatePath).length > 0;
+    });
   }
 
   private copyDirectoryRecursive(sourcePath: string, destinationPath: string): void {
@@ -439,6 +453,13 @@ class App implements IAppMain {
       Math.round(primaryDisplayWorkArea.height * this.windowDefaultSizeRatio),
     );
 
+    const splashWindow = this.createSplashWindow();
+    this.splashWindow = splashWindow;
+    splashWindow.once('ready-to-show', () => {
+      splashWindow.show();
+    });
+    splashWindow.loadURL(this.getSplashDataURL());
+
     const mainWindow = new BrowserWindow({
       show: false,
       width: defaultWidth,
@@ -446,6 +467,7 @@ class App implements IAppMain {
       minWidth: this.windowMinWidth,
       minHeight: this.windowMinHeight,
       icon: this.iconPath,
+      title: APP_DISPLAY_NAME,
       titleBarStyle: isDarwin ? 'hiddenInset' : 'hidden',
       ...(!isDarwin ? {
         titleBarOverlay: {
@@ -460,7 +482,23 @@ class App implements IAppMain {
         contextIsolation: false,
         nodeIntegrationInWorker: true,
       },
+      backgroundColor: '#141414',
     });
+
+    let mainWindowShown = false;
+    const showMainWindow = () => {
+      if (mainWindowShown || mainWindow.isDestroyed()) {
+        return;
+      }
+      mainWindowShown = true;
+      this.closeSplashWindow();
+      if (this.startMinimized) {
+        mainWindow.minimize();
+      } else {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    };
 
     mainWindow
       .loadURL(`file://${this.htmlFilePath}`)
@@ -468,22 +506,13 @@ class App implements IAppMain {
         debug('main window loaded HTML - %s', this.htmlFilePath);
       });
 
-    // @TODO: Use 'ready-to-show' event
-    //    https://github.com/electron/electron/blob/master/docs/api/browser-window.md#using-ready-to-show-event
-    mainWindow.webContents.on('did-finish-load', () => {
-      if (!mainWindow) {
-        throw new Error('App encountered error at createWindow - "mainWindow" is not defined');
-      }
-
-      if (this.startMinimized) {
-        mainWindow.minimize();
-      } else {
-        mainWindow.show();
-        mainWindow.focus();
-      }
-    });
+    mainWindow.once('ready-to-show', showMainWindow);
+    mainWindow.webContents.once('did-finish-load', showMainWindow);
+    const showFallbackTimeout = setTimeout(showMainWindow, 3500);
 
     mainWindow.on('closed', () => {
+      clearTimeout(showFallbackTimeout);
+      this.closeSplashWindow();
       this.mainWindow = undefined;
     });
 
@@ -535,6 +564,98 @@ class App implements IAppMain {
     return mainWindow;
   }
 
+  private closeSplashWindow() {
+    if (!this.splashWindow || this.splashWindow.isDestroyed()) {
+      return;
+    }
+    this.splashWindow.close();
+    this.splashWindow = undefined;
+  }
+
+  private createSplashWindow(): BrowserWindow {
+    return new BrowserWindow({
+      width: 420,
+      height: 240,
+      show: false,
+      frame: false,
+      alwaysOnTop: true,
+      center: true,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+  }
+
+  private getSplashDataURL(): string {
+    const splashHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .wrap {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at top, #282828 0%, #151515 56%, #0e0e0e 100%);
+      color: #f5f5f5;
+      border-radius: 16px;
+    }
+    .inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      letter-spacing: 0.03em;
+    }
+    .title {
+      font-size: 30px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .pulse {
+      width: 56px;
+      height: 4px;
+      border-radius: 8px;
+      background: linear-gradient(90deg, #7f5af0, #2cb67d, #7f5af0);
+      background-size: 200% 100%;
+      animation: pulse 1.5s linear infinite;
+    }
+    @keyframes pulse {
+      0% { background-position: 0% 50%; opacity: 0.5; }
+      50% { opacity: 1; }
+      100% { background-position: 100% 50%; opacity: 0.5; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="inner">
+      <div class="title">${APP_DISPLAY_NAME}</div>
+      <div class="pulse"></div>
+    </div>
+  </div>
+</body>
+</html>`;
+    return `data:text/html;charset=UTF-8,${encodeURIComponent(splashHtml)}`;
+  }
+
   private registerEvents(): void {
     process.once('SIGINT', () => {
       this.isQuitting = true;
@@ -557,11 +678,15 @@ class App implements IAppMain {
     app.on('before-quit', () => {
       // this apparently called right before when user requests to quit (not close) the app
       this.isQuitting = true;
+      globalShortcut.unregisterAll();
     });
 
     app.whenReady()
       .then(async () => {
+        app.setName(APP_DISPLAY_NAME);
+        app.dock?.setIcon(this.iconPath);
         this.mainWindow = await this.createWindow();
+        this.registerMediaHardwareShortcuts();
       })
       .catch(debug);
 
@@ -612,6 +737,32 @@ class App implements IAppMain {
     });
 
     IPCMain.addSyncMessageHandler(IPCCommChannel.AppReadDetails, () => this.getDetails());
+  }
+
+  private registerMediaHardwareShortcuts() {
+    const shortcuts: { accelerator: string; action: MediaHardwareControlAction }[] = [{
+      accelerator: 'MediaPlayPause',
+      action: 'play_pause',
+    }, {
+      accelerator: 'MediaNextTrack',
+      action: 'next_track',
+    }, {
+      accelerator: 'MediaPreviousTrack',
+      action: 'previous_track',
+    }, {
+      accelerator: 'MediaStop',
+      action: 'stop',
+    }];
+
+    shortcuts.forEach(({ accelerator, action }) => {
+      const isRegistered = globalShortcut.register(accelerator, () => {
+        this.sendMessageToRenderer(IPCRendererCommChannel.MediaHardwareControl, action);
+      });
+
+      if (!isRegistered) {
+        console.warn('registerMediaHardwareShortcuts - could not register shortcut - %s', accelerator);
+      }
+    });
   }
 
   private isUrlLocal(url: string): boolean {

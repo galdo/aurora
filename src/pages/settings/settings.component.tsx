@@ -1,6 +1,9 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { useSelector } from 'react-redux';
 import classNames from 'classnames/bind';
+import log from 'electron-log/renderer';
+import fs from 'fs';
+import path from 'path';
 
 import {
   Button,
@@ -22,7 +25,9 @@ import { mediaLocalStore, MediaLocalStateActionType } from '../../providers/medi
 import styles from './settings.component.css';
 
 const cx = classNames.bind(styles);
-const AppLogo = require('../../../assets/icons/icon-squircle.png');
+const appLogoModule = require('../../../assets/icons/icon-squircle-no-background.png');
+
+const AppLogo = appLogoModule.default || appLogoModule;
 
 const languageOptions: AppLocale[] = ['de', 'en', 'fr', 'it', 'es'];
 
@@ -60,7 +65,7 @@ const UI_SETTINGS_KEY = 'aurora:ui-settings';
 
 export function SettingsPage() {
   const { showModal } = useModal();
-  const themeMode = useMemo<ThemeMode>(() => ThemeService.mode, []);
+  const [themeMode, setThemeMode] = React.useState<ThemeMode>(ThemeService.mode);
   const [hideArtist, setHideArtist] = React.useState(false);
   const [locale, setLocale] = React.useState<AppLocale>(I18nService.locale);
   const [dapTargetDirectory, setDapTargetDirectory] = React.useState('');
@@ -104,6 +109,18 @@ export function SettingsPage() {
     return () => {
       window.removeEventListener('aurora:locale-changed', onLocaleChanged);
     };
+  }, []);
+
+  React.useEffect(() => {
+    const logoCandidates = [
+      path.resolve(process.cwd(), 'assets/icons/icon-squircle-no-background.png'),
+      path.resolve(process.resourcesPath || '', 'assets/icons/icon-squircle-no-background.png'),
+      path.resolve(__dirname, '../../../assets/icons/icon-squircle-no-background.png'),
+    ];
+    const uniqueLogoCandidates = Array.from(new Set(logoCandidates));
+    uniqueLogoCandidates.forEach((candidatePath) => {
+      log.info('[SETTINGS_LOGO] path="%s" exists=%s', candidatePath, fs.existsSync(candidatePath));
+    });
   }, []);
 
   const toggleHideArtist = () => {
@@ -153,7 +170,35 @@ export function SettingsPage() {
   };
   const dapProgressStatusLabel = dapProgressStatusLabels[dapSyncProgress.phase] || I18nService.getString('label_settings_dap_status_idle');
   const originalRepositoryLink = Links.ProjectOriginal || Links.Project;
+  const forkFeatureItems = [
+    I18nService.getString('settings_info_feature_cd_import'),
+    I18nService.getString('settings_info_feature_album_sorting'),
+    I18nService.getString('settings_info_feature_podcasts'),
+    I18nService.getString('settings_info_feature_playlists'),
+    I18nService.getString('settings_info_feature_dap_sync'),
+    I18nService.getString('settings_info_feature_multilanguage'),
+    I18nService.getString('settings_info_feature_equalizer'),
+    I18nService.getString('settings_info_feature_ui'),
+  ];
+  const aiSourceLinks = [
+    {
+      href: Links.SourceTrae,
+      label: I18nService.getString('settings_info_ai_source_trae'),
+    },
+    {
+      href: Links.SourceGptCodex,
+      label: I18nService.getString('settings_info_ai_source_gpt_codex'),
+    },
+    {
+      href: Links.SourceGeminiPro,
+      label: I18nService.getString('settings_info_ai_source_gemini_pro'),
+    },
+  ];
   const groupCompilationsByFolder = mediaLocalState.settings?.library?.group_compilations_by_folder || false;
+  const handleThemeChange = (mode: ThemeMode) => {
+    ThemeService.set(mode);
+    setThemeMode(mode);
+  };
 
   return (
     <div className={cx('settings-container', 'container-fluid')}>
@@ -174,21 +219,21 @@ export function SettingsPage() {
                   <button
                     type="button"
                     className={cx('theme-switch-item', { active: themeMode === 'light' })}
-                    onClick={() => ThemeService.set('light')}
+                    onClick={() => handleThemeChange('light')}
                   >
                     {I18nService.getString('label_theme_light')}
                   </button>
                   <button
                     type="button"
                     className={cx('theme-switch-item', { active: themeMode === 'dark' })}
-                    onClick={() => ThemeService.set('dark')}
+                    onClick={() => handleThemeChange('dark')}
                   >
                     {I18nService.getString('label_theme_dark')}
                   </button>
                   <button
                     type="button"
                     className={cx('theme-switch-item', { active: themeMode === 'auto' })}
-                    onClick={() => ThemeService.set('auto')}
+                    onClick={() => handleThemeChange('auto')}
                   >
                     {I18nService.getString('label_theme_auto')}
                   </button>
@@ -421,6 +466,15 @@ export function SettingsPage() {
                 <div className={cx('settings-description')}>
                   {I18nService.getString('settings_info_fork_desc_2')}
                 </div>
+                <div className={cx('settings-description')}>
+                  {I18nService.getString('settings_info_fork_desc_3')}
+                </div>
+                <div className={cx('settings-info-subtitle')}>{I18nService.getString('settings_info_feature_list_title')}</div>
+                <ul className={cx('settings-info-feature-list')}>
+                  {forkFeatureItems.map(featureItem => (
+                    <li key={featureItem}>{featureItem}</li>
+                  ))}
+                </ul>
                 <Link href={originalRepositoryLink} className={cx('settings-info-link')}>
                   {I18nService.getString('link_open_original_repo')}
                 </Link>
@@ -432,6 +486,17 @@ export function SettingsPage() {
                 <div className={cx('settings-info-title')}>{I18nService.getString('settings_info_ai_title')}</div>
                 <div className={cx('settings-description')}>
                   {I18nService.getString('settings_info_ai_desc')}
+                </div>
+                <div className={cx('settings-info-source-links')}>
+                  {aiSourceLinks.map(sourceLink => (
+                    <Link
+                      key={sourceLink.href}
+                      href={sourceLink.href}
+                      className={cx('settings-info-source-link')}
+                    >
+                      {sourceLink.label}
+                    </Link>
+                  ))}
                 </div>
               </div>
             </div>
@@ -448,7 +513,7 @@ export function SettingsPage() {
             </div>
           </div>
           <div className={cx('settings-info-logo')}>
-            <img src={AppLogo} alt="Aurora Logo" className={cx('settings-info-logo-image')}/>
+            <img src={AppLogo} alt="Aurora Pulse Logo" className={cx('settings-info-logo-image')}/>
           </div>
         </aside>
       </div>

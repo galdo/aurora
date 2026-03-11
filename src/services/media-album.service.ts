@@ -114,11 +114,9 @@ export class MediaAlbumService {
         return;
       }
 
-      const tags = {
-        artist: mediaAlbum.album_artist.artist_name,
+      const tags: any = {
         albumArtist: mediaAlbum.album_artist.artist_name,
         album: mediaAlbum.album_name,
-        performerInfo: mediaAlbum.album_artist.artist_name,
         genre: mediaAlbum.album_genre,
         year: mediaAlbum.album_year ? String(mediaAlbum.album_year) : undefined,
       };
@@ -129,6 +127,9 @@ export class MediaAlbumService {
 
       try {
         if (isMp3) {
+          if (coverImage) {
+            tags.image = coverImage;
+          }
           const result = NodeID3.update(tags, filePath);
           if ((result as any) !== true) {
             console.warn(`Failed to update tags for ${filePath}`, result);

@@ -20,6 +20,10 @@ export default {
       component: AppPages.PodcastsPage,
     },
     {
+      path: Routes.Equalizer,
+      component: AppPages.EqualizerPage,
+    },
+    {
       path: Routes.Search,
       component: AppPages.SearchPage,
     },
@@ -60,6 +64,11 @@ export default {
       path: Routes.Podcasts,
       name: 'link_podcasts',
       icon: Icons.Podcast,
+    },
+    {
+      path: Routes.Equalizer,
+      name: 'link_equalizer',
+      icon: Icons.Equalizer,
     },
     {
       path: Routes.Settings,

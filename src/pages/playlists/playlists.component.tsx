@@ -7,6 +7,7 @@ import { useHistory } from 'react-router-dom';
 import { Icons, Routes } from '../../constants';
 import { selectSortedPlaylists } from '../../selectors';
 import { I18nService, MediaPlaylistService } from '../../services';
+import MediaLocalLibraryService from '../../providers/media-local/media-local-library.service';
 import { StringUtils } from '../../utils';
 import { useModal } from '../../contexts';
 
@@ -60,6 +61,7 @@ export function PlaylistsPage() {
 
   useEffect(() => {
     MediaPlaylistService.loadMediaPlaylists();
+    MediaLocalLibraryService.refreshPlaylistCoversOncePerSession();
   }, []);
 
   return (

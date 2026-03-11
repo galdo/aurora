@@ -49,6 +49,8 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   private syncAbortController: AbortController | null = null;
   private syncFilesQueuedCount = 0;
   private syncFilesProcessedQueueCount = 0;
+  private playlistCoversRefreshedThisSession = false;
+  private playlistCoversRefreshPromise: Promise<void> | null = null;
 
   onProviderRegistered(): void {
     debug('onProviderRegistered - received');
@@ -142,6 +144,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
         // process compilation album covers
         await this.processCompilationAlbumCovers(settings);
+        await this.processHiddenAlbumPlaylistCovers();
         await this.processArtistFeaturePictures();
         await this.processSmartPlaylistCovers();
 
@@ -290,6 +293,11 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
     // generate local id - we are using location of the file to uniquely identify the track
     const mediaTrackId = MediaLocalLibraryService.getMediaId(file.path);
+    // determine if this is a new track before any upsert work (used for stats only)
+    const preExistingTrack = await MediaTrackDatastore.findMediaTrack({
+      provider: MediaLocalConstants.Provider,
+      provider_id: mediaTrackId,
+    });
 
     // first check if we can simply mark it as seen; required both mtime and size for this to work
     if (!forceRescan && isNumber(file.stats?.mtime) && isNumber(file.stats?.size)) {
@@ -313,7 +321,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           if (folderName.match(/^(disc|cd)\s*\d+$/i)) {
             const grandParentDir = path.dirname(parentDir);
             const parentName = path.basename(grandParentDir);
-            folderName = `${parentName} (${folderName})`;
+            folderName = parentName;
           }
 
           // Extract year if present in folder name (e.g. "Album Name (2024)")
@@ -484,6 +492,9 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       } : undefined,
       provider: MediaLocalConstants.Provider,
       provider_id: mediaAlbumProviderId,
+      extra: {
+        source_fingerprint: CryptoService.sha256(effectiveFolderForGrouping || path.dirname(file.path)),
+      },
       sync_timestamp: scanTimestamp,
     });
 
@@ -506,18 +517,23 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         file_path: file.path,
         file_mtime: file.stats?.mtime,
         file_size: file.stats?.size,
+        ...(audioMetadata.common.disk?.no ? {
+          disc_number: audioMetadata.common.disk.no,
+        } : {}),
       },
       sync_timestamp: scanTimestamp,
     });
 
-    // update stats
-    mediaLocalStore.dispatch({
-      type: MediaLocalStateActionType.IncrementDirectorySyncFilesAdded,
-      data: {
-        directory,
-        count: 1,
-      },
-    });
+    // update stats only if track did not exist before this run
+    if (!preExistingTrack) {
+      mediaLocalStore.dispatch({
+        type: MediaLocalStateActionType.IncrementDirectorySyncFilesAdded,
+        data: {
+          directory,
+          count: 1,
+        },
+      });
+    }
 
     debug('addTracksFromFiles - added track %s from file %s', mediaTrack.id, file.path);
     return mediaTrack;
@@ -808,24 +824,33 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       // Get tracks for this album (could be more than just this dir if existing album)
       // But for collage we might want to prioritize variety
       const currentTracks = await MediaTrackService.getMediaAlbumTracks(targetAlbum.id);
-      const coverPictures = _.uniqBy(
-        currentTracks
-          .filter(track => track.track_cover_picture && track.track_cover_picture.image_data_type === MediaEnums.MediaTrackCoverPictureImageDataType.Path)
-          .map(track => track.track_cover_picture as IMediaPicture),
-        'image_data',
-      ).slice(0, 4);
+      const coverPicturesRaw = currentTracks
+        .filter(track => track.track_cover_picture && track.track_cover_picture.image_data_type === MediaEnums.MediaTrackCoverPictureImageDataType.Path)
+        .map(track => track.track_cover_picture as IMediaPicture);
+      const clusters = await this.getCoverClusters(coverPicturesRaw, 10);
+      const coverPictures = clusters.map(c => c.pictures[0]).slice(0, 4);
 
       if (coverPictures.length > 1) {
-        const collageBuffer = await this.createCollage(coverPictures);
-        if (collageBuffer) {
-          const processedPicture = await MediaLibraryService.processPicture({
-            image_data: collageBuffer,
-            image_data_type: MediaEnums.MediaTrackCoverPictureImageDataType.Buffer,
-          });
-          if (processedPicture) {
-            await MediaAlbumService.updateMediaAlbum({ id: targetAlbum.id }, { album_cover_picture: processedPicture });
+        const total = clusters.reduce((a, b) => a + b.pictures.length, 0);
+        const dominant = _.maxBy(clusters, c => c.pictures.length);
+        const ratio = dominant ? dominant.pictures.length / total : 1;
+        if (ratio >= 0.6) {
+          await MediaAlbumService.updateMediaAlbum({ id: targetAlbum.id }, { album_cover_picture: dominant!.pictures[0] });
+        } else {
+          const collage = await this.createCollage(coverPictures.slice(0, 4));
+          if (collage) {
+            const generatedCoverPicture = await MediaLibraryService.processPicture({
+              image_data: collage,
+              image_data_type: MediaEnums.MediaTrackCoverPictureImageDataType.Buffer,
+            });
+            if (generatedCoverPicture) {
+              await MediaAlbumService.updateMediaAlbum({ id: targetAlbum.id }, { album_cover_picture: generatedCoverPicture });
+            }
           }
         }
+      } else if (coverPictures.length === 1) {
+        const primaryCover = coverPictures[0];
+        await MediaAlbumService.updateMediaAlbum({ id: targetAlbum.id }, { album_cover_picture: primaryCover });
       }
 
       // Delete old albums if empty
@@ -866,35 +891,78 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         return;
       }
 
-      const coverPictures = _.uniqBy(
-        tracks
-          .filter(track => track.track_cover_picture && track.track_cover_picture.image_data_type === MediaEnums.MediaTrackCoverPictureImageDataType.Path)
-          .map(track => track.track_cover_picture as IMediaPicture),
-        'image_data',
-      ).slice(0, 4);
+      const coverPicturesRaw = tracks
+        .filter(track => track.track_cover_picture && track.track_cover_picture.image_data_type === MediaEnums.MediaTrackCoverPictureImageDataType.Path)
+        .map(track => track.track_cover_picture as IMediaPicture);
+      const clusters = await this.getCoverClusters(coverPicturesRaw, 10);
+      const coverPictures = clusters.map(c => c.pictures[0]).slice(0, 4);
 
-      if (coverPictures.length <= 1) {
+      if (coverPictures.length > 1) {
+        const total = clusters.reduce((a, b) => a + b.pictures.length, 0);
+        const dominant = _.maxBy(clusters, c => c.pictures.length);
+        const ratio = dominant ? dominant.pictures.length / total : 1;
+        if (ratio >= 0.6) {
+          await MediaAlbumService.updateMediaAlbum({ id: album.id }, { album_cover_picture: dominant!.pictures[0] });
+        } else {
+          const collage = await this.createCollage(coverPictures.slice(0, 4));
+          if (collage) {
+            const generatedCoverPicture = await MediaLibraryService.processPicture({
+              image_data: collage,
+              image_data_type: MediaEnums.MediaTrackCoverPictureImageDataType.Buffer,
+            });
+            if (generatedCoverPicture) {
+              await MediaAlbumService.updateMediaAlbum({ id: album.id }, { album_cover_picture: generatedCoverPicture });
+            }
+          }
+        }
+      } else if (coverPictures.length === 1) {
+        const primaryCover = coverPictures[0];
+        await MediaAlbumService.updateMediaAlbum({ id: album.id }, { album_cover_picture: primaryCover });
+      }
+    }, { concurrency: 4 });
+  }
+
+  private async processHiddenAlbumPlaylistCovers(): Promise<void> {
+    const hiddenAlbums = await MediaAlbumDatastore.findMediaAlbums({
+      hidden: true,
+    });
+
+    await Promise.map(hiddenAlbums, async (album) => {
+      const tracks = await MediaTrackService.getMediaAlbumTracks(album.id);
+      if (isEmpty(tracks)) {
         return;
       }
 
-      // Generate collage
-      const collageBuffer = await this.createCollage(coverPictures);
-      if (!collageBuffer) {
+      const coverPicturesRaw = tracks
+        .map(track => (
+          track.track_cover_picture
+          || track.track_album?.album_cover_picture
+        ))
+        .filter((picture: IMediaPicture | undefined) => picture?.image_data_type === MediaEnums.MediaTrackCoverPictureImageDataType.Path) as IMediaPicture[];
+      const clusters = await this.getCoverClusters(coverPicturesRaw, 10);
+      const coverPictures = clusters.map(c => c.pictures[0]).slice(0, 4);
+
+      if (isEmpty(coverPictures)) {
         return;
       }
 
-      const processedPicture = await MediaLibraryService.processPicture({
-        image_data: collageBuffer,
-        image_data_type: MediaEnums.MediaTrackCoverPictureImageDataType.Buffer,
-      });
-
-      if (processedPicture) {
-        await MediaAlbumService.updateMediaAlbum({
-          id: album.id,
-        }, {
-          album_cover_picture: processedPicture,
+      if (coverPictures.length > 1) {
+        const collage = await this.createCollage(coverPictures);
+        if (!collage) {
+          return;
+        }
+        const generatedCoverPicture = await MediaLibraryService.processPicture({
+          image_data: collage,
+          image_data_type: MediaEnums.MediaTrackCoverPictureImageDataType.Buffer,
         });
+        if (!generatedCoverPicture) {
+          return;
+        }
+        await MediaAlbumService.updateMediaAlbum({ id: album.id }, { album_cover_picture: generatedCoverPicture });
+        return;
       }
+
+      await MediaAlbumService.updateMediaAlbum({ id: album.id }, { album_cover_picture: coverPictures[0] });
     }, { concurrency: 4 });
   }
 
@@ -984,56 +1052,183 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   }
 
   private async processSmartPlaylistCovers(): Promise<void> {
-    const smartPlaylists = await MediaPlaylistDatastore.findMediaPlaylists({
-      is_smart: true,
-    });
+    // Generate/refresh covers for all playlists:
+    // - If multiple distinct covers: create a collage
+    // - If one distinct cover: use that single cover
+    // - Do NOT overwrite if an existing cover looks like a previously generated collage
+    //   (i.e., it's not equal to any track cover path)
+    const playlists = await MediaPlaylistDatastore.findMediaPlaylists();
 
-    await Promise.map(smartPlaylists, async (smartPlaylist) => {
-      if (smartPlaylist.cover_picture || isEmpty(smartPlaylist.tracks)) {
+    await Promise.map(playlists, async (playlist) => {
+      if (isEmpty(playlist.tracks)) {
         return;
       }
 
-      const playlistTracks = await Promise.map(smartPlaylist.tracks, playlistTrack => MediaTrackService.getMediaTrackForProvider(
+      const playlistTracks = await Promise.map(playlist.tracks, playlistTrack => MediaTrackService.getMediaTrackForProvider(
         playlistTrack.provider,
         playlistTrack.provider_id,
       ));
-      const trackCovers = _.uniqBy(
-        playlistTracks
-          .filter(Boolean)
-          .map((playlistTrack: any) => (
-            playlistTrack.track_cover_picture
-            || playlistTrack.track_album?.album_cover_picture
-          ))
-          .filter((picture: IMediaPicture | undefined) => picture?.image_data_type === MediaEnums.MediaTrackCoverPictureImageDataType.Path),
-        'image_data',
-      ).slice(0, 4) as IMediaPicture[];
+      const trackCoversRaw = (playlistTracks as any[])
+        .filter(Boolean)
+        .map((playlistTrack: any) => (
+          playlistTrack.track_cover_picture
+          || playlistTrack.track_album?.album_cover_picture
+        ))
+        .filter((picture: IMediaPicture | undefined) => picture?.image_data_type === MediaEnums.MediaTrackCoverPictureImageDataType.Path) as IMediaPicture[];
+      // Für Playlists bevorzugen wir Pfad-Eindeutigkeit (zeigt Vielfalt), ohne über-aggressive visuelle Deduplikation
+      const trackCoversByPath = _.uniqBy(trackCoversRaw, 'image_data').slice(0, 4) as IMediaPicture[];
 
-      if (isEmpty(trackCovers)) {
+      if (isEmpty(trackCoversByPath)) {
         return;
       }
 
-      let generatedCoverPicture: IMediaPicture | undefined;
-      if (trackCovers.length === 1) {
-        [generatedCoverPicture] = trackCovers;
-      } else {
-        const collageBuffer = await this.createCollage(trackCovers);
+      const currentCover = playlist.cover_picture;
+      // If more than one distinct cover (nach Pfad): always generate a collage to reflect variety.
+      // This ensures newly created playlists immediately show a grid without requiring a full sync.
+      if (trackCoversByPath.length > 1) {
+        const collageBuffer = await this.createCollage(trackCoversByPath);
         if (!collageBuffer) {
           return;
         }
-        generatedCoverPicture = await MediaLibraryService.processPicture({
+        const generatedCoverPicture = await MediaLibraryService.processPicture({
           image_data: collageBuffer,
           image_data_type: MediaEnums.MediaTrackCoverPictureImageDataType.Buffer,
         });
-      }
-
-      if (!generatedCoverPicture) {
+        if (!generatedCoverPicture) {
+          return;
+        }
+        await MediaPlaylistService.updateMediaPlaylist(playlist.id, {
+          cover_picture: generatedCoverPicture,
+        });
         return;
       }
 
-      await MediaPlaylistDatastore.updateMediaPlaylist(smartPlaylist.id, {
-        cover_picture: generatedCoverPicture,
-      });
+      // Exactly one distinct cover: set it if different or missing
+      const [singleCover] = trackCoversByPath;
+      if (!currentCover || currentCover.image_data !== singleCover.image_data) {
+        await MediaPlaylistService.updateMediaPlaylist(playlist.id, {
+          cover_picture: singleCover,
+        });
+      }
     }, { concurrency: 3 });
+  }
+
+  // Cluster pictures by perceptual similarity
+  private getCoverClusters(pictures: IMediaPicture[], threshold = 8): Promise<{ hash: string; pictures: IMediaPicture[] }[]> {
+    return new Promise((resolve) => {
+      if (!pictures.length) {
+        resolve([]);
+        return;
+      }
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        // Fallback: cluster by path equality
+        const groups = _.groupBy(pictures, 'image_data');
+        resolve(Object.keys(groups).map(hash => ({ hash, pictures: groups[hash] })));
+        return;
+      }
+
+      const HASH_SIZE = 8;
+      canvas.width = HASH_SIZE;
+      canvas.height = HASH_SIZE;
+
+      const entries: { pic: IMediaPicture; hash: string }[] = [];
+      let loaded = 0;
+
+      const done = () => {
+        if (loaded !== pictures.length) return;
+        const clusters: { hash: string; pictures: IMediaPicture[] }[] = [];
+        const hamming = (a: string, b: string) => {
+          let d = 0;
+          const len = Math.min(a.length, b.length);
+          for (let i = 0; i < len; i += 1) {
+            if (a[i] !== b[i]) d += 1;
+          }
+          return d + Math.abs(a.length - b.length);
+        };
+        entries.forEach(({ pic, hash }) => {
+          let found = false;
+          for (let i = 0; i < clusters.length; i += 1) {
+            if (hamming(clusters[i].hash, hash) <= threshold) {
+              clusters[i].pictures.push(pic);
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            clusters.push({ hash, pictures: [pic] });
+          }
+        });
+        resolve(clusters);
+      };
+
+      pictures.forEach((picture) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            ctx.clearRect(0, 0, HASH_SIZE, HASH_SIZE);
+            ctx.drawImage(img, 0, 0, HASH_SIZE, HASH_SIZE);
+            const imageData = ctx.getImageData(0, 0, HASH_SIZE, HASH_SIZE);
+            const pixels = imageData.data;
+            const grays: number[] = [];
+            for (let i = 0; i < pixels.length; i += 4) {
+              const r = pixels[i];
+              const g = pixels[i + 1];
+              const b = pixels[i + 2];
+              const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+              grays.push(gray);
+            }
+            const avg = grays.reduce((a, b) => a + b, 0) / grays.length;
+            let bits = '';
+            for (let i = 0; i < grays.length; i += 1) {
+              bits += grays[i] > avg ? '1' : '0';
+            }
+            entries.push({ pic: picture, hash: bits });
+          } catch (_e) {
+            entries.push({ pic: picture, hash: picture.image_data });
+          } finally {
+            loaded += 1;
+            done();
+          }
+        };
+        img.onerror = () => {
+          entries.push({ pic: picture, hash: picture.image_data });
+          loaded += 1;
+          done();
+        };
+        img.src = `file://${picture.image_data}`;
+      });
+    });
+  }
+
+  public async refreshPlaylistCovers(): Promise<void> {
+    await this.processHiddenAlbumPlaylistCovers();
+    await this.processSmartPlaylistCovers();
+    MediaPlaylistService.loadMediaPlaylists();
+  }
+
+  public async refreshPlaylistCoversOncePerSession(): Promise<void> {
+    if (this.playlistCoversRefreshedThisSession) {
+      return;
+    }
+    if (this.playlistCoversRefreshPromise) {
+      await this.playlistCoversRefreshPromise;
+      return;
+    }
+
+    this.playlistCoversRefreshPromise = (async () => {
+      await this.refreshPlaylistCovers();
+      this.playlistCoversRefreshedThisSession = true;
+    })();
+
+    try {
+      await this.playlistCoversRefreshPromise;
+    } finally {
+      this.playlistCoversRefreshPromise = null;
+    }
   }
 
   private createCollage(pictures: IMediaPicture[]): Promise<Buffer | null> {

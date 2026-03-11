@@ -1,8 +1,8 @@
 {
-  "name": "aurora",
-  "productName": "Aurora",
-  "version": "1.3.3",
-  "description": "A cross-platform music player built with Electron",
+  "name": "aurora-pulse",
+  "productName": "Aurora Pulse",
+  "version": "1.4.0",
+  "description": "A local-first music player built with Electron",
   "scripts": {
     "build": "concurrently \"npm run build:main\" \"npm run build:renderer\"",
     "build:main": "cross-env NODE_ENV=production webpack --config ./.erb/configs/webpack.config.main.prod.babel.js",
@@ -36,8 +36,8 @@
     ]
   },
   "build": {
-    "productName": "Aurora",
-    "appId": "com.bbbneo333.aurora",
+    "productName": "Aurora Pulse",
+    "appId": "com.bbbneo333.aurorapulse",
     "artifactName": "${productName}-${os}-${arch}-${version}.${ext}",
     "files": [
       "dist/**",
@@ -52,7 +52,7 @@
     ],
     "afterSign": ".erb/scripts/Notarize.js",
     "mac": {
-      "executableName": "Aurora",
+      "executableName": "AuroraPulse",
       "target": [
         "dmg",
         "zip"
@@ -62,7 +62,12 @@
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist",
       "gatekeeperAssess": false,
-      "icon": "assets/icons/icon.icns"
+      "icon": "assets/icons/icon.icns",
+      "extendInfo": {
+        "CFBundleName": "Aurora Pulse",
+        "CFBundleDisplayName": "Aurora Pulse",
+        "CFBundleExecutable": "AuroraPulse"
+      }
     },
     "dmg": {
       "contents": [

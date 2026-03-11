@@ -15,6 +15,7 @@ import {
   MediaLibraryService,
   MediaProviderService,
   PodcastService,
+  EqualizerService,
 } from '../services';
 import { ThemeService } from '../services/theme.service';
 import { IPCCommChannel, IPCRenderer, IPCRendererCommChannel } from '../modules/ipc';
@@ -34,7 +35,14 @@ const cx = classNames.bind(styles);
 
 function Splash() {
   return (
-    <div className={cx('app-splash')}/>
+    <div className={cx('app-splash')}>
+      <div className={cx('app-splash-content')}>
+        <div className={cx('app-splash-title')}>
+          Aurora Pulse
+        </div>
+        <div className={cx('app-splash-loader')}/>
+      </div>
+    </div>
   );
 }
 
@@ -190,6 +198,7 @@ export function App() {
 
     ThemeService.initialize();
     I18nService.initialize();
+    EqualizerService.initialize();
 
     // register media providers
     const mediaLocalProvider = new MediaLocalProvider();

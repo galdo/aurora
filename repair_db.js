@@ -1,6 +1,6 @@
 const fs = require('fs');
 
-const dbPath = '/Users/I743956/Library/Application Support/Electron/Aurora-debug/Databases/media_albums.db';
+const dbPath = '/Users/I743956/Library/Application Support/Aurora_Pulse-debug/Databases/media_albums.db';
 const backupPath = `${dbPath}.bak`;
 const getInternalId = (doc) => {
   if (!doc) {

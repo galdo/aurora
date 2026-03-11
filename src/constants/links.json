@@ -1,5 +1,8 @@
 {
   "Project": "https://github.com/bbbneo333/aurora",
   "ProjectOriginal": "https://github.com/bbbneo333/aurora",
-  "ProjectReportIssue": "https://github.com/galdo/aurora/issues"
+  "ProjectReportIssue": "https://github.com/galdo/aurora/issues",
+  "SourceTrae": "https://www.trae.ai/",
+  "SourceGptCodex": "https://openai.com/",
+  "SourceGeminiPro": "https://deepmind.google/models/gemini/"
 }

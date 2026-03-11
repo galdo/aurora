@@ -116,21 +116,52 @@ export class MediaLibraryService {
       throw new Error('Provider id is required for checkAndInsertMediaAlbum');
     }
 
-    const mediaTrackAlbumData = await MediaAlbumDatastore.upsertMediaAlbum({
+    let existingMediaAlbumData = await MediaAlbumDatastore.findMediaAlbum({
       provider: mediaAlbumInputData.provider,
       provider_id: mediaAlbumInputData.provider_id,
-    }, {
-      provider: mediaAlbumInputData.provider,
-      provider_id: mediaAlbumInputData.provider_id,
-      sync_timestamp: mediaAlbumInputData.sync_timestamp,
-      album_name: mediaAlbumInputData.album_name,
-      album_artist_id: mediaAlbumInputData.album_artist_id,
-      album_cover_picture: await this.processPicture(mediaAlbumInputData.album_cover_picture),
-      album_genre: mediaAlbumInputData.album_genre,
-      album_year: mediaAlbumInputData.album_year,
-      extra: mediaAlbumInputData.extra,
     });
 
+    // If album exists identified by source fingerprint, reuse it and preserve user edits
+    const sourceFingerprint = (mediaAlbumInputData.extra as any)?.source_fingerprint;
+    let effectiveProviderId = mediaAlbumInputData.provider_id;
+    if (!existingMediaAlbumData && sourceFingerprint) {
+      const foundBySource = await MediaAlbumDatastore.findMediaAlbum({
+        provider: mediaAlbumInputData.provider,
+        // @ts-ignore - nested field filter allowed at runtime
+        'extra.source_fingerprint': sourceFingerprint,
+      } as any);
+      if (foundBySource) {
+        existingMediaAlbumData = foundBySource;
+        effectiveProviderId = foundBySource.provider_id;
+      }
+    }
+    const processedAlbumCoverPicture = await this.processPicture(mediaAlbumInputData.album_cover_picture);
+
+    const upsertFilter: any = {
+      provider: mediaAlbumInputData.provider,
+      provider_id: effectiveProviderId,
+    };
+
+    const baseUpdate: Partial<IMediaAlbumData> = {
+      provider: mediaAlbumInputData.provider,
+      provider_id: effectiveProviderId,
+      sync_timestamp: mediaAlbumInputData.sync_timestamp,
+      album_cover_picture: processedAlbumCoverPicture || existingMediaAlbumData?.album_cover_picture,
+      album_genre: mediaAlbumInputData.album_genre,
+      album_year: mediaAlbumInputData.album_year,
+      extra: {
+        ...(existingMediaAlbumData?.extra || {}),
+        ...(mediaAlbumInputData.extra || {}),
+      },
+    };
+
+    // Preserve manual edits: only set album_name/album_artist_id when inserting new album
+    if (!existingMediaAlbumData) {
+      (baseUpdate as any).album_name = mediaAlbumInputData.album_name;
+      (baseUpdate as any).album_artist_id = mediaAlbumInputData.album_artist_id;
+    }
+
+    const mediaTrackAlbumData = await MediaAlbumDatastore.upsertMediaAlbum(upsertFilter, baseUpdate as any);
     return MediaAlbumService.buildMediaAlbum(mediaTrackAlbumData, true);
   }
 
@@ -138,6 +169,12 @@ export class MediaLibraryService {
     if (_.isNil(mediaTrackInputData.provider_id)) {
       throw new Error('Provider id is required for checkAndInsertMediaTrack');
     }
+
+    const existingMediaTrackData = await MediaTrackDatastore.findMediaTrack({
+      provider: mediaTrackInputData.provider,
+      provider_id: mediaTrackInputData.provider_id,
+    });
+    const processedTrackCoverPicture = await this.processPicture(mediaTrackInputData.track_cover_picture);
 
     const mediaTrackData = await MediaTrackDatastore.upsertMediaTrack({
       provider: mediaTrackInputData.provider,
@@ -149,7 +186,7 @@ export class MediaLibraryService {
       track_name: mediaTrackInputData.track_name,
       track_number: mediaTrackInputData.track_number,
       track_duration: mediaTrackInputData.track_duration,
-      track_cover_picture: await this.processPicture(mediaTrackInputData.track_cover_picture),
+      track_cover_picture: processedTrackCoverPicture || existingMediaTrackData?.track_cover_picture,
       track_artist_ids: mediaTrackInputData.track_artist_ids,
       track_album_id: mediaTrackInputData.track_album_id,
       extra: mediaTrackInputData.extra,

@@ -1,4 +1,4 @@
-import { Howl } from 'howler';
+import { Howl, Howler } from 'howler';
 import { isEmpty } from 'lodash';
 import fs from 'fs';
 import os from 'os';
@@ -15,6 +15,7 @@ import {
 
 import { IMediaLocalTrack } from './media-local.interfaces';
 import MediaLocalUtils from './media-local.utils';
+import { EqualizerService } from '../../services/equalizer.service';
 
 const debug = require('debug')('aurora:provider:media_local:media_playback');
 
@@ -243,12 +244,16 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.mediaPlaybackOptions.mediaPlaybackMaxVolume,
       ),
       mute: this.mediaPlaybackOptions.mediaPlaybackVolumeMuted,
-      html5: true,
+      html5: false,
       onend: (mediaPlaybackAudioId: number) => {
         debug('audio event %s - playback id - %d', 'end', mediaPlaybackAudioId);
         this.mediaPlaybackEnded = true;
       },
     });
+
+    if ((Howler as any).usingWebAudio) {
+      EqualizerService.apply();
+    }
   }
 
   private playCurrentAudio(): Promise<boolean> {

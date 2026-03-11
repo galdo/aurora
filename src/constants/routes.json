@@ -10,6 +10,7 @@
   "Player": "/player",
   "PlayerQueue": "/player/queue",
   "Podcasts": "/podcasts",
+  "Equalizer": "/equalizer",
   "Settings": "/settings",
   "Search": "/search",
   "AudioCd": "/audio-cd"

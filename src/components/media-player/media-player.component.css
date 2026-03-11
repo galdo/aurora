@@ -104,23 +104,26 @@
 
 .media-player-control {
   text-align: center;
-  padding: 5px;
+  padding: 6px;
   margin: 2px;
 }
 
 .media-player-control.media-player-control-sm {
-  font-size: 15px;
+  font-size: 23.75px;
   color: var(--selectable-color);
 }
 
 .media-player-control.media-player-control-md {
-  font-size: 18px;
+  font-size: 28.125px;
   color: var(--selectable-color);
 }
 
 .media-player-control.media-player-control-lg {
-  font-size: 30px;
-  color: var(--selectable-color);
+  font-size: inherit;
+}
+
+.media-player-control:not(.media-player-control-lg):not(.disabled):hover {
+  color: var(--button-primary-bg-color);
 }
 
 .media-player-toggle.active {
@@ -203,6 +206,22 @@
   min-width: 34px;
 }
 
+.media-player-like-button {
+  min-width: 34px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .media-player-volume-bar-container {
   width: 100%;
+}
+
+/* Ensure queue and volume controls match the like-button visual size */
+.media-player-side-controls-column .media-player-control.media-player-control-sm {
+  font-size: 16px;
+}
+.media-player-side-controls-column .icon {
+  font-size: 1em;
 }

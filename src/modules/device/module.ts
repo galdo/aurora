@@ -962,12 +962,19 @@ export class DeviceModule implements IAppModule {
         }
 
         if (metaflacPicturePath) {
+          // verify the copied temp image is readable
+          await fs.promises.access(metaflacPicturePath, fs.constants.R_OK);
+
           const removePictureResult = spawnSync('metaflac', ['--remove', '--block-type=PICTURE', filePath], { encoding: 'utf-8' });
           if (removePictureResult.status !== 0) {
             throw new Error(removePictureResult.stderr || 'metaflac failed to remove picture block');
           }
 
-          const importPictureResult = spawnSync('metaflac', [`--import-picture-from=${metaflacPicturePath}`, filePath], { encoding: 'utf-8' });
+          // use explicit picture spec to avoid parsing/guess issues
+          const ext = (path.extname(metaflacPicturePath) || '.jpg').toLowerCase();
+          const mime = ext === '.png' ? 'image/png' : 'image/jpeg';
+          const pictureSpec = `--import-picture-from=3:${mime}:Cover (front)::${metaflacPicturePath}`;
+          const importPictureResult = spawnSync('metaflac', [pictureSpec, filePath], { encoding: 'utf-8' });
           if (importPictureResult.status !== 0) {
             throw new Error(importPictureResult.stderr || 'metaflac failed to import picture block');
           }
@@ -986,14 +993,14 @@ export class DeviceModule implements IAppModule {
     const requestUrl = `${this.discogsBaseUrl}${endpoint}`;
     return this.requestJson(requestUrl, {
       Authorization: `Discogs token=${token}`,
-      'User-Agent': 'Aurora/1.0 (+https://github.com/bbbneo333/aurora)',
+      'User-Agent': 'AuroraPulse/1.0 (+https://github.com/bbbneo333/aurora)',
     });
   }
 
   private requestMusicBrainzJson(endpoint: string): Promise<any> {
     const requestUrl = `${this.musicBrainzBaseUrl}${endpoint}`;
     return this.requestJson(requestUrl, {
-      'User-Agent': 'Aurora/1.0 (+https://github.com/bbbneo333/aurora)',
+      'User-Agent': 'AuroraPulse/1.0 (+https://github.com/bbbneo333/aurora)',
     });
   }
 

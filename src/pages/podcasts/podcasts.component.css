@@ -5,6 +5,12 @@
   padding: 8px;
 }
 
+.podcasts-page-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--button-primary-bg-color);
+}
+
 .podcasts-empty {
   color: var(--text-dark-color);
   opacity: .8;
@@ -91,19 +97,4 @@
   font-size: var(--font-size-xs);
   color: var(--text-dark-color);
   opacity: .8;
-}
-
-.podcasts-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.podcasts-header-title {
-  font-size: var(--font-size-md);
-  color: var(--text-light-color);
-}
-
-.podcasts-add-button {
-  margin-left: auto;
 }

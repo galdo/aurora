@@ -11,6 +11,7 @@ import { Icon } from '../icon/icon.component';
 import { Button } from '../button/button.component';
 import { RouterLinkToggle } from '../router-link-toggle/router-link-toggle.component';
 import { Slider } from '../slider/slider.component';
+import { MediaTrackLikeButton } from '../media-track-like-button/media-track-like-button.component';
 
 import styles from './media-player.component.css';
 
@@ -19,6 +20,7 @@ const cx = classNames.bind(styles);
 export function MediaPlayerSide() {
   const {
     mediaPlaybackCurrentPlayingInstance,
+    mediaPlaybackCurrentMediaTrack,
     mediaPlaybackVolumeCurrent,
     mediaPlaybackVolumeMaxLimit,
     mediaPlaybackVolumeMuted,
@@ -70,6 +72,12 @@ export function MediaPlayerSide() {
   return (
     <Row className={cx('media-player-side-container')}>
       <Col className={cx('col-md-10 col-lg-8', 'media-player-side-controls-column')}>
+        {mediaPlaybackCurrentMediaTrack && (
+          <MediaTrackLikeButton
+            mediaTrack={mediaPlaybackCurrentMediaTrack}
+            className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-like-button')}
+          />
+        )}
         <RouterLinkToggle
           to={Routes.PlayerQueue}
           activeClassName={cx('active')}
