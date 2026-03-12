@@ -24,15 +24,31 @@ Aurora Pulse is designed to reduce friction: import quickly, organize clearly, s
 
 ## What’s New in Version 1.4.0
 
-- Dedicated **Podcasts** page with discovery, subscription, and sideview episode workflows
-- New **Equalizer** page with multi-band controls, reset, and headroom compensation
-- DAP sync support for podcast episodes (`Podcasts` target folder)
-- Global topbar improvements: faster navigation, contextual add actions, and cleaner module-specific controls
-- Enhanced album controls with repeat and multi-mode shuffle
-- Improved compilation handling, playlist cover collage generation, and hidden-album playlist behavior
-- Metadata workflows extended for stable FLAC/MP3 persistence and cleaner post-import consistency
+### Added
 
-![Screenshot Placeholder - Version 1.3 Features](docs/images/placeholder-v1-3-features.png)
+- New **Equalizer** page with multi-band control, headroom compensation, and reset
+- Dedicated **Podcasts** area with discovery flow, subscription management, and sideview details
+- DAP sync support for podcast episodes into the `Podcasts` target folder
+- Album header actions in topbar with repeat and multi-stage shuffle behavior
+- Improved playlist/cover generation for mixed collections and converted hidden-album playlists
+
+### Changed
+
+- Topbar layout refined: view switcher beside search, sort/zoom in right-side action area
+- Context-aware plus action in header for playlists and podcasts next to global shuffle
+- Podcast title moved from topbar into large green page heading in content area
+- Player interaction polish: like button placement and sizing consistency improvements
+- Playlist collage generation stabilized to one regeneration per app session
+- macOS build metadata updated so app name stays consistent as **Aurora Pulse**
+
+### Fixed
+
+- M3U/M3U8/M3U8-DAP exports now work for playlist collections converted from hidden albums
+- Numeric track ordering corrected for album-derived playlists
+- Hidden-album playlist cover clustering made more robust for multi-cover scenarios
+- Media session controls on macOS stabilized for better hardware key behavior
+
+![Screenshot Placeholder - Version 1.4 Features](docs/images/placeholder-v1-3-features.png)
 
 ---
 
