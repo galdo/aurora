@@ -56,7 +56,7 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          yarn install --frozen-lockfile --non-interactive || yarn install --non-interactive
+          yarn install --frozen-lockfile --non-interactive --silent || yarn install --non-interactive --silent
 
       # Resolve version once (input, tag or commit)
       - name: Resolve version

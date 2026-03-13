@@ -41,7 +41,7 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: |
-          yarn install --frozen-lockfile --non-interactive || yarn install --non-interactive
+          yarn install --frozen-lockfile --non-interactive --silent || yarn install --non-interactive --silent
 
       - name: Run lint
         run: yarn lint
