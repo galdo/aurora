@@ -1,7 +1,6 @@
 # Aurora Pulse
 
-[![Downloads](https://img.shields.io/github/downloads/bbbneo333/aurora/total)](https://github.com/bbbneo333/aurora/releases)
-[![CI](https://github.com/bbbneo333/aurora/actions/workflows/checks.yml/badge.svg)](https://github.com/bbbneo333/aurora/actions/workflows/checks.yml)
+[![checks](https://github.com/galdo/aurora/actions/workflows/checks.yml/badge.svg?branch=main&event=push)](https://github.com/galdo/aurora/actions/workflows/checks.yml)
 
 Aurora Pulse is a local-first desktop audio player for people who value sound quality, true library ownership, and frictionless daily listening. It is built to make serious audio use feel simple: precise control when you want it, fast flow when you need it.
 
