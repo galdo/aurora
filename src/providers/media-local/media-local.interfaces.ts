@@ -18,5 +18,10 @@ export interface IMediaLocalTrack extends IMediaTrack {
     file_path: string;
     file_mtime?: number;
     file_size?: number;
+    audio_sample_rate_hz?: number;
+    audio_bit_depth?: number;
+    audio_bitrate_kbps?: number;
+    audio_codec?: string;
+    audio_file_type?: string;
   }
 }

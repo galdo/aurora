@@ -3,6 +3,7 @@ import React, {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import classNames from 'classnames/bind';
 import { isEmpty } from 'lodash';
@@ -28,8 +29,10 @@ import {
   MediaPlayerService,
   MediaPlaylistService,
   MediaTrackService,
+  NotificationService,
   PodcastService,
 } from '../../services';
+import MediaLocalLibraryService from '../../providers/media-local/media-local-library.service';
 import { IPCRenderer, IPCCommChannel } from '../../modules/ipc';
 import { FSImageExtensions } from '../../modules/file-system';
 import { Button } from '../button/button.component';
@@ -38,6 +41,11 @@ import { MediaCollectionActions } from '../media-collection-actions/media-collec
 import { MediaCoverPicture } from '../media-cover-picture/media-cover-picture.component';
 import { MediaTrack } from '../media-track/media-track.component';
 import { MediaTrackList } from '../media-track-list/media-track-list.component';
+import {
+  closeMediaSideView,
+  getMediaSideViewState,
+  subscribeMediaSideView,
+} from './media-sideview.store';
 import styles from './media-sideview.component.css';
 
 const cx = classNames.bind(styles);
@@ -121,6 +129,7 @@ function groupTracksByDisc(mediaTracks: IMediaTrack[]): { disc: number; tracks: 
 export function MediaAlbumSideView({ albumId, onClose }: MediaSideViewAlbumProps) {
   const [loadedAlbum, setLoadedAlbum] = useState<IMediaAlbum | undefined>();
   const [tracks, setTracks] = useState<IMediaTrack[]>([]);
+  const [reloadingAlbum, setReloadingAlbum] = useState(false);
   const mediaAlbums = useSelector((state: RootState) => state.mediaLibrary.mediaAlbums);
   const album = mediaAlbums.find(mediaAlbum => mediaAlbum.id === albumId) || loadedAlbum;
 
@@ -177,6 +186,25 @@ export function MediaAlbumSideView({ albumId, onClose }: MediaSideViewAlbumProps
       document.body.classList.remove('sideview-open');
     };
   }, [albumId]);
+
+  const handleReloadAlbum = useCallback(async () => {
+    if (!album || reloadingAlbum) {
+      return;
+    }
+    setReloadingAlbum(true);
+    try {
+      const rescanCompleted = await MediaLocalLibraryService.rescanAlbum(album.id);
+      const refreshedAlbum = await MediaAlbumService.getMediaAlbum(album.id);
+      if (refreshedAlbum) {
+        setLoadedAlbum(refreshedAlbum);
+      }
+      const refreshedTracks = await MediaTrackService.getMediaAlbumTracks(album.id);
+      setTracks(refreshedTracks);
+      NotificationService.showMessage(rescanCompleted ? 'Album neu eingelesen.' : 'Keine Quelldateien für dieses Album gefunden.');
+    } finally {
+      setReloadingAlbum(false);
+    }
+  }, [album, reloadingAlbum]);
 
   const tracksByDisc = useMemo(() => groupTracksByDisc(tracks), [tracks]);
   const normalizedTracks = useMemo(
@@ -249,6 +277,8 @@ export function MediaAlbumSideView({ albumId, onClose }: MediaSideViewAlbumProps
           <MediaCollectionActions
             mediaItem={MediaCollectionService.getMediaItemFromAlbum(album)}
             hasTracks={!isEmpty(tracks)}
+            onReloadAlbum={handleReloadAlbum}
+            reloadingAlbum={reloadingAlbum}
           />
         </div>
         {!isEmpty(tracks) && (
@@ -518,5 +548,41 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
         </div>
       </aside>
     </>
+  );
+}
+
+export function GlobalMediaSideView() {
+  const sideViewState = useSyncExternalStore(subscribeMediaSideView, getMediaSideViewState, getMediaSideViewState);
+
+  if (sideViewState.type === 'none') {
+    return null;
+  }
+
+  if (sideViewState.type === 'album') {
+    return (
+      <MediaAlbumSideView
+        key={`sideview-album-${sideViewState.albumId}`}
+        albumId={sideViewState.albumId}
+        onClose={closeMediaSideView}
+      />
+    );
+  }
+
+  if (sideViewState.type === 'playlist') {
+    return (
+      <MediaPlaylistSideView
+        key={`sideview-playlist-${sideViewState.playlistId}`}
+        playlistId={sideViewState.playlistId}
+        onClose={closeMediaSideView}
+      />
+    );
+  }
+
+  return (
+    <MediaPodcastSideView
+      key={`sideview-podcast-${sideViewState.podcastId}`}
+      podcastId={sideViewState.podcastId}
+      onClose={closeMediaSideView}
+    />
   );
 }

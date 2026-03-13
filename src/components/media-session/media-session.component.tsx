@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import { MediaEnums } from '../../enums';
@@ -43,15 +43,26 @@ const getSessionArtworkForMediaTrack = (mediaTrack: IMediaTrack): MediaImage | u
 export function MediaSession() {
   const mediaPlayer = useSelector((state: RootState) => state.mediaPlayer);
   const { mediaSession } = navigator;
+  const [podcastPlaybackSnapshot, setPodcastPlaybackSnapshot] = useState(() => PodcastService.getPlaybackSnapshot());
+
+  useEffect(() => {
+    const unsubscribePlayback = PodcastService.subscribePlayback(() => {
+      setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
+    });
+    setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
+    return () => {
+      unsubscribePlayback();
+    };
+  }, []);
 
   useEffect(() => {
     const messageListener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.MediaHardwareControl, (action: 'play_pause' | 'next_track' | 'previous_track' | 'stop') => {
-      const podcastPlaybackSnapshot = PodcastService.getPlaybackSnapshot();
-      const isPodcastMode = podcastPlaybackSnapshot.isActive && !mediaPlayer.mediaPlaybackCurrentMediaTrack;
+      const currentPodcastPlaybackSnapshot = PodcastService.getPlaybackSnapshot();
+      const isPodcastMode = currentPodcastPlaybackSnapshot.isActive && !mediaPlayer.mediaPlaybackCurrentMediaTrack;
 
       if (action === 'play_pause') {
         if (isPodcastMode) {
-          if (podcastPlaybackSnapshot.isPlaying) {
+          if (currentPodcastPlaybackSnapshot.isPlaying) {
             PodcastService.pausePlayback();
           } else {
             PodcastService.resumePlayback();
@@ -64,6 +75,16 @@ export function MediaSession() {
       }
 
       if (isPodcastMode) {
+        if (action === 'next_track') {
+          PodcastService.seekPlayback(currentPodcastPlaybackSnapshot.currentTime + 15);
+        } else if (action === 'previous_track') {
+          PodcastService.seekPlayback(currentPodcastPlaybackSnapshot.currentTime - 15);
+        } else if (action === 'stop') {
+          PodcastService.stopPlayback();
+          if (mediaSession) {
+            mediaSession.playbackState = 'none';
+          }
+        }
         return;
       }
 
@@ -83,6 +104,7 @@ export function MediaSession() {
       IPCRenderer.removeMessageHandler(IPCRendererCommChannel.MediaHardwareControl, messageListener);
     };
   }, [
+    mediaSession,
     mediaPlayer.mediaPlaybackCurrentMediaTrack,
   ]);
 
@@ -95,52 +117,115 @@ export function MediaSession() {
 
     mediaSession.setActionHandler('play', () => {
       debug('received action - %s', 'play');
-      MediaPlayerService.resumeMediaPlayer();
+      const snapshot = PodcastService.getPlaybackSnapshot();
+      if (snapshot.isActive) {
+        PodcastService.resumePlayback();
+      } else {
+        MediaPlayerService.resumeMediaPlayer();
+      }
       mediaSession.playbackState = 'playing';
     });
 
     mediaSession.setActionHandler('pause', () => {
       debug('received action - %s', 'pause');
-      MediaPlayerService.pauseMediaPlayer();
+      const snapshot = PodcastService.getPlaybackSnapshot();
+      if (snapshot.isActive) {
+        PodcastService.pausePlayback();
+      } else {
+        MediaPlayerService.pauseMediaPlayer();
+      }
       mediaSession.playbackState = 'paused';
     });
 
     mediaSession.setActionHandler('stop', () => {
       debug('received action - %s', 'stop');
-      MediaPlayerService.stopMediaPlayer();
+      const snapshot = PodcastService.getPlaybackSnapshot();
+      if (snapshot.isActive) {
+        PodcastService.stopPlayback();
+      } else {
+        MediaPlayerService.stopMediaPlayer();
+      }
       mediaSession.playbackState = 'none';
     });
 
     mediaSession.setActionHandler('seekto', (event) => {
       debug('received action - %s, fast seek? %s, seek time - %f', 'seekto', event.fastSeek, event.seekTime);
-      MediaPlayerService.seekMediaTrack(event.seekTime);
+      const snapshot = PodcastService.getPlaybackSnapshot();
+      if (snapshot.isActive) {
+        PodcastService.seekPlayback(event.seekTime);
+      } else {
+        MediaPlayerService.seekMediaTrack(event.seekTime);
+      }
     });
 
     mediaSession.setActionHandler('seekbackward', (event) => {
       debug('received action - %s, seek offset - %f', 'seekbackward', event.seekOffset);
-      // TODO: Add support for seeking backwards with provided offset
+      const snapshot = PodcastService.getPlaybackSnapshot();
+      const seekOffset = Number(event.seekOffset || 10);
+      if (snapshot.isActive) {
+        PodcastService.seekPlayback(snapshot.currentTime - seekOffset);
+      } else {
+        const currentProgress = Number(mediaPlayer.mediaPlaybackCurrentMediaProgress || 0);
+        MediaPlayerService.seekMediaTrack(currentProgress - seekOffset);
+      }
     });
 
     mediaSession.setActionHandler('seekforward', (event) => {
       debug('received action - %s, seek offset - %f', 'seekforward', event.seekOffset);
-      // TODO: Add support for seeking forwards with provided offset
+      const snapshot = PodcastService.getPlaybackSnapshot();
+      const seekOffset = Number(event.seekOffset || 10);
+      if (snapshot.isActive) {
+        PodcastService.seekPlayback(snapshot.currentTime + seekOffset);
+      } else {
+        const currentProgress = Number(mediaPlayer.mediaPlaybackCurrentMediaProgress || 0);
+        MediaPlayerService.seekMediaTrack(currentProgress + seekOffset);
+      }
     });
 
     mediaSession.setActionHandler('previoustrack', () => {
       debug('received action - %s', 'previoustrack');
-      MediaPlayerService.playPreviousTrack();
+      const snapshot = PodcastService.getPlaybackSnapshot();
+      if (snapshot.isActive) {
+        PodcastService.seekPlayback(snapshot.currentTime - 15);
+      } else {
+        MediaPlayerService.playPreviousTrack();
+      }
     });
 
     mediaSession.setActionHandler('nexttrack', () => {
       debug('received action - %s', 'nexttrack');
-      MediaPlayerService.playNextTrack();
+      const snapshot = PodcastService.getPlaybackSnapshot();
+      if (snapshot.isActive) {
+        PodcastService.seekPlayback(snapshot.currentTime + 15);
+      } else {
+        MediaPlayerService.playNextTrack();
+      }
     });
   }, [
     mediaSession,
+    mediaPlayer.mediaPlaybackCurrentMediaProgress,
   ]);
 
   useEffect(() => {
-    if (!mediaSession || !mediaPlayer.mediaPlaybackCurrentMediaTrack) {
+    if (!mediaSession) {
+      return;
+    }
+
+    if (podcastPlaybackSnapshot.isActive) {
+      const artwork = podcastPlaybackSnapshot.subscription?.imageUrl
+        ? [{ src: podcastPlaybackSnapshot.subscription.imageUrl }]
+        : undefined;
+      mediaSession.metadata = new MediaMetadata({
+        title: podcastPlaybackSnapshot.episode?.title || 'Podcast',
+        artist: podcastPlaybackSnapshot.subscription?.publisher || '',
+        album: podcastPlaybackSnapshot.subscription?.title || 'Podcast',
+        artwork,
+      });
+      return;
+    }
+
+    if (!mediaPlayer.mediaPlaybackCurrentMediaTrack) {
+      mediaSession.metadata = null;
       return;
     }
 
@@ -159,6 +244,11 @@ export function MediaSession() {
     mediaSession.metadata = mediaSessionMetadata;
   }, [
     mediaSession,
+    podcastPlaybackSnapshot.isActive,
+    podcastPlaybackSnapshot.episode?.title,
+    podcastPlaybackSnapshot.subscription?.title,
+    podcastPlaybackSnapshot.subscription?.publisher,
+    podcastPlaybackSnapshot.subscription?.imageUrl,
     mediaPlayer.mediaPlaybackCurrentMediaTrack,
     mediaPlayer.mediaPlaybackState,
   ]);
@@ -169,7 +259,9 @@ export function MediaSession() {
     }
 
     let state: MediaSessionPlaybackState = 'none';
-    if (mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing) {
+    if (podcastPlaybackSnapshot.isActive) {
+      state = podcastPlaybackSnapshot.isPlaying ? 'playing' : 'paused';
+    } else if (mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing) {
       state = 'playing';
     } else if (mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Paused) {
       state = 'paused';
@@ -177,28 +269,48 @@ export function MediaSession() {
     mediaSession.playbackState = state;
   }, [
     mediaSession,
+    podcastPlaybackSnapshot.isActive,
+    podcastPlaybackSnapshot.isPlaying,
     mediaPlayer.mediaPlaybackState,
   ]);
 
   useEffect(() => {
     if (!mediaSession
       || !mediaSession.setPositionState
-      || !mediaPlayer.mediaPlaybackCurrentMediaTrack
-      || mediaPlayer.mediaPlaybackState !== MediaEnums.MediaPlaybackState.Playing) {
+    ) {
       return;
     }
 
-    const mediaSessionPlaybackState = {
-      duration: mediaPlayer.mediaPlaybackCurrentMediaTrack.track_duration,
-      playbackRate: 1.0,
-      position: mediaPlayer.mediaPlaybackCurrentMediaProgress,
-    };
+    let mediaSessionPlaybackState;
+    if (podcastPlaybackSnapshot.isActive) {
+      if (!Number.isFinite(podcastPlaybackSnapshot.duration) || podcastPlaybackSnapshot.duration <= 0) {
+        return;
+      }
+      mediaSessionPlaybackState = {
+        duration: podcastPlaybackSnapshot.duration,
+        playbackRate: 1.0,
+        position: podcastPlaybackSnapshot.currentTime,
+      };
+    } else {
+      if (!mediaPlayer.mediaPlaybackCurrentMediaTrack
+        || mediaPlayer.mediaPlaybackState !== MediaEnums.MediaPlaybackState.Playing) {
+        return;
+      }
+      mediaSessionPlaybackState = {
+        duration: mediaPlayer.mediaPlaybackCurrentMediaTrack.track_duration,
+        playbackRate: 1.0,
+        position: mediaPlayer.mediaPlaybackCurrentMediaProgress,
+      };
+    }
 
     debug('updating position state - %o', mediaSessionPlaybackState);
 
     mediaSession.setPositionState(mediaSessionPlaybackState);
   }, [
     mediaSession,
+    podcastPlaybackSnapshot.isActive,
+    podcastPlaybackSnapshot.duration,
+    podcastPlaybackSnapshot.currentTime,
     mediaPlayer.mediaPlaybackState,
     mediaPlayer.mediaPlaybackCurrentMediaTrack,
     mediaPlayer.mediaPlaybackCurrentMediaProgress,

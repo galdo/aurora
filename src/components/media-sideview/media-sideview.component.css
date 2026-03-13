@@ -10,8 +10,7 @@
   bottom: 0;
   width: clamp(420px, 30vw, 640px);
   background-color: var(--stage-overlay-bg-color);
-  border-left: 1px solid var(--stage-overlay-outline-color);
-  box-shadow: -16px 0 24px rgba(0,0,0,.3);
+  border-left: 1px solid color-mix(in srgb, var(--button-primary-bg-color) 28%, var(--stage-overlay-outline-color) 72%);
   padding: 16px;
   overflow: auto;
   z-index: 1000;
@@ -19,14 +18,12 @@
 }
 
 .sideview-backdrop {
+  --sideview-player-offset: 100px;
   position: fixed;
-  top: 0;
-  left: 0;
-  right: clamp(420px, 30vw, 640px);
-  bottom: 0;
-  background: rgba(0,0,0,0.05);
-  backdrop-filter: blur(6px) saturate(1.05);
-  -webkit-backdrop-filter: blur(6px) saturate(1.05);
+  inset: 0 0 var(--sideview-player-offset) 0;
+  background: linear-gradient(to left, rgba(0, 0, 0, 0.14) 0%, rgba(0, 0, 0, 0.08) 28%, rgba(0, 0, 0, 0.05) 100%);
+  backdrop-filter: blur(9px) saturate(1.12);
+  -webkit-backdrop-filter: blur(9px) saturate(1.12);
   z-index: 999;
 }
 
@@ -152,6 +149,7 @@
   border-bottom: 1px solid var(--stage-overlay-outline-color);
 }
 
+
 .sideview-tracklist {
   margin-top: 8px;
 }
@@ -167,6 +165,18 @@
   letter-spacing: 0.8px;
   text-transform: uppercase;
   margin: 6px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sideview-disc-separator::after {
+  content: '';
+  width: 18px;
+  height: 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-dark-color) 55%, transparent 45%);
+  opacity: 0.6;
 }
 
 .sideview-cover-placeholder {

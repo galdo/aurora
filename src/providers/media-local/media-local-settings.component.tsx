@@ -14,13 +14,11 @@ import {
 
 import { Icons } from '../../constants';
 import { I18nService, MediaProviderService } from '../../services';
-import { DateTimeUtils } from '../../utils';
 
 import { IPCRenderer, IPCCommChannel } from '../../modules/ipc';
 
 import MediaLocalConstants from './media-local.constants.json';
 import { mediaLocalStore, MediaLocalStateActionType, MediaSyncDirectoryStats } from './media-local.store';
-import MediaLocalLibraryService from './media-local-library.service';
 
 import styles from './media-local-settings.component.css';
 
@@ -93,9 +91,6 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
     loading,
     saving,
     syncing,
-    syncDuration,
-    syncFilesFoundCount,
-    syncFilesProcessedCount,
     syncDirectoryStats,
   } = state;
   const cdImportSettings = settings.cd_import || {
@@ -206,7 +201,7 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
           <div className={cx('settings-action-row')}>
             <Button
               className={cl('settings-action-button')}
-              variant={['primary']}
+              variant={['secondary']}
               disabled={loading || saving}
               icon={Icons.AddCircle}
               onButtonSubmit={() => {
@@ -240,7 +235,7 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
             </div>
             <Button
               className={cl('settings-action-button')}
-              variant={['primary']}
+              variant={['secondary']}
               icon={Icons.Folder}
               onButtonSubmit={() => {
                 const selectedDirectory = openDirectorySelectionDialog();
@@ -315,42 +310,6 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
           </Form.Group>
         </div>
 
-        <div style={{ marginTop: '20px', borderTop: '1px solid var(--stage-overlay-outline-color)', paddingTop: '20px' }}>
-          <div className={cx('settings-row')}>
-            <div>
-              <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_synchronize_library')}</div>
-              <div className={cx('settings-description')}>{I18nService.getString('label_settings_manual_database_refresh')}</div>
-            </div>
-            <div className={cl('settings-sync-action')}>
-              <Button
-                className={cl('settings-action-button')}
-                variant={['primary']}
-                icon={syncing ? Icons.Refreshing : Icons.Refresh}
-                disabled={syncing}
-                onButtonSubmit={() => {
-                  MediaLocalLibraryService.syncMediaTracks();
-                }}
-                tooltip={(
-                  <>
-                    {I18nService.getString('tooltip_settings_sync_file_found')}
-                    :&nbsp;
-                    {syncFilesFoundCount}
-                    <br/>
-                    {I18nService.getString('tooltip_settings_sync_file_processed')}
-                    :&nbsp;
-                    {syncFilesProcessedCount}
-                    <br/>
-                    {I18nService.getString('tooltip_settings_sync_time_taken')}
-                    :&nbsp;
-                    {DateTimeUtils.formatDuration(syncDuration)}
-                  </>
-                )}
-              >
-                {I18nService.getString('button_settings_sync_refresh')}
-              </Button>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import React from 'react';
 import classNames from 'classnames/bind';
 
-import { Icons, Layout, Routes } from '../../constants';
+import { Icons, Routes } from '../../constants';
 import { IMediaArtist } from '../../interfaces';
 import { StringUtils } from '../../utils';
 
@@ -19,18 +19,22 @@ const cx = classNames.bind(styles);
 
 export function MediaArtists(props: {
   mediaArtists: IMediaArtist[],
+  coverSize?: number,
 }) {
-  const { mediaArtists } = props;
+  const { mediaArtists, coverSize } = props;
   const mediaContextMenuId = 'media_artists_context_menu';
+  const containerStyle = coverSize ? {
+    '--album-cover-size': `${coverSize}px`,
+  } as React.CSSProperties : undefined;
 
   return (
     <div>
-      <div className={cx('row', 'media-artists')}>
+      <div className={cx('media-artists')} style={containerStyle}>
         {mediaArtists.map((mediaArtist) => {
           const mediaItem = MediaCollectionService.getMediaItemFromArtist(mediaArtist);
 
           return (
-            <div className={Layout.Grid.CollectionTile} key={mediaArtist.id}>
+            <div key={mediaArtist.id}>
               <MediaCollectionTile
                 mediaItem={mediaItem}
                 routerLink={StringUtils.buildRoute(Routes.LibraryArtist, {

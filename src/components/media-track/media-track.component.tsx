@@ -43,6 +43,7 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
     isActive = false,
     className,
     onDoubleClick,
+    onClick,
     onKeyDown,
     variant = 'default',
     ...rest
@@ -75,6 +76,21 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
       onDoubleClick={(e) => {
         onDoubleClick?.(e);
         toggle();
+      }}
+      onClick={(e) => {
+        onClick?.(e);
+        if (variant !== 'sideview') {
+          return;
+        }
+        const targetElement = e.target as HTMLElement | null;
+        if (targetElement?.closest('button, a, input, select, textarea')) {
+          return;
+        }
+        if (isActive || isTrackActive) {
+          toggle();
+          return;
+        }
+        play();
       }}
       onKeyDown={(e) => {
         onKeyDown?.(e);
@@ -118,7 +134,16 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
         )}
         <div className={cx('media-track-section', 'info')}>
           {variant === 'sideview' && (
-            <span className={cx('media-track-number')}>{mediaTrack.track_number}</span>
+            <span className={cx('media-track-number-slot')}>
+              <span className={cx('media-track-number')}>{mediaTrack.track_number}</span>
+              <MediaPlaybackButton
+                isPlaying={isTrackPlaying}
+                className={cx('media-track-playback-button', 'sideview', 'sideview-number')}
+                onPlay={play}
+                onPause={pause}
+                tabIndex={-1}
+              />
+            </span>
           )}
           <MediaTrackInfo
             mediaTrack={mediaTrack}
@@ -146,17 +171,6 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
           <div className={cx('media-track-duration')}>
             {MediaUtils.formatMediaTrackDuration(mediaTrack.track_duration)}
           </div>
-          {variant === 'sideview' && (
-            <div className={cx('media-track-section', 'button', 'sideview')}>
-              <MediaPlaybackButton
-                isPlaying={isTrackPlaying}
-                className={cx('media-track-playback-button', 'sideview')}
-                onPlay={play}
-                onPause={pause}
-                tabIndex={-1}
-              />
-            </div>
-          )}
         </div>
       </div>
     </div>

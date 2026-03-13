@@ -23,12 +23,14 @@ import { useModal } from '../../contexts';
 import { IMediaTrack } from '../../interfaces';
 import { usePersistentScroll } from '../../hooks';
 import {
+  AppService,
   I18nService,
   MediaLibraryService,
   MediaPlayerService,
   MediaTrackService,
 } from '../../services';
 import { Icons, Routes } from '../../constants';
+import { PlatformOS } from '../../modules/platform/platform.enums';
 import MediaLocalLibraryService from '../../providers/media-local/media-local-library.service';
 import { StringUtils } from '../../utils';
 
@@ -211,16 +213,25 @@ function BrowserHeader() {
   const history = useHistory();
   const location = useLocation();
   const { showModal } = useModal();
+  const isWindows = AppService.details.platform === PlatformOS.Windows;
   const isPlaylistModule = location.pathname.startsWith(Routes.LibraryPlaylists);
   const isPodcastModule = location.pathname.startsWith(Routes.Podcasts);
   const shouldShowCreateButton = isPlaylistModule || isPodcastModule;
 
   return (
-    <div className={cx('browser-header', 'app-window-drag')}>
+    <div
+      className={cx('browser-header', 'app-window-drag', {
+        'browser-header-windows': isWindows,
+      })}
+    >
       <BrowserNavigation/>
       <BrowserSearch/>
       <BrowserLinks/>
-      <div className={cx('browser-header-actions')}>
+      <div
+        className={cx('browser-header-actions', {
+          'browser-header-actions-windows': isWindows,
+        })}
+      >
         <div id="browser-header-context-actions" className={cx('browser-header-context-actions')}/>
         <div id="browser-header-inline-controls" className={cx('browser-header-inline-controls')}/>
         {shouldShowCreateButton && (

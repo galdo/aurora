@@ -24,7 +24,7 @@ export type ButtonProps = React.DetailsHTMLAttributes<HTMLDivElement> & {
   tooltip?: string | React.ReactElement;
 };
 
-export type ButtonVariant = 'primary' | 'danger' | 'rounded' | 'outline' | 'lg';
+export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'rounded' | 'outline' | 'lg';
 
 export function Button(props: ButtonProps) {
   const {

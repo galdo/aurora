@@ -10,6 +10,7 @@ import {
   IPodcastSubscription,
 } from '../interfaces';
 
+import { AppService } from './app.service';
 import { NotificationService } from './notification.service';
 
 type PodcastSyncResult = {
@@ -37,6 +38,7 @@ export class PodcastService {
   private static podcastPlaybackEpisode: IPodcastEpisode | undefined;
   private static podcastPlaybackSubscription: IPodcastSubscription | undefined;
   private static podcastPlaybackTickInterval: number | undefined;
+  private static podcastStorageFilePath: string | undefined;
 
   private static normalizeDirectorySource(source: unknown): IPodcastDirectorySource {
     if (source === 'de' || source === 'eu') {
@@ -46,40 +48,19 @@ export class PodcastService {
   }
 
   static getSubscriptions(): IPodcastSubscription[] {
-    const raw = localStorage.getItem(this.podcastStorageKey);
-    if (!raw) {
-      return [];
+    const subscriptionsFromLocalStorage = this.parseSubscriptions(localStorage.getItem(this.podcastStorageKey));
+    const subscriptionsFromFileStorage = this.readSubscriptionsFromFileStorage();
+    const effectiveSubscriptions = this.resolveEffectiveSubscriptions(
+      subscriptionsFromLocalStorage,
+      subscriptionsFromFileStorage,
+    );
+
+    if (effectiveSubscriptions.length > 0) {
+      this.persistSubscriptionsToLocalStorage(effectiveSubscriptions);
+      this.persistSubscriptionsToFileStorage(effectiveSubscriptions);
     }
 
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-
-      return parsed.map((item): IPodcastSubscription => ({
-        id: String(item.id),
-        title: String(item.title || ''),
-        publisher: String(item.publisher || ''),
-        genre: String(item.genre || ''),
-        rating: Number(item.rating || 0),
-        imageUrl: String(item.imageUrl || ''),
-        feedUrl: String(item.feedUrl || ''),
-        source: this.normalizeDirectorySource(item.source),
-        hasNewEpisodes: Boolean(item.hasNewEpisodes),
-        updatedAt: Number(item.updatedAt || 0),
-        episodes: Array.isArray(item.episodes) ? item.episodes.map((episode: any) => ({
-          id: String(episode.id || ''),
-          title: String(episode.title || ''),
-          audioUrl: String(episode.audioUrl || ''),
-          publishedAt: Number(episode.publishedAt || 0),
-          description: episode.description ? String(episode.description) : undefined,
-          isNew: Boolean(episode.isNew),
-        })).filter((episode: IPodcastEpisode) => !_.isEmpty(episode.id) && !_.isEmpty(episode.audioUrl)) : [],
-      })).filter((subscription: IPodcastSubscription) => !_.isEmpty(subscription.id) && !_.isEmpty(subscription.feedUrl));
-    } catch (_error) {
-      return [];
-    }
+    return effectiveSubscriptions;
   }
 
   static subscribe(listener: () => void): () => void {
@@ -504,8 +485,111 @@ export class PodcastService {
   }
 
   private static setSubscriptions(subscriptions: IPodcastSubscription[]) {
-    localStorage.setItem(this.podcastStorageKey, JSON.stringify(subscriptions));
+    this.persistSubscriptionsToLocalStorage(subscriptions);
+    this.persistSubscriptionsToFileStorage(subscriptions);
     window.dispatchEvent(new CustomEvent(this.podcastChangeEventName));
+  }
+
+  private static parseSubscriptions(rawValue: string | null | undefined): IPodcastSubscription[] {
+    if (!rawValue) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(rawValue);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed.map((item): IPodcastSubscription => ({
+        id: String(item.id),
+        title: String(item.title || ''),
+        publisher: String(item.publisher || ''),
+        genre: String(item.genre || ''),
+        rating: Number(item.rating || 0),
+        imageUrl: String(item.imageUrl || ''),
+        feedUrl: String(item.feedUrl || ''),
+        source: this.normalizeDirectorySource(item.source),
+        hasNewEpisodes: Boolean(item.hasNewEpisodes),
+        updatedAt: Number(item.updatedAt || 0),
+        episodes: Array.isArray(item.episodes) ? item.episodes.map((episode: any) => ({
+          id: String(episode.id || ''),
+          title: String(episode.title || ''),
+          audioUrl: String(episode.audioUrl || ''),
+          publishedAt: Number(episode.publishedAt || 0),
+          description: episode.description ? String(episode.description) : undefined,
+          isNew: Boolean(episode.isNew),
+        })).filter((episode: IPodcastEpisode) => !_.isEmpty(episode.id) && !_.isEmpty(episode.audioUrl)) : [],
+      })).filter((subscription: IPodcastSubscription) => !_.isEmpty(subscription.id) && !_.isEmpty(subscription.feedUrl));
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  private static resolveEffectiveSubscriptions(
+    subscriptionsFromLocalStorage: IPodcastSubscription[],
+    subscriptionsFromFileStorage: IPodcastSubscription[],
+  ): IPodcastSubscription[] {
+    if (subscriptionsFromLocalStorage.length === 0) {
+      return subscriptionsFromFileStorage;
+    }
+    if (subscriptionsFromFileStorage.length === 0) {
+      return subscriptionsFromLocalStorage;
+    }
+    const localTimestamp = this.getSubscriptionsTimestamp(subscriptionsFromLocalStorage);
+    const fileTimestamp = this.getSubscriptionsTimestamp(subscriptionsFromFileStorage);
+    if (fileTimestamp > localTimestamp) {
+      return subscriptionsFromFileStorage;
+    }
+    return subscriptionsFromLocalStorage;
+  }
+
+  private static getSubscriptionsTimestamp(subscriptions: IPodcastSubscription[]): number {
+    if (subscriptions.length === 0) {
+      return 0;
+    }
+    return Math.max(...subscriptions.map(subscription => Number(subscription.updatedAt || 0)));
+  }
+
+  private static persistSubscriptionsToLocalStorage(subscriptions: IPodcastSubscription[]) {
+    localStorage.setItem(this.podcastStorageKey, JSON.stringify(subscriptions));
+  }
+
+  private static readSubscriptionsFromFileStorage(): IPodcastSubscription[] {
+    const storageFilePath = this.getPodcastStorageFilePath();
+    if (!storageFilePath) {
+      return [];
+    }
+    try {
+      const fileContent = fs.readFileSync(storageFilePath, 'utf8');
+      return this.parseSubscriptions(fileContent);
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  private static persistSubscriptionsToFileStorage(subscriptions: IPodcastSubscription[]) {
+    const storageFilePath = this.getPodcastStorageFilePath();
+    if (!storageFilePath) {
+      return;
+    }
+    _.attempt(() => {
+      fs.mkdirSync(path.dirname(storageFilePath), { recursive: true });
+      fs.writeFileSync(storageFilePath, JSON.stringify(subscriptions, null, 2), 'utf8');
+    });
+  }
+
+  private static getPodcastStorageFilePath(): string | undefined {
+    if (this.podcastStorageFilePath) {
+      return this.podcastStorageFilePath;
+    }
+    const logsPath = String(AppService.details?.logs_path || '').trim();
+    if (_.isEmpty(logsPath)) {
+      return undefined;
+    }
+    const appDataRootPath = path.dirname(logsPath);
+    this.podcastStorageFilePath = path.join(appDataRootPath, 'State', 'podcasts.subscriptions.json');
+    return this.podcastStorageFilePath;
   }
 
   private static startPlaybackTick() {

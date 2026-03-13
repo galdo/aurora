@@ -147,9 +147,12 @@ export class MediaPlaylistService {
       mediaPlaylistsDataList.map(mediaPlaylistData => this.syncSmartPlaylistData(mediaPlaylistData)),
     );
 
-    const mediaPlaylists = await Promise.all(
+    const mediaPlaylistsBuildResults = await Promise.allSettled(
       mediaPlaylistsDataResolved.map(mediaPlaylistData => this.buildMediaPlaylist(mediaPlaylistData)),
     );
+    const mediaPlaylists = mediaPlaylistsBuildResults
+      .filter((result): result is PromiseFulfilledResult<IMediaPlaylist> => result.status === 'fulfilled')
+      .map(result => result.value);
 
     const hiddenAlbums = await MediaAlbumDatastore.findMediaAlbums({
       hidden: true,

@@ -195,6 +195,11 @@ export function SettingsPage() {
     },
   ];
   const groupCompilationsByFolder = mediaLocalState.settings?.library?.group_compilations_by_folder || false;
+  const appDetails = AppService.details;
+  const mediaKeysRegistered = !!appDetails.media_hardware_shortcuts_registered;
+  const mediaKeysAccessibilityTrusted = appDetails.platform === 'darwin'
+    ? !!appDetails.media_hardware_shortcuts_accessibility_trusted
+    : true;
   const handleThemeChange = (mode: ThemeMode) => {
     ThemeService.set(mode);
     setThemeMode(mode);
@@ -310,6 +315,51 @@ export function SettingsPage() {
 
           <div className={cx('settings-section', 'settings-card')}>
             <div className={cx('settings-heading')}>
+              Multimediatasten (macOS)
+            </div>
+            <div className={cx('settings-content')}>
+              <div className={cx('settings-row')}>
+                <div>
+                  <div className={cx('settings-subheading')}>Global-Shortcut Registrierung</div>
+                  <div className={cx('settings-description')}>
+                    {mediaKeysRegistered
+                      ? 'Aktiv: Play/Pause, Vor/Zurück werden systemweit von Aurora abgefangen.'
+                      : 'Nicht aktiv: macOS oder eine andere App übernimmt die Mediatasten.'}
+                  </div>
+                </div>
+                <span className={cx('settings-status-chip', { ok: mediaKeysRegistered, error: !mediaKeysRegistered })}>
+                  {mediaKeysRegistered ? 'Aktiv' : 'Inaktiv'}
+                </span>
+              </div>
+              <div className={cx('settings-row')}>
+                <div>
+                  <div className={cx('settings-subheading')}>Bedienungshilfen-Zugriff</div>
+                  <div className={cx('settings-description')}>
+                    {mediaKeysAccessibilityTrusted
+                      ? 'Erlaubt.'
+                      : 'Nicht erlaubt. Ohne diese Freigabe kann macOS die Tasten an Apple Music weiterleiten.'}
+                  </div>
+                </div>
+                <span className={cx('settings-status-chip', { ok: mediaKeysAccessibilityTrusted, error: !mediaKeysAccessibilityTrusted })}>
+                  {mediaKeysAccessibilityTrusted ? 'Erlaubt' : 'Fehlt'}
+                </span>
+              </div>
+              <div className={cx('settings-action-row')}>
+                <Link
+                  href="x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                  className={cx('settings-info-link')}
+                >
+                  Bedienungshilfen in macOS öffnen
+                </Link>
+              </div>
+              <div className={cx('settings-description')}>
+                Nach Änderung bitte Aurora Pulse neu starten.
+              </div>
+            </div>
+          </div>
+
+          <div className={cx('settings-section', 'settings-card')}>
+            <div className={cx('settings-heading')}>
               DAP Sync
             </div>
             <div className={cx('settings-content')}>
@@ -321,6 +371,7 @@ export function SettingsPage() {
                   </div>
                 </div>
                 <Button
+                  variant={['secondary']}
                   onButtonSubmit={() => {
                     const selectedDirectory = IPCRenderer.sendSyncMessage(IPCCommChannel.FSSelectDirectory);
                     if (!selectedDirectory) {
@@ -504,7 +555,7 @@ export function SettingsPage() {
               <Icon name={Icons.Bug}/>
               <div>
                 <div className={cx('settings-info-title')}>
-                  {`${AppService.details.display_name} ${AppService.details.version} (${AppService.details.build})`}
+                  {`${appDetails.display_name} ${appDetails.version} (${appDetails.build})`}
                 </div>
                 <Link href={Links.ProjectReportIssue} className={cx('settings-info-link')}>
                   {I18nService.getString('link_report_issue')}

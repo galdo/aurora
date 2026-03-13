@@ -28,6 +28,8 @@ import { registerStatePersistor, loadState, removeStates } from '../store/persis
 import styles from './app.component.css';
 import { Sidebar } from './sidebar/sidebar.component';
 import { Browser } from './browser/browser.component';
+import { GlobalMediaSideView } from '../components/media-sideview/media-sideview.component';
+import { openAlbumSideView } from '../components/media-sideview/media-sideview.store';
 
 const cx = classNames.bind(styles);
 
@@ -130,14 +132,14 @@ function Stage() {
 
 // app > player
 
-function Player({ active = false }) {
+function Player({ active = false }: { active: boolean }) {
   return (
     <div className={cx('app-player', {
       active,
     })}
     >
       <MediaSession/>
-      <MediaPlayer/>
+      <MediaPlayer onShowAlbum={openAlbumSideView}/>
     </div>
   );
 }
@@ -169,6 +171,7 @@ function Window() {
           <ContextMenuProvider>
             <Stage/>
             <Player active={playerIsActive}/>
+            <GlobalMediaSideView/>
           </ContextMenuProvider>
         </ModalProvider>
       </NotificationProvider>

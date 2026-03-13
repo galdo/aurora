@@ -248,6 +248,32 @@
   margin-top: 8px;
 }
 
+.settings-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--stage-overlay-outline-color);
+  background-color: var(--loader-track-color);
+  color: var(--text-light-color);
+}
+
+.settings-status-chip.ok {
+  background-color: rgba(20, 164, 77, 0.14);
+  border-color: rgba(20, 164, 77, 0.4);
+  color: #14a44d;
+}
+
+.settings-status-chip.error {
+  background-color: rgba(224, 51, 51, 0.12);
+  border-color: rgba(224, 51, 51, 0.4);
+  color: #e03333;
+}
+
 .settings-reset-button {
   color: #fff !important;
 }

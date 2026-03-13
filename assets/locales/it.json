@@ -211,5 +211,7 @@
   "label_audio_cd_probability": "{probability}% probabilità di corrispondenza",
   "button_audio_cd_select": "Seleziona",
   "label_equalizer_headroom_compensation": "Compensazione headroom",
-  "label_equalizer_headroom_compensation_description": "Riduce automaticamente il preamplificatore con boost EQ positivo"
+  "label_equalizer_headroom_compensation_description": "Riduce automaticamente il preamplificatore con boost EQ positivo",
+  "label_equalizer_autoeq_history": "Profili EQ parametrico",
+  "label_equalizer_autoeq_profile_loaded": "Profilo EQ parametrico \"{profile}\" caricato."
 }

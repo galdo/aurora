@@ -67,7 +67,7 @@ export function MediaPlayerControls() {
     <Row className={cx('media-player-controls-container')}>
       <Col className={cx('col-12', 'media-player-controls-column')}>
         <Button
-          className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', {
+          className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-edge-control', 'media-player-edge-control-shuffle', {
             active: mediaPlaybackQueueOnShuffle,
           })}
           disabled={isPodcastMode}
@@ -75,16 +75,16 @@ export function MediaPlayerControls() {
             MediaPlayerService.toggleShuffle();
           }}
         >
-          <Icon name={Icons.PlayerShuffle}/>
+          <Icon className={cx('media-player-edge-icon')} name={Icons.PlayerShuffle}/>
         </Button>
         <Button
-          className={cx('media-player-control', 'media-player-control-md')}
+          className={cx('media-player-control', 'media-player-control-md', 'media-player-skip-control', 'media-player-skip-control-prev')}
           disabled={isPodcastMode}
           onButtonSubmit={() => {
             MediaPlayerService.playPreviousTrack();
           }}
         >
-          <Icon name={Icons.PlayerPrevious}/>
+          <Icon className={cx('media-player-skip-icon')} name={Icons.PlayerPrevious}/>
         </Button>
         <MediaPlaybackButton
           className={cx('media-player-control', 'media-player-control-lg')}
@@ -108,16 +108,16 @@ export function MediaPlayerControls() {
           aria-disabled={isPlaybackDisabled}
         />
         <Button
-          className={cx('media-player-control', 'media-player-control-md')}
+          className={cx('media-player-control', 'media-player-control-md', 'media-player-skip-control', 'media-player-skip-control-next')}
           disabled={isPodcastMode || !MediaPlayerService.hasNextTrack()}
           onButtonSubmit={() => {
             MediaPlayerService.playNextTrack();
           }}
         >
-          <Icon name={Icons.PlayerNext}/>
+          <Icon className={cx('media-player-skip-icon')} name={Icons.PlayerNext}/>
         </Button>
         <Button
-          className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-repeat-toggle', {
+          className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-repeat-toggle', 'media-player-edge-control', 'media-player-edge-control-repeat', {
             active: !_.isNil(mediaPlaybackQueueRepeatType),
           })}
           disabled={isPodcastMode}
@@ -125,7 +125,7 @@ export function MediaPlayerControls() {
             MediaPlayerService.toggleRepeat();
           }}
         >
-          <Icon name={Icons.PlayerRepeat}/>
+          <Icon className={cx('media-player-edge-icon')} name={Icons.PlayerRepeat}/>
           <span className={cx('media-player-repeat-track-indicator', {
             active: mediaPlaybackQueueRepeatType === MediaEnums.MediaPlaybackRepeatType.Track,
           })}

@@ -237,6 +237,8 @@
   "label_equalizer_subtitle": "Passe jedes Frequenzband von -12 dB bis +12 dB an",
   "label_equalizer_headroom_compensation": "Headroom-Kompensation",
   "label_equalizer_headroom_compensation_description": "Senkt den Vorverstärker automatisch bei positivem EQ-Boost",
+  "label_equalizer_autoeq_history": "Parametric-EQ-Profile",
+  "label_equalizer_autoeq_profile_loaded": "Parametric-EQ-Profil \"{profile}\" geladen.",
   "label_settings_dap_target_directory": "Zielordner",
   "label_settings_dap_no_directory": "Kein Ordner ausgewählt",
   "button_settings_dap_select_directory": "Ordner auswählen",

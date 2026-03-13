@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import classNames from 'classnames/bind';
 
 import { Icons, Routes } from '../../constants';
@@ -12,7 +12,7 @@ import {
 } from '../media-collection-context-menu/media-collection-context-menu.component';
 
 import { MediaCollectionTile } from '../media-collection-tile/media-collection-tile.component';
-import { MediaAlbumSideView } from '../media-sideview/media-sideview.component';
+import { openAlbumSideView } from '../media-sideview/media-sideview.store';
 
 import styles from './media-albums.component.css';
 
@@ -25,7 +25,6 @@ export function MediaAlbums(props: {
 }) {
   const { mediaAlbums, coverSize, hideArtist } = props;
   const mediaContextMenuId = 'media_albums_context_menu';
-  const [selectedAlbumId, setSelectedAlbumId] = useState<string | undefined>();
 
   const visibleAlbums = mediaAlbums.filter(album => !album.hidden);
 
@@ -46,7 +45,7 @@ export function MediaAlbums(props: {
                 routerLink={StringUtils.buildRoute(Routes.LibraryAlbum, {
                   albumId: mediaAlbum.id,
                 })}
-                onClick={() => setSelectedAlbumId(mediaAlbum.id)}
+                onClick={() => openAlbumSideView(mediaAlbum.id)}
                 subtitle={hideArtist ? undefined : mediaAlbum.album_artist.artist_name}
                 contextMenuId={mediaContextMenuId}
                 coverPlaceholderIcon={Icons.AlbumPlaceholder}
@@ -66,12 +65,6 @@ export function MediaAlbums(props: {
           MediaCollectionContextMenuItem.ToggleHidden,
         ]}
       />
-      {selectedAlbumId && (
-        <MediaAlbumSideView
-          albumId={selectedAlbumId}
-          onClose={() => setSelectedAlbumId(undefined)}
-        />
-      )}
     </div>
   );
 }

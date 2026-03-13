@@ -16,11 +16,52 @@ import styles from './media-player.component.css';
 
 const cx = classNames.bind(styles);
 
-export function MediaPlayerInfo() {
+export function MediaPlayerInfo({ onShowAlbum }: { onShowAlbum: (albumId: string) => void }) {
   const { showMenu } = useContextMenu();
   const mediaPlaybackCurrentMediaTrack = useSelector((state: RootState) => state.mediaPlayer.mediaPlaybackCurrentMediaTrack);
   const [podcastPlaybackSnapshot, setPodcastPlaybackSnapshot] = useState(() => PodcastService.getPlaybackSnapshot());
   const mediaTrackContextMenuId = 'media_player_playing_track_context_menu';
+  const getAudioDetailsLabel = (mediaTrack: any): string => {
+    const format = (mediaTrack?.format || {}) as {
+      sampleRate?: number;
+      bitsPerSample?: number;
+      bitrate?: number;
+      codec?: string;
+      container?: string;
+    };
+    const extra = (mediaTrack?.extra || {}) as {
+      file_path?: string;
+    };
+
+    const sampleRateHz = Number(format.sampleRate);
+    const bitDepth = Number(format.bitsPerSample);
+    const bitrateKbps = format.bitrate ? Math.round(format.bitrate / 1000) : 0;
+    const fileType = String(
+      format.container
+      || String(extra.file_path || '').split('.').pop()
+      || '',
+    ).trim().toLowerCase();
+
+    const details: string[] = [];
+    if (Number.isFinite(bitDepth) && bitDepth > 0) {
+      details.push(`${bitDepth} Bit`);
+    }
+    if (Number.isFinite(sampleRateHz) && sampleRateHz > 0) {
+      details.push(`${(sampleRateHz / 1000).toFixed(1).replace('.', ',')} kHz`);
+    }
+    if (Number.isFinite(bitrateKbps) && bitrateKbps > 0) {
+      details.push(`${bitrateKbps} kbps`);
+    }
+    if (fileType) {
+      details.push(fileType.toUpperCase());
+    }
+
+    if (details.length <= 1 && fileType) {
+      return 'Detailinformationen nicht verfügbar';
+    }
+
+    return details.join(' • ');
+  };
 
   useEffect(() => {
     const unsubscribePlayback = PodcastService.subscribePlayback(() => {
@@ -59,7 +100,7 @@ export function MediaPlayerInfo() {
     return (<></>);
   }
 
-  if (!mediaPlaybackCurrentMediaTrack && podcastPlaybackSnapshot.isActive) {
+  if (podcastPlaybackSnapshot.isActive) {
     return (
       <Row className={cx('media-player-info-container')}>
         <Col className={cx('col-12', 'media-player-info-column')}>
@@ -94,6 +135,7 @@ export function MediaPlayerInfo() {
   if (!currentMediaTrack) {
     return (<></>);
   }
+  const audioDetailsLabel = getAudioDetailsLabel(currentMediaTrack);
 
   return (
     <Row className={cx('media-player-info-container')}>
@@ -108,9 +150,16 @@ export function MediaPlayerInfo() {
         <MediaTrackInfo
           marquee
           mediaTrack={currentMediaTrack}
+          disableAlbumLink
           className={cx('media-player-track-info-container')}
           onContextMenu={handleContextMenu}
+          onTitleClick={() => onShowAlbum(currentMediaTrack.track_album.id)}
         />
+        {!!audioDetailsLabel && (
+          <div className={cx('media-player-track-audio-details')}>
+            {audioDetailsLabel}
+          </div>
+        )}
         <MediaTrackContextMenu
           id={mediaTrackContextMenuId}
           menuItems={[

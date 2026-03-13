@@ -6,7 +6,7 @@ import {
   RouterSwitchComponent,
 } from '../../components';
 import { Routes } from '../../constants';
-import { MediaPlaylistService } from '../../services';
+import { I18nService, MediaPlaylistService } from '../../services';
 
 import styles from './library.component.css';
 import routes from './library.routes';
@@ -16,6 +16,9 @@ const cx = classNames.bind(styles);
 export function LibraryPage() {
   return (
     <div className={cx('library-content-browser-container')}>
+      <div className={cx('library-page-title')}>
+        {I18nService.getString('link_library')}
+      </div>
       <RouterSwitchComponent routes={routes}/>
     </div>
   );

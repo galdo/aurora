@@ -1,11 +1,11 @@
-name: windows
+name: linux-flatpak
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
   schedule:
-    - cron: '30 2 * * *'
+    - cron: '45 2 * * *'
 
   pull_request:
     branches:
@@ -20,13 +20,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g. v1.2.3 or v1.2.3-beta)'
+        description: 'Version tag (e.g. v1.5.0 or v1.5.0-beta)'
         type: string
 
 jobs:
   build:
-    name: Build Windows
-    runs-on: windows-latest
+    name: Build Linux Flatpak (x86_64)
+    runs-on: ubuntu-latest
 
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -47,10 +47,24 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Install flatpak toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Configure flathub remote
+        run: |
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Preinstall flatpak runtime dependencies
+        run: |
+          flatpak install -y flathub org.freedesktop.Platform//23.08
+          flatpak install -y flathub org.freedesktop.Sdk//23.08
+          flatpak install -y flathub org.electronjs.Electron2.BaseApp//23.08
+
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      # Resolve version once (input, tag or commit)
       - name: Resolve version
         id: version
         shell: bash
@@ -63,13 +77,10 @@ jobs:
             BASE_VERSION=$(node -p "require('./package.json').version")
             BUILD="${GITHUB_RUN_NUMBER}"
             COMMIT="${GITHUB_SHA::7}"
-
             VERSION="${BASE_VERSION}-dev.${BUILD}.git${COMMIT}"
           fi
 
-          # Remove 'v' to keep the slug consistent
           VERSION="${VERSION#v}"
-
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           if [[ "$VERSION" == *-* ]]; then
@@ -84,19 +95,21 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
 
-      - name: Package Windows app
+      - name: Package Linux Flatpak
         shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          yarn package:win
+          yarn package:linux:flatpak:x64
 
-      # Always upload CI artifact
-      - name: Upload Windows artifact
+      - name: List release artifacts
+        run: |
+          ls -lah release
+
+      - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-x64
-          path: release/*.exe
+          name: linux-flatpak-x86_64
+          path: release/*.flatpak
+          if-no-files-found: error
           overwrite: true
 
   release:
@@ -109,13 +122,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Download Windows artifact
+      - name: Download Flatpak artifact
         uses: actions/download-artifact@v4
         with:
-          name: windows-x64
+          name: linux-flatpak-x86_64
           path: release
 
-      # Ensure tag exists for workflow_dispatch
       - name: Ensure tag exists
         if: github.event_name == 'workflow_dispatch'
         shell: bash
@@ -130,14 +142,12 @@ jobs:
             git push origin "$TAG"
           fi
 
-      # Create release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.build.outputs.version }}
           name: Release ${{ needs.build.outputs.version }}
           prerelease: ${{ needs.build.outputs.prerelease }}
-          files: |
-            release/*.exe
+          files: release/*.flatpak
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

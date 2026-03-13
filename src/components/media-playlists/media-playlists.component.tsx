@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import classNames from 'classnames/bind';
 
 import { Icons, Routes } from '../../constants';
@@ -7,7 +7,7 @@ import { I18nService, MediaCollectionService } from '../../services';
 import { StringUtils } from '../../utils';
 
 import { MediaCollectionTile } from '../media-collection-tile/media-collection-tile.component';
-import { MediaPlaylistSideView } from '../media-sideview/media-sideview.component';
+import { openPlaylistSideView } from '../media-sideview/media-sideview.store';
 
 import {
   MediaCollectionContextMenu,
@@ -20,14 +20,17 @@ const cx = classNames.bind(styles);
 
 export function MediaPlaylists(props: {
   mediaPlaylists: IMediaPlaylist[],
+  coverSize?: number,
 }) {
-  const { mediaPlaylists } = props;
+  const { mediaPlaylists, coverSize } = props;
   const mediaContextMenuId = 'media_playlists_context_menu';
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | undefined>();
+  const containerStyle = coverSize ? {
+    '--album-cover-size': `${coverSize}px`,
+  } as React.CSSProperties : undefined;
 
   return (
     <>
-      <div className={cx('media-playlists')}>
+      <div className={cx('media-playlists')} style={containerStyle}>
         {mediaPlaylists.map((mediaPlaylist) => {
           const mediaItem = MediaCollectionService.getMediaItemFromPlaylist(mediaPlaylist);
 
@@ -42,7 +45,7 @@ export function MediaPlaylists(props: {
                 subtitle={I18nService.getString('label_playlist_subtitle', {
                   trackCount: mediaPlaylist.tracks.length.toString(),
                 })}
-                onClick={() => setSelectedPlaylistId(mediaPlaylist.id)}
+                onClick={() => openPlaylistSideView(mediaPlaylist.id)}
                 coverPlaceholderIcon={Icons.PlaylistPlaceholder}
               />
             </div>
@@ -57,12 +60,6 @@ export function MediaPlaylists(props: {
           MediaCollectionContextMenuItem.ToggleHidden,
         ]}
       />
-      {selectedPlaylistId && (
-        <MediaPlaylistSideView
-          playlistId={selectedPlaylistId}
-          onClose={() => setSelectedPlaylistId(undefined)}
-        />
-      )}
     </>
   );
 }

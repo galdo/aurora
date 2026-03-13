@@ -1,8 +1,8 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import classNames from 'classnames/bind';
 
 import { Button, Slider } from '../../components';
-import { I18nService, EqualizerService } from '../../services';
+import { I18nService, EqualizerService, NotificationService } from '../../services';
 
 import styles from './equalizer.component.css';
 
@@ -20,6 +20,11 @@ export function EqualizerPage() {
   const [headroomCompensationEnabled, setHeadroomCompensationEnabled] = useState(
     () => EqualizerService.getHeadroomCompensationEnabled(),
   );
+  const [autoEqEnabled, setAutoEqEnabled] = useState(() => EqualizerService.getAutoEqEnabled());
+  const [autoEqSourceFileName, setAutoEqSourceFileName] = useState('');
+  const [autoEqProfile, setAutoEqProfile] = useState(() => EqualizerService.getAutoEqProfile());
+  const [autoEqProfilesHistory, setAutoEqProfilesHistory] = useState(() => EqualizerService.getAutoEqProfilesHistory());
+  const autoEqFileInputRef = useRef<HTMLInputElement>(null);
   const chartWidth = 660;
   const chartHeight = 120;
   const chartPaddingX = 18;
@@ -47,6 +52,54 @@ export function EqualizerPage() {
     );
   }, [headroomCompensationEnabled]);
 
+  const handleToggleAutoEq = useCallback(() => {
+    const nextEnabled = EqualizerService.setAutoEqEnabled(!autoEqEnabled);
+    if (!nextEnabled && !autoEqProfile) {
+      NotificationService.showMessage('Kein AutoEQ-Profil geladen.');
+    }
+    setAutoEqEnabled(nextEnabled);
+  }, [autoEqEnabled, autoEqProfile]);
+
+  const handleAutoEqFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fileInputElement = event.currentTarget;
+    const autoEqFile = event.target.files?.[0];
+    if (!autoEqFile) {
+      return;
+    }
+    const autoEqProfileText = await autoEqFile.text();
+    const autoEqProfileName = autoEqFile.name.replace(/\.[^.]+$/, '').trim() || 'AutoEQ';
+    const { profile, error } = EqualizerService.importAutoEqProfileFromText(autoEqProfileText, autoEqProfileName);
+    if (error) {
+      NotificationService.showMessage(error);
+      fileInputElement.value = '';
+      return;
+    }
+    setAutoEqProfile(profile);
+    setAutoEqEnabled(true);
+    setAutoEqProfilesHistory(EqualizerService.getAutoEqProfilesHistory());
+    setAutoEqSourceFileName(autoEqFile.name);
+    NotificationService.showMessage(`AutoEQ-Profil "${profile?.name || 'AutoEQ'}" importiert.`);
+    fileInputElement.value = '';
+  }, []);
+
+  const handleAutoEqHistorySelection = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedProfileName = event.target.value;
+    if (!selectedProfileName) {
+      return;
+    }
+    const { profile, error } = EqualizerService.selectAutoEqProfile(selectedProfileName);
+    if (error) {
+      NotificationService.showMessage(error);
+      return;
+    }
+    setAutoEqProfile(profile);
+    setAutoEqEnabled(true);
+    setAutoEqProfilesHistory(EqualizerService.getAutoEqProfilesHistory());
+    NotificationService.showMessage(
+      I18nService.getString('label_equalizer_autoeq_profile_loaded', { profile: profile?.name || selectedProfileName }),
+    );
+  }, []);
+
   return (
     <div className={cx('equalizer-page')}>
       <div className={cx('equalizer-header')}>
@@ -60,6 +113,69 @@ export function EqualizerPage() {
       <div className={cx('equalizer-card')}>
         <div className={cx('equalizer-subtitle')}>
           {I18nService.getString('label_equalizer_subtitle')}
+        </div>
+        <div className={cx('equalizer-autoeq-row')}>
+          <div className={cx('equalizer-autoeq-info')}>
+            <div className={cx('equalizer-headroom-title')}>
+              AutoEQ
+            </div>
+            <div className={cx('equalizer-headroom-description')}>
+              {autoEqProfile
+                ? `Profil aktivierbar: ${autoEqProfile.name} (${autoEqProfile.filters.length} Filter)`
+                : 'Kein AutoEQ-Profil importiert'}
+            </div>
+          </div>
+          <div className={cx('equalizer-headroom-switch')}>
+            <button
+              type="button"
+              className={cx('equalizer-headroom-switch-item', { active: autoEqEnabled })}
+              onClick={handleToggleAutoEq}
+            >
+              {autoEqEnabled
+                ? I18nService.getString('label_toggle_on')
+                : I18nService.getString('label_toggle_off')}
+            </button>
+          </div>
+        </div>
+        <div className={cx('equalizer-autoeq-import')}>
+          <input
+            ref={autoEqFileInputRef}
+            className={cx('equalizer-autoeq-file-input')}
+            type="file"
+            accept=".txt,.cfg,.conf,.peq,text/plain"
+            onChange={handleAutoEqFileChange}
+          />
+          <div className={cx('equalizer-autoeq-actions')}>
+            <Button
+              variant={['secondary']}
+              onButtonSubmit={() => autoEqFileInputRef.current?.click()}
+            >
+              AutoEQ-Datei auswählen
+            </Button>
+          </div>
+          <div className={cx('equalizer-autoeq-file-label')}>
+            {autoEqSourceFileName
+              ? `Quelle: ${autoEqSourceFileName}`
+              : 'Noch keine Datei ausgewählt'}
+          </div>
+          {!!autoEqProfilesHistory.length && (
+            <div className={cx('equalizer-autoeq-history')}>
+              <div className={cx('equalizer-autoeq-history-label')}>
+                {I18nService.getString('label_equalizer_autoeq_history')}
+              </div>
+              <select
+                className={cx('equalizer-autoeq-history-select')}
+                value={autoEqProfile?.name || ''}
+                onChange={handleAutoEqHistorySelection}
+              >
+                {autoEqProfilesHistory.map(profile => (
+                  <option key={profile.name} value={profile.name}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className={cx('equalizer-headroom-row')}>
           <div>
@@ -82,7 +198,7 @@ export function EqualizerPage() {
             </button>
           </div>
         </div>
-        <div className={cx('equalizer-chart-container')}>
+        <div className={cx('equalizer-chart-container', { disabled: autoEqEnabled })}>
           <svg
             className={cx('equalizer-chart')}
             viewBox={`0 0 ${chartWidth} ${chartHeight}`}
@@ -118,7 +234,7 @@ export function EqualizerPage() {
             })}
           </svg>
         </div>
-        <div className={cx('equalizer-band-list')}>
+        <div className={cx('equalizer-band-list', { disabled: autoEqEnabled })}>
           {bands.map(band => (
             <div key={band.frequency} className={cx('equalizer-band-item')}>
               <div className={cx('equalizer-band-label')}>
@@ -127,6 +243,7 @@ export function EqualizerPage() {
               <Slider
                 value={(band.gain + 12) * 2}
                 maxValue={48}
+                disabled={autoEqEnabled}
                 orientation="vertical"
                 autoCommitOnUpdate
                 sliderContainerClassName={cx('equalizer-slider')}
@@ -145,6 +262,11 @@ export function EqualizerPage() {
             </div>
           ))}
         </div>
+        {autoEqEnabled && (
+          <div className={cx('equalizer-autoeq-active-hint')}>
+            AutoEQ ist aktiv. Manueller 10-Band-EQ ist deaktiviert.
+          </div>
+        )}
       </div>
     </div>
   );

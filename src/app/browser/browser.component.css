@@ -16,11 +16,22 @@
   gap: 15px;
 }
 
+.browser-header-windows {
+  margin: 0 14px 0 18px;
+  padding-top: 6px;
+  padding-right: 152px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 .browser-header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-left: auto;
+}
+
+.browser-header-actions-windows {
+  gap: 8px;
 }
 
 .browser-header-context-actions {
@@ -31,7 +42,9 @@
 
 .browser-search {
   position: relative;
-  width: min(460px, 40vw);
+  width: 300px;
+  min-width: 300px;
+  max-width: 300px;
 }
 
 .browser-header-inline-controls {
@@ -122,4 +135,10 @@
 .browser-viewport {
   flex: 1 0 0;
   padding: 10px;
+}
+
+@media (max-width: 1360px) {
+  .browser-header-windows {
+    padding-right: 138px;
+  }
 }

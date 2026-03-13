@@ -11,7 +11,7 @@ import { useMediaBackgroundTint } from './use-media-background-tint';
 
 const cx = classNames.bind(styles);
 
-export function MediaPlayer() {
+export function MediaPlayer({ onShowAlbum }: { onShowAlbum: (albumId: string) => void }) {
   const { isTinted, tintColors } = useMediaBackgroundTint();
 
   return (
@@ -27,7 +27,7 @@ export function MediaPlayer() {
         } as React.CSSProperties}
       >
         <Col className={cx('col-md-4 col-xl-3')}>
-          <MediaPlayerInfo/>
+          <MediaPlayerInfo onShowAlbum={onShowAlbum}/>
         </Col>
         <Col className={cx('col-md-4 col-xl-6')}>
           <MediaPlayerControls/>

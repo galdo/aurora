@@ -1,7 +1,7 @@
 import _ from 'lodash';
 import NodeID3 from 'node-id3';
 
-import { MediaArtistDatastore, MediaTrackDatastore } from '../datastores';
+import { MediaAlbumDatastore, MediaArtistDatastore, MediaTrackDatastore } from '../datastores';
 import { IMediaArtist, IMediaTrack, IMediaTrackData } from '../interfaces';
 import { MediaLibraryActions } from '../enums';
 import { MediaUtils } from '../utils';
@@ -81,9 +81,45 @@ export class MediaTrackService {
   }
 
   static async getMediaAlbumTracks(mediaAlbumId: string): Promise<IMediaTrack[]> {
-    const mediaAlbumTrackDataList = await MediaTrackDatastore.findMediaTracks({
-      track_album_id: mediaAlbumId,
-    });
+    const mediaAlbum = await MediaAlbumService.getMediaAlbum(mediaAlbumId);
+    if (!mediaAlbum) {
+      return [];
+    }
+
+    const allAlbums = await MediaAlbumService.getMediaAlbums();
+    const selectedAlbumSourceFingerprint = String((mediaAlbum.extra as any)?.source_fingerprint || '').trim();
+    const matchingAlbumIds = allAlbums
+      .filter((candidateAlbum) => {
+        const candidateSourceFingerprint = String((candidateAlbum.extra as any)?.source_fingerprint || '').trim();
+        return selectedAlbumSourceFingerprint
+          && candidateSourceFingerprint
+          && candidateSourceFingerprint === selectedAlbumSourceFingerprint;
+      })
+      .map(candidateAlbum => candidateAlbum.id);
+
+    const directAlbumTrackDataList = await MediaTrackDatastore.findMediaTracks({
+      track_album_id: {
+        $in: _.uniq([mediaAlbumId, ...matchingAlbumIds]),
+      },
+    } as any);
+
+    const albumTrackFileSources = directAlbumTrackDataList
+      .map(track => String((track.extra as any)?.file_source || '').trim())
+      .filter(Boolean);
+
+    const mediaAlbumTrackDataFromFileSource = albumTrackFileSources.length > 0
+      ? await MediaTrackDatastore.findMediaTracks({
+        // @ts-ignore
+        'extra.file_source': {
+          $in: _.uniq(albumTrackFileSources),
+        },
+      } as any)
+      : [];
+
+    const mediaAlbumTrackDataList = _.uniqBy([
+      ...directAlbumTrackDataList,
+      ...mediaAlbumTrackDataFromFileSource,
+    ], track => track.id);
 
     const mediaAlbumTracks = await this.buildMediaTracks(mediaAlbumTrackDataList);
     return MediaUtils.sortMediaAlbumTracks(mediaAlbumTracks);
@@ -193,10 +229,11 @@ export class MediaTrackService {
       mediaTrackArtists,
       mediaTrackArtistIds,
     } = await this.buildMediaTrackArtists(mediaTrackData);
+    const mediaTrackAlbum = await this.resolveTrackAlbum(mediaTrackData, loadMediaTrack);
     const mediaTrack = _.assign({}, mediaTrackData, {
       track_artist_ids: mediaTrackArtistIds,
       track_artists: mediaTrackArtists,
-      track_album: await MediaAlbumService.buildMediaAlbum(mediaTrackData.track_album_id, loadMediaTrack),
+      track_album: mediaTrackAlbum,
     });
 
     if (loadMediaTrack) {
@@ -213,6 +250,55 @@ export class MediaTrackService {
 
   static async buildMediaTracks(mediaTrackDataList: IMediaTrackData[], loadMediaTracks = false): Promise<IMediaTrack[]> {
     return Promise.all(mediaTrackDataList.map(mediaTrackData => this.buildMediaTrack(mediaTrackData, loadMediaTracks)));
+  }
+
+  private static async resolveTrackAlbum(mediaTrackData: IMediaTrackData, loadMediaTrack: boolean) {
+    try {
+      return await MediaAlbumService.buildMediaAlbum(mediaTrackData.track_album_id, loadMediaTrack);
+    } catch (_error) {
+      const recoveredAlbum = await this.recoverMissingAlbumForTrack(mediaTrackData);
+      return MediaAlbumService.buildMediaAlbum(recoveredAlbum.id, loadMediaTrack);
+    }
+  }
+
+  private static async recoverMissingAlbumForTrack(mediaTrackData: IMediaTrackData) {
+    const extra = (mediaTrackData.extra as any) || {};
+    const fileSource = String(extra.file_source || '').trim();
+    const recoveredAlbumName = fileSource.split(/[\\/]/).filter(Boolean).pop() || 'Unknown Album';
+    const recoveredArtistProviderId = `recovered-artist:${mediaTrackData.provider}:${mediaTrackData.id}`;
+    const recoveredArtist = await MediaArtistDatastore.upsertMediaArtist({
+      provider: mediaTrackData.provider,
+      provider_id: recoveredArtistProviderId,
+    }, {
+      provider: mediaTrackData.provider,
+      provider_id: recoveredArtistProviderId,
+      artist_name: 'Unknown Artist',
+      sync_timestamp: Date.now(),
+    });
+
+    const recoveredAlbumProviderId = `recovered-album:${mediaTrackData.provider}:${mediaTrackData.track_album_id}`;
+    const recoveredAlbum = await MediaAlbumDatastore.upsertMediaAlbum({
+      provider: mediaTrackData.provider,
+      provider_id: recoveredAlbumProviderId,
+    }, {
+      provider: mediaTrackData.provider,
+      provider_id: recoveredAlbumProviderId,
+      album_name: recoveredAlbumName,
+      album_artist_id: recoveredArtist.id,
+      sync_timestamp: Date.now(),
+      extra: {
+        source_fingerprint: '',
+      },
+    } as any);
+
+    await MediaTrackDatastore.updateMediaTrack({
+      id: mediaTrackData.id,
+    }, {
+      track_album_id: recoveredAlbum.id,
+      sync_timestamp: Date.now(),
+    });
+
+    return recoveredAlbum;
   }
 
   private static normalizeSearchValue(value: string): string {

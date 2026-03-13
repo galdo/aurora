@@ -29,8 +29,15 @@ const cx = classNames.bind(styles);
 export function MediaCollectionActions(props: {
   mediaItem: IMediaCollectionItem;
   hasTracks?: boolean;
+  onReloadAlbum?: () => void;
+  reloadingAlbum?: boolean;
 }) {
-  const { mediaItem, hasTracks = true } = props;
+  const {
+    mediaItem,
+    hasTracks = true,
+    onReloadAlbum,
+    reloadingAlbum = false,
+  } = props;
   const { showMenu } = useContextMenu();
   const { showModal } = useModal();
   const { triggerScrollLock } = useScrollLock({
@@ -148,17 +155,29 @@ export function MediaCollectionActions(props: {
         <Icon name={Icons.MediaPin}/>
       </Button>
       {isAlbum && (
-        <Button
-          variant={['rounded', 'outline']}
-          tooltip={I18nService.getString('tooltip_edit_album')}
-          onButtonSubmit={() => {
-            showModal(MediaAlbumEditModal, {
-              mediaAlbumId: mediaItem.id,
-            });
-          }}
-        >
-          <Icon name={Icons.Edit}/>
-        </Button>
+        <>
+          <Button
+            variant={['rounded', 'outline']}
+            tooltip={I18nService.getString('tooltip_edit_album')}
+            onButtonSubmit={() => {
+              showModal(MediaAlbumEditModal, {
+                mediaAlbumId: mediaItem.id,
+              });
+            }}
+          >
+            <Icon name={Icons.Edit}/>
+          </Button>
+          {!!onReloadAlbum && (
+            <Button
+              variant={['rounded', 'outline']}
+              tooltip="Album neu einlesen"
+              onButtonSubmit={onReloadAlbum}
+              disabled={reloadingAlbum}
+            >
+              <Icon name={reloadingAlbum ? Icons.Refreshing : Icons.Refresh}/>
+            </Button>
+          )}
+        </>
       )}
     </div>
   );

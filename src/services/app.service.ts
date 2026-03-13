@@ -6,6 +6,8 @@ export type AppDetails = {
   build: string;
   platform: string;
   logs_path: string;
+  media_hardware_shortcuts_registered?: boolean;
+  media_hardware_shortcuts_accessibility_trusted?: boolean;
 };
 
 export class AppService {

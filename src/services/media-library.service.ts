@@ -142,6 +142,29 @@ export class MediaLibraryService {
       provider_id: effectiveProviderId,
     };
 
+    const existingAddedAt = Number((existingMediaAlbumData?.extra as any)?.added_at);
+    let resolvedAddedAt = Number.isFinite(existingAddedAt) && existingAddedAt > 0
+      ? existingAddedAt
+      : undefined;
+    if (!resolvedAddedAt && existingMediaAlbumData?.id) {
+      const albumTracks = await MediaTrackDatastore.findMediaTracks({
+        track_album_id: existingMediaAlbumData.id,
+      });
+      const albumTrackFileMtimes = albumTracks
+        .map(track => Number((track.extra as any)?.file_mtime))
+        .filter(fileMtime => Number.isFinite(fileMtime) && fileMtime > 0);
+      if (albumTrackFileMtimes.length > 0) {
+        resolvedAddedAt = Math.min(...albumTrackFileMtimes);
+      } else {
+        const albumTrackSyncTimestamps = albumTracks
+          .map(track => Number(track.sync_timestamp))
+          .filter(syncTimestamp => Number.isFinite(syncTimestamp) && syncTimestamp > 0);
+        if (albumTrackSyncTimestamps.length > 0) {
+          resolvedAddedAt = Math.min(...albumTrackSyncTimestamps);
+        }
+      }
+    }
+
     const baseUpdate: Partial<IMediaAlbumData> = {
       provider: mediaAlbumInputData.provider,
       provider_id: effectiveProviderId,
@@ -152,6 +175,7 @@ export class MediaLibraryService {
       extra: {
         ...(existingMediaAlbumData?.extra || {}),
         ...(mediaAlbumInputData.extra || {}),
+        added_at: resolvedAddedAt || mediaAlbumInputData.sync_timestamp,
       },
     };
 

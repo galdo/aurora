@@ -34,6 +34,8 @@ import {
   BrowserWindow,
   screen,
   globalShortcut,
+  dialog,
+  systemPreferences,
 } from 'electron';
 
 import {
@@ -97,6 +99,10 @@ class App implements IAppMain {
   private logsDataDir = 'Logs';
   private logsMainFile = 'main.log';
   private logsRendererFile = 'renderer.log';
+  private mediaHardwareShortcutRegistrationDisabled = false;
+  private mediaHardwareShortcutWarningShown = false;
+  private mediaHardwareShortcutLastAttemptAt = 0;
+  private mediaHardwareShortcutsRegistered = false;
 
   constructor() {
     this.env = process.env.NODE_ENV;
@@ -471,9 +477,9 @@ class App implements IAppMain {
       titleBarStyle: isDarwin ? 'hiddenInset' : 'hidden',
       ...(!isDarwin ? {
         titleBarOverlay: {
-          color: '#1d1d1d', // should match --stage-content-bg-color
-          symbolColor: '#e9ecef', // should match --text-light-color
-          height: 60, // should match --titlebar-overlay-height
+          color: '#141414',
+          symbolColor: '#f3f5f7',
+          height: 54,
         },
       } : {}),
       frame: false,
@@ -698,6 +704,11 @@ class App implements IAppMain {
       } else {
         this.mainWindow.show();
       }
+      this.registerMediaHardwareShortcuts();
+    });
+
+    app.on('browser-window-focus', () => {
+      this.registerMediaHardwareShortcuts();
     });
   }
 
@@ -740,6 +751,32 @@ class App implements IAppMain {
   }
 
   private registerMediaHardwareShortcuts() {
+    if (this.mediaHardwareShortcutsRegistered || this.mediaHardwareShortcutRegistrationDisabled) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.mediaHardwareShortcutLastAttemptAt < 3000) {
+      return;
+    }
+    this.mediaHardwareShortcutLastAttemptAt = now;
+
+    if (this.platform === PlatformOS.Darwin) {
+      const trustedAccessibility = systemPreferences.isTrustedAccessibilityClient(false);
+      if (!trustedAccessibility) {
+        systemPreferences.isTrustedAccessibilityClient(true);
+        if (!this.mediaHardwareShortcutWarningShown) {
+          this.mediaHardwareShortcutWarningShown = true;
+          dialog.showMessageBox({
+            type: 'info',
+            title: APP_DISPLAY_NAME,
+            message: 'Multimediatasten benötigen Bedienungshilfen-Zugriff.',
+            detail: 'Bitte in macOS Einstellungen unter Datenschutz & Sicherheit > Bedienungshilfen Aurora Pulse erlauben und die App neu starten.',
+          }).catch(() => undefined);
+        }
+        return;
+      }
+    }
+
     const shortcuts: { accelerator: string; action: MediaHardwareControlAction }[] = [{
       accelerator: 'MediaPlayPause',
       action: 'play_pause',
@@ -754,15 +791,27 @@ class App implements IAppMain {
       action: 'stop',
     }];
 
+    let failedRegistrationCount = 0;
     shortcuts.forEach(({ accelerator, action }) => {
+      globalShortcut.unregister(accelerator);
       const isRegistered = globalShortcut.register(accelerator, () => {
         this.sendMessageToRenderer(IPCRendererCommChannel.MediaHardwareControl, action);
       });
 
       if (!isRegistered) {
-        console.warn('registerMediaHardwareShortcuts - could not register shortcut - %s', accelerator);
+        failedRegistrationCount += 1;
       }
     });
+
+    if (failedRegistrationCount === 0) {
+      this.mediaHardwareShortcutWarningShown = false;
+      this.mediaHardwareShortcutsRegistered = true;
+      return;
+    }
+    if (!this.mediaHardwareShortcutWarningShown) {
+      this.mediaHardwareShortcutWarningShown = true;
+      console.warn('registerMediaHardwareShortcuts - global registration unavailable (likely claimed by macOS/other app); using MediaSession handlers only');
+    }
   }
 
   private isUrlLocal(url: string): boolean {
@@ -777,12 +826,17 @@ class App implements IAppMain {
   }
 
   private getDetails() {
+    const accessibilityTrusted = this.platform === PlatformOS.Darwin
+      ? systemPreferences.isTrustedAccessibilityClient(false)
+      : true;
     return {
       display_name: this.displayName,
       version: this.version,
       build: this.build,
       platform: this.platform,
       logs_path: this.getLogsPath(this.logsRendererFile),
+      media_hardware_shortcuts_registered: this.mediaHardwareShortcutsRegistered,
+      media_hardware_shortcuts_accessibility_trusted: accessibilityTrusted,
     };
   }
 }

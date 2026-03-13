@@ -1,7 +1,7 @@
 {
   "name": "aurora-pulse",
   "productName": "Aurora Pulse",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A local-first music player built with Electron",
   "scripts": {
     "build": "concurrently \"npm run build:main\" \"npm run build:renderer\"",
@@ -18,12 +18,16 @@
     "prepare:sharp:win:arm64": "npm --prefix src install --no-save --include=optional --force --os=win32 --cpu=arm64 sharp @img/sharp-win32-arm64 @img/sharp-libvips-win32-arm64",
     "prepare:sharp:win:ia32": "npm --prefix src install --no-save --include=optional --force --os=win32 --cpu=ia32 sharp @img/sharp-win32-ia32 @img/sharp-libvips-win32-ia32",
     "prepare:sharp:win:x64": "npm --prefix src install --no-save --include=optional --force --os=win32 --cpu=x64 sharp @img/sharp-win32-x64 @img/sharp-libvips-win32-x64",
+    "prepare:sharp:linux:x64": "npm --prefix src install --no-save --include=optional --force --os=linux --cpu=x64 sharp @img/sharp-linux-x64 @img/sharp-libvips-linux-x64",
     "package:mac": "npm run prepare:sharp:mac:arm64 && npm run package -- --mac --arm64 --c.mac.identity=null && npm run prepare:sharp:mac:x64 && npm run package -- --mac --x64 --c.mac.identity=null",
     "package:win": "npm run prepare:sharp:win:arm64 && npm run package -- --win --arm64 && npm run prepare:sharp:win:ia32 && npm run package -- --win --ia32 && npm run prepare:sharp:win:x64 && npm run package -- --win --x64",
+    "package:linux:flatpak:x64": "npm run prepare:sharp:linux:x64 && npm run package -- --linux flatpak --x64",
     "package:cross": "npm run package:mac && npm run package:win",
-    "postinstall": "node -r @babel/register .erb/scripts/CheckNativeDep.js && electron-builder install-app-deps && cross-env NODE_ENV=development webpack --config ./.erb/configs/webpack.config.renderer.dev.dll.babel.js && opencollective-postinstall && yarn-deduplicate yarn.lock",
-    "start": "node -r @babel/register ./.erb/scripts/CheckPortInUse.js && npm run start:renderer",
-    "start:debug": "cross-env PORT=1213 node -r @babel/register ./.erb/scripts/CheckPortInUse.js && cross-env PORT=1213 npm run start:renderer:debug",
+    "prepare:sharp:host": "node ./.erb/scripts/PrepareSharpHost.js",
+    "export:library:json": "node ./scripts/export-library-json.js",
+    "postinstall": "node -r @babel/register .erb/scripts/CheckNativeDep.js && electron-builder install-app-deps && npm run prepare:sharp:host && cross-env NODE_ENV=development webpack --config ./.erb/configs/webpack.config.renderer.dev.dll.babel.js && opencollective-postinstall && yarn-deduplicate yarn.lock",
+    "start": "npm run prepare:sharp:host && node -r @babel/register ./.erb/scripts/CheckPortInUse.js && npm run start:renderer",
+    "start:debug": "npm run prepare:sharp:host && cross-env PORT=1213 node -r @babel/register ./.erb/scripts/CheckPortInUse.js && cross-env PORT=1213 npm run start:renderer:debug",
     "start:renderer": "cross-env NODE_ENV=development webpack serve --config ./.erb/configs/webpack.config.renderer.dev.babel.js",
     "start:renderer:debug": "cross-env START_MAIN_CMD=start:main:debug NODE_ENV=development webpack serve --config ./.erb/configs/webpack.config.renderer.dev.babel.js",
     "start:main": "webpack --config ./.erb/configs/webpack.config.main.dev.babel.js && cross-env DEBUG=aurora:*,-aurora:module:ipc:main electron ./src/main.dev.js",
@@ -94,10 +98,27 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "flatpak"
       ],
       "category": "Development",
       "icon": "assets/icons"
+    },
+    "flatpak": {
+      "runtime": "org.freedesktop.Platform",
+      "runtimeVersion": "23.08",
+      "sdk": "org.freedesktop.Sdk",
+      "base": "org.electronjs.Electron2.BaseApp",
+      "baseVersion": "23.08",
+      "finishArgs": [
+        "--share=ipc",
+        "--socket=x11",
+        "--socket=wayland",
+        "--socket=pulseaudio",
+        "--device=dri",
+        "--share=network",
+        "--filesystem=home"
+      ]
     },
     "directories": {
       "app": "src",

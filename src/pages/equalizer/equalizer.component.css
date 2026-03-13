@@ -1,5 +1,5 @@
 .equalizer-page {
-  padding: 20px;
+  padding: 8px;
 }
 
 .equalizer-header {
@@ -13,6 +13,7 @@
   font-size: 24px;
   font-weight: 700;
   color: var(--button-primary-bg-color);
+  line-height: 1.2;
 }
 
 .equalizer-card {
@@ -41,6 +42,64 @@
   gap: 16px;
   margin-bottom: 14px;
   flex-wrap: wrap;
+}
+
+.equalizer-autoeq-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.equalizer-autoeq-info {
+  min-width: 220px;
+}
+
+.equalizer-autoeq-import {
+  border: 1px solid var(--selectable-outline-color);
+  border-radius: 10px;
+  background-color: color-mix(in srgb, var(--selectable-bg-color) 82%, transparent);
+  padding: 10px;
+  margin-bottom: 14px;
+}
+
+.equalizer-autoeq-file-input {
+  display: none;
+}
+
+.equalizer-autoeq-actions {
+  margin-top: 2px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.equalizer-autoeq-file-label {
+  margin-top: 8px;
+  color: var(--text-dark-color);
+  font-size: 12px;
+}
+
+.equalizer-autoeq-history {
+  margin-top: 10px;
+}
+
+.equalizer-autoeq-history-label {
+  font-size: 12px;
+  color: var(--text-dark-color);
+  margin-bottom: 6px;
+}
+
+.equalizer-autoeq-history-select {
+  width: 100%;
+  max-width: 420px;
+  background-color: var(--selectable-bg-color);
+  color: var(--text-light-color);
+  border: 1px solid var(--selectable-outline-color);
+  border-radius: 8px;
+  padding: 8px 10px;
+  outline: none;
 }
 
 .equalizer-headroom-title {
@@ -140,6 +199,19 @@
   border: 1px solid color-mix(in srgb, var(--button-primary-bg-color) 30%, var(--stage-overlay-outline-color));
   border-radius: 8px;
   background-color: color-mix(in srgb, var(--button-primary-bg-color) 5%, var(--stage-content-bg-color));
+}
+
+.equalizer-band-list.disabled,
+.equalizer-chart-container.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.equalizer-autoeq-active-hint {
+  margin-top: 12px;
+  text-align: center;
+  color: color-mix(in srgb, var(--button-primary-bg-color) 85%, var(--text-light-color));
+  font-weight: 600;
 }
 
 .equalizer-chart {

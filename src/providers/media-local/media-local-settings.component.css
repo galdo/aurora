@@ -13,7 +13,7 @@
 .settings-action-button:not(.disabled):hover,
 .settings-action-button:not(.disabled):active {
   background-color: color-mix(in srgb, var(--button-primary-bg-color) 82%, #0e7a35);
-  color: #fff;
+  color: #000;
 }
 
 .settings-keywords-grid {

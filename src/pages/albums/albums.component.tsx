@@ -1,26 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import ReactDOM from 'react-dom';
 import { useSelector } from 'react-redux';
-import classNames from 'classnames/bind';
 import _ from 'lodash';
 
 import {
-  Button,
-  Icon,
+  COLLECTION_COVER_SIZE_DEFAULT,
+  COLLECTION_COVER_SIZE_EVENT,
+  getCollectionCoverSize,
+  setCollectionCoverSize,
+  clampCollectionCoverSize,
+} from '../../utils/collection-cover-size.utils';
+
+import {
+  CollectionViewControls,
   MediaAlbums,
-  Slider,
 } from '../../components';
 import { MediaTrackDatastore } from '../../datastores';
 import { RootState } from '../../reducers';
 import { I18nService, MediaAlbumService } from '../../services';
 import { IMediaAlbum } from '../../interfaces';
-import { Icons } from '../../constants';
 
-import styles from './albums.component.css';
-
-const cx = classNames.bind(styles);
-
-type SortOption = 'artist' | 'album' | 'year' | 'added';
+type SortOption = 'artist' | 'album' | 'year' | 'genre' | 'added';
 type SortDirection = 'asc' | 'desc';
 
 interface IAlbumsViewSettings {
@@ -37,57 +36,8 @@ const TOP_BAR_SEARCH_CHANGE_EVENT = 'aurora:topbar-search-changed';
 const DEFAULT_SETTINGS: IAlbumsViewSettings = {
   sortBy: 'artist',
   sortDirection: 'asc',
-  coverSize: 200,
+  coverSize: COLLECTION_COVER_SIZE_DEFAULT,
 };
-
-function AlbumsHeaderControls({ settings, updateSettings }: {
-  settings: IAlbumsViewSettings,
-  updateSettings: (partial: Partial<IAlbumsViewSettings>) => void
-}) {
-  const container = document.getElementById('browser-header-inline-controls')
-    || document.getElementById('library-header-controls');
-  if (!container) return null;
-
-  return ReactDOM.createPortal(
-    <div className={cx('albums-controls')}>
-      <div className={cx('albums-sort-control')}>
-        <select
-          className={cx('albums-select')}
-          value={settings.sortBy}
-          onChange={e => updateSettings({ sortBy: e.target.value as SortOption })}
-        >
-          <option value="artist">{I18nService.getString('label_album_sort_artist')}</option>
-          <option value="album">{I18nService.getString('label_album_sort_album')}</option>
-          <option value="year">{I18nService.getString('label_album_sort_year')}</option>
-          <option value="added">{I18nService.getString('label_album_sort_added')}</option>
-        </select>
-        <Button
-          icon={settings.sortDirection === 'asc' ? Icons.SortAsc : Icons.SortDesc}
-          variant={['rounded', 'outline']}
-          onButtonSubmit={() => updateSettings({
-            sortDirection: settings.sortDirection === 'asc' ? 'desc' : 'asc',
-          })}
-          tooltip={I18nService.getString('tooltip_album_sort_toggle')}
-        />
-      </div>
-      <div className={cx('albums-size-control')}>
-        <Icon name={Icons.Image}/>
-        <div className={cx('albums-size-slider')}>
-          <Slider
-            sliderContainerClassName={cx('albums-slider-instance')}
-            sliderTrackClassName={cx('albums-slider-track')}
-            sliderThumbClassName={cx('albums-slider-thumb')}
-            value={settings.coverSize}
-            maxValue={400}
-            onDragCommit={value => updateSettings({ coverSize: Math.max(100, value) })}
-            autoCommitOnUpdate
-          />
-        </div>
-      </div>
-    </div>,
-    container,
-  );
-}
 
 export function AlbumsPage() {
   const { mediaAlbums } = useSelector((state: RootState) => state.mediaLibrary);
@@ -98,13 +48,27 @@ export function AlbumsPage() {
   useEffect(() => {
     MediaAlbumService.loadMediaAlbums();
     const saved = localStorage.getItem(SETTINGS_KEY);
+    const sharedCoverSize = getCollectionCoverSize();
     if (saved) {
       try {
-        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) });
+        const parsedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        setSettings({ ...parsedSettings, coverSize: sharedCoverSize });
       } catch (e) {
-        // ignore
+        setSettings(prev => ({ ...prev, coverSize: sharedCoverSize }));
       }
+    } else {
+      setSettings(prev => ({ ...prev, coverSize: sharedCoverSize }));
     }
+  }, []);
+
+  useEffect(() => {
+    const handleCoverSizeChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ coverSize?: number }>;
+      const nextSize = clampCollectionCoverSize(Number(customEvent.detail?.coverSize || COLLECTION_COVER_SIZE_DEFAULT));
+      setSettings(prev => ({ ...prev, coverSize: nextSize }));
+    };
+    window.addEventListener(COLLECTION_COVER_SIZE_EVENT, handleCoverSizeChange as EventListener);
+    return () => window.removeEventListener(COLLECTION_COVER_SIZE_EVENT, handleCoverSizeChange as EventListener);
   }, []);
 
   useEffect(() => {
@@ -170,9 +134,19 @@ export function AlbumsPage() {
   ]);
 
   const updateSettings = (partial: Partial<IAlbumsViewSettings>) => {
-    const newSettings = { ...settings, ...partial };
+    const newSettings = { ...settings, ...partial } as IAlbumsViewSettings;
+    if (partial.sortBy === 'added' && _.isNil(partial.sortDirection)) {
+      newSettings.sortDirection = 'desc';
+    }
+    if (!_.isNil(partial.coverSize)) {
+      const nextSize = setCollectionCoverSize(partial.coverSize);
+      newSettings.coverSize = nextSize;
+    }
     setSettings(newSettings);
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(newSettings));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+      sortBy: newSettings.sortBy,
+      sortDirection: newSettings.sortDirection,
+    }));
   };
 
   const filteredAlbums = useMemo(() => {
@@ -216,8 +190,11 @@ export function AlbumsPage() {
       case 'year':
         iteratee = 'album_year';
         break;
+      case 'genre':
+        iteratee = (album: IMediaAlbum) => String(album.album_genre || '').toLowerCase();
+        break;
       case 'added':
-        iteratee = 'sync_timestamp';
+        iteratee = (album: IMediaAlbum) => Number((album.extra as any)?.added_at || album.sync_timestamp || 0);
         break;
       default:
         iteratee = (a: any) => a.album_artist.artist_name.toLowerCase();
@@ -232,7 +209,24 @@ export function AlbumsPage() {
 
   return (
     <div className="container-fluid">
-      <AlbumsHeaderControls settings={settings} updateSettings={updateSettings}/>
+      <CollectionViewControls
+        coverSize={settings.coverSize}
+        onCoverSizeChange={nextValue => updateSettings({ coverSize: nextValue })}
+        sortBy={settings.sortBy}
+        sortDirection={settings.sortDirection}
+        onSortByChange={value => updateSettings({ sortBy: value as SortOption })}
+        onSortDirectionToggle={() => updateSettings({
+          sortDirection: settings.sortDirection === 'asc' ? 'desc' : 'asc',
+        })}
+        sortToggleTooltip={I18nService.getString('tooltip_album_sort_toggle')}
+        sortOptions={[
+          { value: 'artist', label: I18nService.getString('label_album_sort_artist') },
+          { value: 'album', label: I18nService.getString('label_album_sort_album') },
+          { value: 'year', label: I18nService.getString('label_album_sort_year') },
+          { value: 'genre', label: I18nService.getString('label_genre') },
+          { value: 'added', label: I18nService.getString('label_album_sort_added') },
+        ]}
+      />
       <MediaAlbums mediaAlbums={sortedAlbums} coverSize={settings.coverSize} hideArtist={false}/>
     </div>
   );
