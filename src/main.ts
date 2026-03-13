@@ -34,7 +34,6 @@ import {
   BrowserWindow,
   screen,
   globalShortcut,
-  dialog,
   systemPreferences,
 } from 'electron';
 
@@ -763,15 +762,9 @@ class App implements IAppMain {
     if (this.platform === PlatformOS.Darwin) {
       const trustedAccessibility = systemPreferences.isTrustedAccessibilityClient(false);
       if (!trustedAccessibility) {
-        systemPreferences.isTrustedAccessibilityClient(true);
         if (!this.mediaHardwareShortcutWarningShown) {
           this.mediaHardwareShortcutWarningShown = true;
-          dialog.showMessageBox({
-            type: 'info',
-            title: APP_DISPLAY_NAME,
-            message: 'Multimediatasten benötigen Bedienungshilfen-Zugriff.',
-            detail: 'Bitte in macOS Einstellungen unter Datenschutz & Sicherheit > Bedienungshilfen Aurora Pulse erlauben und die App neu starten.',
-          }).catch(() => undefined);
+          console.warn('registerMediaHardwareShortcuts - accessibility permission is missing on macOS; skipping global media keys');
         }
         return;
       }
