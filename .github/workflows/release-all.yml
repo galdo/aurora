@@ -98,7 +98,7 @@ jobs:
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
           npm run "prepare:sharp:mac:${ARCH}"
-          npm run package -- --mac --${ARCH} --c.mac.identity=null
+          npm run package -- --mac --${ARCH} --c.mac.identity=-
 
           APP_PATH=$(find release -maxdepth 2 -type d -name "*.app" | head -n 1)
           if [ -z "$APP_PATH" ]; then
@@ -108,16 +108,21 @@ jobs:
           fi
 
           ZIP_PATH="release/Aurora-macos-${ARCH}-${VERSION}.zip"
+          DMG_PATH="release/Aurora-macos-${ARCH}-${VERSION}.dmg"
           codesign --deep --force --sign - "$APP_PATH"
-          xattr -rd com.apple.quarantine "$APP_PATH"
+          xattr -cr "$APP_PATH"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+          STAGE_DIR="$(mktemp -d)"
+          cp -R "$APP_PATH" "$STAGE_DIR/Aurora.app"
+          hdiutil create -volname "Aurora Pulse" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_PATH"
+          rm -rf "$STAGE_DIR"
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
           path: |
-            release/*.dmg
+            release/Aurora-macos-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.dmg
             release/*.zip
             release/*.blockmap
           if-no-files-found: error
