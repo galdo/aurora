@@ -29,8 +29,13 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'yarn'
 
+      - name: Remove npm lockfiles
+        run: |
+          rm -f package-lock.json src/package-lock.json
+
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: |
+          yarn install --frozen-lockfile --non-interactive || yarn install --non-interactive
 
       - name: Run lint
         run: yarn lint

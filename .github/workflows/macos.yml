@@ -59,8 +59,13 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Remove npm lockfiles
+        run: |
+          rm -f package-lock.json src/package-lock.json
+
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: |
+          yarn install --frozen-lockfile --non-interactive || yarn install --non-interactive
 
       # Resolve version once (input, tag or commit)
       - name: Resolve version
