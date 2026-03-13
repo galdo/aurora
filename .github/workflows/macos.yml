@@ -109,15 +109,16 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
-          yarn package:mac
+          npm run "prepare:sharp:mac:${ARCH}"
+          npm run package -- --mac --${ARCH} --c.mac.identity=null
 
-          if [ "$ARCH" = "arm64" ]; then
-            APP_DIR="mac-arm64"
-          else
-            APP_DIR="mac"
+          APP_PATH=$(find release -maxdepth 2 -type d -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app bundle found under release/"
+            ls -lah release || true
+            exit 1
           fi
 
-          APP_PATH="release/${APP_DIR}/Aurora.app"
           ZIP_PATH="release/Aurora-macos-${ARCH}-${VERSION}.zip"
 
           # Ad-hoc sign (prevents "app is damaged")
