@@ -62,13 +62,18 @@ jobs:
 
       - name: Configure flathub remote
         run: |
-          flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak --system remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
       - name: Preinstall flatpak runtime dependencies
         run: |
-          flatpak --user install -y flathub org.freedesktop.Platform//23.08
-          flatpak --user install -y flathub org.freedesktop.Sdk//23.08
-          flatpak --user install -y flathub org.electronjs.Electron2.BaseApp//23.08
+          sudo flatpak --system install -y flathub org.freedesktop.Platform//23.08
+          sudo flatpak --system install -y flathub org.freedesktop.Sdk//23.08
+          sudo flatpak --system install -y flathub org.electronjs.Electron2.BaseApp//23.08
+
+      - name: Verify flatpak runtime availability
+        run: |
+          flatpak remotes --system
+          flatpak list --system | grep -E 'org.freedesktop.Platform|org.freedesktop.Sdk|org.electronjs.Electron2.BaseApp'
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
