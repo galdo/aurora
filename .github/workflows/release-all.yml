@@ -113,7 +113,7 @@ jobs:
           xattr -cr "$APP_PATH"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
           STAGE_DIR="$(mktemp -d)"
-          cp -R "$APP_PATH" "$STAGE_DIR/Aurora.app"
+          cp -R "$APP_PATH" "$STAGE_DIR/$(basename "$APP_PATH")"
           hdiutil create -volname "Aurora Pulse" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_PATH"
           rm -rf "$STAGE_DIR"
 
@@ -123,8 +123,7 @@ jobs:
           name: macos-${{ matrix.arch }}
           path: |
             release/Aurora-macos-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.dmg
-            release/*.zip
-            release/*.blockmap
+            release/Aurora-macos-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.zip
           if-no-files-found: error
           overwrite: true
 
