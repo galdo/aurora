@@ -62,7 +62,7 @@ function installSharpForHost() {
     'sharp',
     ...hostPackages,
   ];
-  run('npm', args);
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', args);
 }
 
 if (!sharpLoadsForHost()) {
