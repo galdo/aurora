@@ -21,6 +21,8 @@ jobs:
   build:
     name: Build macOS (${{ matrix.arch }})
     strategy:
+      fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - runner: macos-latest
