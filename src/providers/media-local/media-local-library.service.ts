@@ -313,12 +313,28 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       });
 
       if (mediaTrack) {
+        const mediaTrackExtra = (mediaTrack.extra || {}) as {
+          audio_sample_rate_hz?: number;
+          audio_bit_depth?: number;
+          audio_bitrate_kbps?: number;
+          audio_codec?: string;
+          audio_file_type?: string;
+        };
+        const hasAudioDetails = [
+          mediaTrackExtra.audio_sample_rate_hz,
+          mediaTrackExtra.audio_bit_depth,
+          mediaTrackExtra.audio_bitrate_kbps,
+          mediaTrackExtra.audio_codec,
+          mediaTrackExtra.audio_file_type,
+        ].some(value => !!value);
         const expectedGroupingFolder = this.getEffectiveGroupingFolder(file.path, !!settings.library.group_compilations_by_folder);
         const expectedSourceFingerprint = CryptoService.sha256(expectedGroupingFolder);
         const currentSourceFingerprint = String((mediaTrack.track_album.extra as any)?.source_fingerprint || '').trim();
         const shouldForceRegroup = currentSourceFingerprint !== expectedSourceFingerprint;
 
-        if (shouldForceRegroup) {
+        if (!hasAudioDetails) {
+          debug('addTrackFromFile - track %s missing audio detail fields, falling back to full scan', file.path);
+        } else if (shouldForceRegroup) {
           debug('addTrackFromFile - track %s requires regroup by source fingerprint, falling back to full scan', file.path);
         } else if (settings.library.group_compilations_by_folder) {
           const parentDir = path.dirname(file.path);

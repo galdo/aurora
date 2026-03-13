@@ -213,5 +213,19 @@
   "label_equalizer_headroom_compensation": "Compensation de headroom",
   "label_equalizer_headroom_compensation_description": "Réduit automatiquement le préampli lors d'un boost EQ positif",
   "label_equalizer_autoeq_history": "Profils d'EQ paramétrique",
-  "label_equalizer_autoeq_profile_loaded": "Profil d'EQ paramétrique \"{profile}\" chargé."
+  "label_equalizer_autoeq_profile_loaded": "Profil d'EQ paramétrique \"{profile}\" chargé.",
+  "label_settings_media_keys_heading": "Touches multimédia (macOS)",
+  "label_settings_media_keys_global_shortcuts": "Enregistrement des raccourcis globaux",
+  "label_settings_media_keys_global_shortcuts_enabled": "Actif : Lecture/Pause, Précédent/Suivant sont gérés au niveau système par Aurora.",
+  "label_settings_media_keys_global_shortcuts_disabled": "Inactif : macOS ou une autre application gère les touches multimédia.",
+  "label_settings_media_keys_status_active": "Actif",
+  "label_settings_media_keys_status_inactive": "Inactif",
+  "label_settings_media_keys_accessibility": "Accès Accessibilité",
+  "label_settings_media_keys_accessibility_allowed": "Autorisé.",
+  "label_settings_media_keys_accessibility_missing": "Non autorisé. Sans cette permission, macOS peut rediriger les touches vers Apple Music.",
+  "label_settings_media_keys_status_allowed": "Autorisé",
+  "label_settings_media_keys_status_missing": "Manquant",
+  "label_settings_media_keys_open_accessibility": "Ouvrir Accessibilité dans macOS",
+  "label_settings_media_keys_restart_hint": "Veuillez redémarrer Aurora Pulse après modification.",
+  "label_player_audio_details_unavailable": "Informations détaillées non disponibles"
 }

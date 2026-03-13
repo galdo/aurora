@@ -313,50 +313,56 @@ export function SettingsPage() {
             </div>
           </div>
 
-          <div className={cx('settings-section', 'settings-card')}>
-            <div className={cx('settings-heading')}>
-              Multimediatasten (macOS)
-            </div>
-            <div className={cx('settings-content')}>
-              <div className={cx('settings-row')}>
-                <div>
-                  <div className={cx('settings-subheading')}>Global-Shortcut Registrierung</div>
-                  <div className={cx('settings-description')}>
+          {appDetails.platform === 'darwin' && (
+            <div className={cx('settings-section', 'settings-card')}>
+              <div className={cx('settings-heading')}>
+                {I18nService.getString('label_settings_media_keys_heading')}
+              </div>
+              <div className={cx('settings-content')}>
+                <div className={cx('settings-row')}>
+                  <div>
+                    <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_media_keys_global_shortcuts')}</div>
+                    <div className={cx('settings-description')}>
+                      {mediaKeysRegistered
+                        ? I18nService.getString('label_settings_media_keys_global_shortcuts_enabled')
+                        : I18nService.getString('label_settings_media_keys_global_shortcuts_disabled')}
+                    </div>
+                  </div>
+                  <span className={cx('settings-status-chip', { ok: mediaKeysRegistered, error: !mediaKeysRegistered })}>
                     {mediaKeysRegistered
-                      ? 'Aktiv: Play/Pause, Vor/Zurück werden systemweit von Aurora abgefangen.'
-                      : 'Nicht aktiv: macOS oder eine andere App übernimmt die Mediatasten.'}
-                  </div>
+                      ? I18nService.getString('label_settings_media_keys_status_active')
+                      : I18nService.getString('label_settings_media_keys_status_inactive')}
+                  </span>
                 </div>
-                <span className={cx('settings-status-chip', { ok: mediaKeysRegistered, error: !mediaKeysRegistered })}>
-                  {mediaKeysRegistered ? 'Aktiv' : 'Inaktiv'}
-                </span>
-              </div>
-              <div className={cx('settings-row')}>
-                <div>
-                  <div className={cx('settings-subheading')}>Bedienungshilfen-Zugriff</div>
-                  <div className={cx('settings-description')}>
+                <div className={cx('settings-row')}>
+                  <div>
+                    <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_media_keys_accessibility')}</div>
+                    <div className={cx('settings-description')}>
+                      {mediaKeysAccessibilityTrusted
+                        ? I18nService.getString('label_settings_media_keys_accessibility_allowed')
+                        : I18nService.getString('label_settings_media_keys_accessibility_missing')}
+                    </div>
+                  </div>
+                  <span className={cx('settings-status-chip', { ok: mediaKeysAccessibilityTrusted, error: !mediaKeysAccessibilityTrusted })}>
                     {mediaKeysAccessibilityTrusted
-                      ? 'Erlaubt.'
-                      : 'Nicht erlaubt. Ohne diese Freigabe kann macOS die Tasten an Apple Music weiterleiten.'}
-                  </div>
+                      ? I18nService.getString('label_settings_media_keys_status_allowed')
+                      : I18nService.getString('label_settings_media_keys_status_missing')}
+                  </span>
                 </div>
-                <span className={cx('settings-status-chip', { ok: mediaKeysAccessibilityTrusted, error: !mediaKeysAccessibilityTrusted })}>
-                  {mediaKeysAccessibilityTrusted ? 'Erlaubt' : 'Fehlt'}
-                </span>
-              </div>
-              <div className={cx('settings-action-row')}>
-                <Link
-                  href="x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                  className={cx('settings-info-link')}
-                >
-                  Bedienungshilfen in macOS öffnen
-                </Link>
-              </div>
-              <div className={cx('settings-description')}>
-                Nach Änderung bitte Aurora Pulse neu starten.
+                <div className={cx('settings-action-row')}>
+                  <Link
+                    href="x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                    className={cx('settings-info-link')}
+                  >
+                    {I18nService.getString('label_settings_media_keys_open_accessibility')}
+                  </Link>
+                </div>
+                <div className={cx('settings-description')}>
+                  {I18nService.getString('label_settings_media_keys_restart_hint')}
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           <div className={cx('settings-section', 'settings-card')}>
             <div className={cx('settings-heading')}>

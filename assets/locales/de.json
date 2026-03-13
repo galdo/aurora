@@ -254,5 +254,19 @@
   "label_settings_dap_status_aborted": "Abgebrochen",
   "label_settings_dap_status_error": "Fehler",
   "label_settings_dap_time_remaining": "Restzeit:",
-  "label_settings_dap_resumable": "Fortsetzbar ab {count} bereits verarbeiteten Dateien."
+  "label_settings_dap_resumable": "Fortsetzbar ab {count} bereits verarbeiteten Dateien.",
+  "label_settings_media_keys_heading": "Multimediatasten (macOS)",
+  "label_settings_media_keys_global_shortcuts": "Global-Shortcut Registrierung",
+  "label_settings_media_keys_global_shortcuts_enabled": "Aktiv: Play/Pause, Vor/Zurück werden systemweit von Aurora abgefangen.",
+  "label_settings_media_keys_global_shortcuts_disabled": "Nicht aktiv: macOS oder eine andere App übernimmt die Mediatasten.",
+  "label_settings_media_keys_status_active": "Aktiv",
+  "label_settings_media_keys_status_inactive": "Inaktiv",
+  "label_settings_media_keys_accessibility": "Bedienungshilfen-Zugriff",
+  "label_settings_media_keys_accessibility_allowed": "Erlaubt.",
+  "label_settings_media_keys_accessibility_missing": "Nicht erlaubt. Ohne diese Freigabe kann macOS die Tasten an Apple Music weiterleiten.",
+  "label_settings_media_keys_status_allowed": "Erlaubt",
+  "label_settings_media_keys_status_missing": "Fehlt",
+  "label_settings_media_keys_open_accessibility": "Bedienungshilfen in macOS öffnen",
+  "label_settings_media_keys_restart_hint": "Nach Änderung bitte Aurora Pulse neu starten.",
+  "label_player_audio_details_unavailable": "Detailinformationen nicht verfügbar"
 }

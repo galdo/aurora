@@ -46,6 +46,18 @@ interface IDapSyncCheckpoint {
   updatedAt: number;
 }
 
+interface IDapSyncStateEntry {
+  sourceSize: number;
+  sourceMtimeMs: number;
+}
+
+interface IDapSyncState {
+  targetDirectory: string;
+  syncRootPath: string;
+  entries: Record<string, IDapSyncStateEntry>;
+  updatedAt: number;
+}
+
 export interface IDapSyncProgressSnapshot {
   phase: DapSyncPhase;
   isRunning: boolean;
@@ -69,6 +81,7 @@ export class MediaLibraryService {
   static readonly dapSyncSettingsStorageKey = 'aurora:dap-sync-settings';
   static readonly dapSyncDirectoryName = 'Music';
   static readonly dapSyncCheckpointStorageKey = 'aurora:dap-sync-checkpoint';
+  static readonly dapSyncStateStorageKey = 'aurora:dap-sync-state';
   static readonly dapSyncProgressEventName = 'aurora:dap-sync-progress';
   private static dapSyncAbortController: AbortController | null = null;
   private static dapSyncPromise: Promise<{ copiedFiles: number; deletedFiles: number; totalTracks: number }> | null = null;
@@ -391,6 +404,11 @@ export class MediaLibraryService {
     if (path.basename(dapTargetDirectory).toLowerCase() === this.dapSyncDirectoryName.toLowerCase()) {
       dapTargetDirectory = path.dirname(dapTargetDirectory);
     }
+    this.saveDapSyncSettings({
+      targetDirectory: dapTargetDirectory,
+      autoSyncEnabled: settings.autoSyncEnabled,
+      deleteMissingOnDevice: settings.deleteMissingOnDevice,
+    });
 
     const abortController = new AbortController();
     this.dapSyncAbortController = abortController;
@@ -400,9 +418,15 @@ export class MediaLibraryService {
       const deleteMissingOnDevice = options?.deleteMissingOnDevice ?? settings.deleteMissingOnDevice;
       const syncRootPath = path.join(dapTargetDirectory, this.dapSyncDirectoryName);
       const startedAt = Date.now();
+      const dapTargetStat = await fs.promises.stat(dapTargetDirectory).catch(() => undefined);
+      if (!dapTargetStat || !dapTargetStat.isDirectory()) {
+        throw new Error(`DAP target directory unavailable: ${dapTargetDirectory}`);
+      }
       await fs.promises.mkdir(syncRootPath, { recursive: true });
 
       const currentCheckpoint = this.loadDapSyncCheckpoint(dapTargetDirectory, syncRootPath);
+      const currentSyncState = this.loadDapSyncState(dapTargetDirectory, syncRootPath);
+      const syncStateEntries = new Map(Object.entries(currentSyncState?.entries || {}));
       const completedRelativePathSet = new Set(currentCheckpoint?.completedRelativePaths || []);
       let copiedFiles = currentCheckpoint?.copiedFiles || 0;
       let deletedFiles = currentCheckpoint?.deletedFiles || 0;
@@ -450,10 +474,14 @@ export class MediaLibraryService {
           .split(path.sep)
           .join('/');
         const destinationPath = path.join(syncRootPath, relativePath.split('/').join(path.sep));
+        const sourceSize = Number((mediaTrack.extra as any)?.file_size);
+        const sourceMtimeMs = Number((mediaTrack.extra as any)?.file_mtime);
         return {
           relativePath,
           sourcePath,
           destinationPath,
+          sourceSize: Number.isFinite(sourceSize) && sourceSize > 0 ? sourceSize : undefined,
+          sourceMtimeMs: Number.isFinite(sourceMtimeMs) && sourceMtimeMs > 0 ? sourceMtimeMs : undefined,
         };
       });
 
@@ -466,7 +494,22 @@ export class MediaLibraryService {
           };
         }
 
-        const destinationIsCurrent = await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath);
+        const stateEntry = syncStateEntries.get(trackItem.relativePath);
+        if (stateEntry
+          && trackItem.sourceSize
+          && trackItem.sourceMtimeMs
+          && stateEntry.sourceSize === trackItem.sourceSize
+          && stateEntry.sourceMtimeMs === trackItem.sourceMtimeMs) {
+          const destinationStats = await fs.promises.stat(trackItem.destinationPath).catch(() => undefined);
+          return {
+            ...trackItem,
+            alreadyCompleted: !!destinationStats,
+          };
+        }
+        const destinationIsCurrent = await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
+          sourceSize: trackItem.sourceSize,
+          sourceMtimeMs: trackItem.sourceMtimeMs,
+        });
         return {
           ...trackItem,
           alreadyCompleted: destinationIsCurrent,
@@ -508,7 +551,10 @@ export class MediaLibraryService {
 
         try {
           await fs.promises.mkdir(path.dirname(trackItem.destinationPath), { recursive: true });
-          const shouldCopy = !(await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath));
+          const shouldCopy = !(await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
+            sourceSize: trackItem.sourceSize,
+            sourceMtimeMs: trackItem.sourceMtimeMs,
+          }));
           if (shouldCopy) {
             await fs.promises.copyFile(trackItem.sourcePath, trackItem.destinationPath);
             copiedFiles += 1;
@@ -526,12 +572,25 @@ export class MediaLibraryService {
         }
 
         resumedValidRelativePathSet.add(trackItem.relativePath);
+        const syncStateSourceSize = trackItem.sourceSize || Number((await fs.promises.stat(trackItem.sourcePath).catch(() => undefined))?.size || 0);
+        const syncStateSourceMtimeMs = trackItem.sourceMtimeMs || Number((await fs.promises.stat(trackItem.sourcePath).catch(() => undefined))?.mtimeMs || 0);
+        if (syncStateSourceSize > 0 && syncStateSourceMtimeMs > 0) {
+          syncStateEntries.set(trackItem.relativePath, {
+            sourceSize: syncStateSourceSize,
+            sourceMtimeMs: syncStateSourceMtimeMs,
+          });
+        }
         this.persistDapSyncCheckpoint({
           targetDirectory: dapTargetDirectory,
           syncRootPath,
           completedRelativePaths: [...resumedValidRelativePathSet],
           copiedFiles,
           deletedFiles,
+        });
+        this.persistDapSyncState({
+          targetDirectory: dapTargetDirectory,
+          syncRootPath,
+          entries: Object.fromEntries(syncStateEntries.entries()),
         });
         this.updateDapSyncProgress({
           phase: 'copying',
@@ -559,6 +618,8 @@ export class MediaLibraryService {
           const relativePath = path.relative(syncRootPath, deviceFilePath).split(path.sep).join('/');
           return !expectedRelativePaths.has(relativePath);
         });
+        const staleRelativePaths = [...syncStateEntries.keys()].filter(relativePath => !expectedRelativePaths.has(relativePath));
+        staleRelativePaths.forEach(relativePath => syncStateEntries.delete(relativePath));
 
         this.updateDapSyncProgress({
           phase: 'cleaning',
@@ -613,6 +674,11 @@ export class MediaLibraryService {
       });
       copiedFiles += podcastSyncResult.copiedFiles;
       deletedFiles += podcastSyncResult.deletedFiles;
+      this.persistDapSyncState({
+        targetDirectory: dapTargetDirectory,
+        syncRootPath,
+        entries: Object.fromEntries(syncStateEntries.entries()),
+      });
 
       this.clearDapSyncCheckpoint();
       const result = {
@@ -658,11 +724,15 @@ export class MediaLibraryService {
           };
         }
 
+        const errorCode = String((error as any)?.code || '');
+        const normalizedErrorMessage = (errorCode === 'ENOENT' || errorCode === 'ENODEV' || errorCode === 'EIO')
+          ? `DAP target directory unavailable: ${dapTargetDirectory}`
+          : String(error?.message || error);
         this.updateDapSyncProgress({
           phase: 'error',
           isRunning: false,
           canResume: true,
-          errorMessage: String(error?.message || error),
+          errorMessage: normalizedErrorMessage,
         });
         throw error;
       })
@@ -787,15 +857,62 @@ export class MediaLibraryService {
     localStorage.removeItem(this.dapSyncCheckpointStorageKey);
   }
 
-  private static async checkDestinationCurrent(sourcePath: string, destinationPath: string): Promise<boolean> {
+  private static loadDapSyncState(targetDirectory: string, syncRootPath: string): IDapSyncState | null {
+    const rawState = localStorage.getItem(this.dapSyncStateStorageKey);
+    if (!rawState) {
+      return null;
+    }
+
+    try {
+      const parsedState = JSON.parse(rawState) as IDapSyncState;
+      if (parsedState.targetDirectory !== targetDirectory || parsedState.syncRootPath !== syncRootPath) {
+        return null;
+      }
+      return {
+        ...parsedState,
+        entries: parsedState.entries || {},
+      };
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  private static persistDapSyncState(state: {
+    targetDirectory: string;
+    syncRootPath: string;
+    entries: Record<string, IDapSyncStateEntry>;
+  }) {
+    localStorage.setItem(this.dapSyncStateStorageKey, JSON.stringify({
+      ...state,
+      updatedAt: Date.now(),
+    }));
+  }
+
+  private static async checkDestinationCurrent(
+    sourcePath: string,
+    destinationPath: string,
+    sourceMeta?: { sourceSize?: number; sourceMtimeMs?: number },
+  ): Promise<boolean> {
     const destinationStats = await fs.promises.stat(destinationPath).catch(() => undefined);
-    const sourceStats = await fs.promises.stat(sourcePath).catch(() => undefined);
-    if (!destinationStats || !sourceStats) {
+    if (!destinationStats) {
       return false;
     }
 
-    return destinationStats.size === sourceStats.size
-      && destinationStats.mtimeMs >= sourceStats.mtimeMs;
+    const sourceStats = (!sourceMeta?.sourceSize || !sourceMeta?.sourceMtimeMs)
+      ? await fs.promises.stat(sourcePath).catch(() => undefined)
+      : undefined;
+    const sourceSize = Number(sourceMeta?.sourceSize || sourceStats?.size || 0);
+    const sourceMtimeMs = Number(sourceMeta?.sourceMtimeMs || sourceStats?.mtimeMs || 0);
+    if (!sourceSize || destinationStats.size !== sourceSize) {
+      return false;
+    }
+
+    if (!sourceMtimeMs) {
+      return true;
+    }
+
+    return destinationStats.mtimeMs >= sourceMtimeMs
+      || Math.abs(destinationStats.mtimeMs - sourceMtimeMs) <= 5000;
   }
 
   private static async deleteUnsyncMedia(mediaProviderIdentifier: string, mediaSyncStartTimestamp: number): Promise<void> {

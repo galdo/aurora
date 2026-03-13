@@ -1,11 +1,12 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Col, Row } from 'react-bootstrap';
+import { Row } from 'react-bootstrap';
 import { useSelector } from 'react-redux';
 import classNames from 'classnames/bind';
 
 import { Icons, Routes } from '../../constants';
 import { RootState } from '../../reducers';
 import { MediaPlayerService } from '../../services';
+import { I18nService } from '../../services/i18n.service';
 
 import { Icon } from '../icon/icon.component';
 import { Button } from '../button/button.component';
@@ -69,39 +70,95 @@ export function MediaPlayerSide() {
     return (<></>);
   }
 
+  const getAudioDetailsLabel = (mediaTrack: any): string => {
+    const format = (mediaTrack?.format || {}) as {
+      sampleRate?: number;
+      bitsPerSample?: number;
+      bitrate?: number;
+      container?: string;
+    };
+    const extra = (mediaTrack?.extra || {}) as {
+      file_path?: string;
+      audio_sample_rate_hz?: number;
+      audio_bit_depth?: number;
+      audio_bitrate_kbps?: number;
+      audio_file_type?: string;
+    };
+
+    const sampleRateHz = Number(extra.audio_sample_rate_hz || format.sampleRate);
+    const bitDepth = Number(extra.audio_bit_depth || format.bitsPerSample);
+    const bitrateKbps = Number(extra.audio_bitrate_kbps || (format.bitrate ? Math.round(format.bitrate / 1000) : 0));
+    const fileType = String(
+      extra.audio_file_type
+      || format.container
+      || String(extra.file_path || '').split('.').pop()
+      || '',
+    ).trim().toLowerCase();
+
+    const details: string[] = [];
+    if (Number.isFinite(bitDepth) && bitDepth > 0) {
+      details.push(`${bitDepth} Bit`);
+    }
+    if (Number.isFinite(sampleRateHz) && sampleRateHz > 0) {
+      details.push(`${(sampleRateHz / 1000).toFixed(1).replace('.', ',')} kHz`);
+    }
+    if (Number.isFinite(bitrateKbps) && bitrateKbps > 0) {
+      details.push(`${bitrateKbps} kbps`);
+    }
+    if (fileType) {
+      details.push(fileType.toUpperCase());
+    }
+
+    if (details.length <= 1 && fileType) {
+      return I18nService.getString('label_player_audio_details_unavailable');
+    }
+
+    return details.join(' • ');
+  };
+  const audioDetailsLabel = mediaPlaybackCurrentMediaTrack
+    ? getAudioDetailsLabel(mediaPlaybackCurrentMediaTrack)
+    : '';
+
   return (
     <Row className={cx('media-player-side-container')}>
-      <Col className={cx('col-md-10 col-lg-8', 'media-player-side-controls-column')}>
-        {mediaPlaybackCurrentMediaTrack && (
-          <MediaTrackLikeButton
-            mediaTrack={mediaPlaybackCurrentMediaTrack}
-            className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-like-button')}
-          />
-        )}
-        <RouterLinkToggle
-          to={Routes.PlayerQueue}
-          activeClassName={cx('active')}
-          className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'app-nav-link')}
-        >
-          <Icon name={Icons.PlayerQueue}/>
-        </RouterLinkToggle>
-        <Button
-          className={cx('media-player-control', 'media-player-control-sm', 'media-player-volume-button')}
-          onButtonSubmit={handleVolumeButtonSubmit}
-        >
-          <Icon name={mediaVolumeButtonIcon}/>
-        </Button>
-        <div className={cx('media-player-volume-bar-container')}>
-          <Slider
-            autoCommitOnUpdate
-            value={mediaPlaybackVolumeMuted
-              ? 0
-              : mediaPlaybackVolumeCurrent}
-            maxValue={mediaPlaybackVolumeMaxLimit}
-            onDragCommit={handleVolumeChangeDragCommit}
-          />
+      <div className={cx('media-player-side-controls-column')}>
+        <div className={cx('media-player-side-controls-row')}>
+          {mediaPlaybackCurrentMediaTrack && (
+            <MediaTrackLikeButton
+              mediaTrack={mediaPlaybackCurrentMediaTrack}
+              className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-like-button')}
+            />
+          )}
+          <RouterLinkToggle
+            to={Routes.PlayerQueue}
+            activeClassName={cx('active')}
+            className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'app-nav-link')}
+          >
+            <Icon name={Icons.PlayerQueue}/>
+          </RouterLinkToggle>
+          <Button
+            className={cx('media-player-control', 'media-player-control-sm', 'media-player-volume-button')}
+            onButtonSubmit={handleVolumeButtonSubmit}
+          >
+            <Icon name={mediaVolumeButtonIcon}/>
+          </Button>
+          <div className={cx('media-player-volume-bar-container')}>
+            <Slider
+              autoCommitOnUpdate
+              value={mediaPlaybackVolumeMuted
+                ? 0
+                : mediaPlaybackVolumeCurrent}
+              maxValue={mediaPlaybackVolumeMaxLimit}
+              onDragCommit={handleVolumeChangeDragCommit}
+            />
+          </div>
         </div>
-      </Col>
+        {!!audioDetailsLabel && (
+          <div className={cx('media-player-side-audio-details')}>
+            {audioDetailsLabel}
+          </div>
+        )}
+      </div>
     </Row>
   );
 }

@@ -241,14 +241,25 @@
 .media-player-side-container {
   display: flex;
   justify-content: flex-end;
-  align-items: center;
+  align-items: flex-end;
 }
 
 .media-player-side-controls-column {
   display: flex;
+  flex-flow: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  width: 220px !important;
+  max-width: 220px !important;
+  padding: 0 !important;
+}
+
+.media-player-side-controls-row {
+  display: flex;
   flex-flow: row;
   align-items: center;
-  max-width: 220px !important;
+  width: 100%;
 }
 
 .media-player-volume-button {
@@ -272,6 +283,20 @@
 
 .media-player-volume-bar-container {
   width: 100%;
+}
+
+.media-player-side-audio-details {
+  margin-top: 6px;
+  width: 100%;
+  min-height: 14px;
+  color: var(--font-color-alpha);
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  align-self: center;
 }
 
 /* Ensure queue and volume controls match the like-button visual size */

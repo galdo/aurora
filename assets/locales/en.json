@@ -254,5 +254,19 @@
   "label_settings_dap_status_aborted": "Aborted",
   "label_settings_dap_status_error": "Error",
   "label_settings_dap_time_remaining": "Time remaining:",
-  "label_settings_dap_resumable": "Resumable from {count} already processed files."
+  "label_settings_dap_resumable": "Resumable from {count} already processed files.",
+  "label_settings_media_keys_heading": "Media keys (macOS)",
+  "label_settings_media_keys_global_shortcuts": "Global shortcut registration",
+  "label_settings_media_keys_global_shortcuts_enabled": "Active: Play/Pause, Previous/Next are handled system-wide by Aurora.",
+  "label_settings_media_keys_global_shortcuts_disabled": "Inactive: macOS or another app is handling media keys.",
+  "label_settings_media_keys_status_active": "Active",
+  "label_settings_media_keys_status_inactive": "Inactive",
+  "label_settings_media_keys_accessibility": "Accessibility access",
+  "label_settings_media_keys_accessibility_allowed": "Allowed.",
+  "label_settings_media_keys_accessibility_missing": "Not allowed. Without this permission, macOS may route keys to Apple Music.",
+  "label_settings_media_keys_status_allowed": "Allowed",
+  "label_settings_media_keys_status_missing": "Missing",
+  "label_settings_media_keys_open_accessibility": "Open Accessibility in macOS",
+  "label_settings_media_keys_restart_hint": "Please restart Aurora Pulse after changing this.",
+  "label_player_audio_details_unavailable": "Detailed information not available"
 }
