@@ -23,6 +23,13 @@ on:
         description: 'Version tag (e.g. v1.2.3 or v1.2.3-beta)'
         type: string
 
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build macOS (${{ matrix.arch }})
@@ -35,6 +42,7 @@ jobs:
             arch: x64
 
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
 
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -131,6 +139,7 @@ jobs:
     name: GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
 
     steps:
