@@ -45,7 +45,7 @@
   "build": {
     "productName": "Aurora Pulse",
     "appId": "com.bbbneo333.aurorapulse",
-    "artifactName": "${productName}-${os}-${arch}-${version}.${ext}",
+    "artifactName": "AuroraPulse-${os}-${arch}-${version}.${ext}",
     "files": [
       "dist/**",
       "node_modules/**",

@@ -107,14 +107,15 @@ jobs:
             exit 1
           fi
 
-          ZIP_PATH="release/Aurora Pulse-mac-${ARCH}-${VERSION}.zip"
-          DMG_PATH="release/Aurora Pulse-mac-${ARCH}-${VERSION}.dmg"
+          ZIP_PATH="release/AuroraPulse-mac-${ARCH}-${VERSION}.zip"
+          DMG_PATH="release/AuroraPulse-mac-${ARCH}-${VERSION}.dmg"
           codesign --deep --force --sign - "$APP_PATH"
           xattr -cr "$APP_PATH"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
           STAGE_DIR="$(mktemp -d)"
           cp -R "$APP_PATH" "$STAGE_DIR/$(basename "$APP_PATH")"
           hdiutil create -volname "Aurora Pulse" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_PATH"
+          rm -f release/*.blockmap
           rm -rf "$STAGE_DIR"
 
       - name: Upload macOS artifacts
@@ -122,10 +123,8 @@ jobs:
         with:
           name: macos-${{ matrix.arch }}
           path: |
-            release/Aurora Pulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.dmg
-            release/Aurora Pulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.zip
-            release/Aurora Pulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.dmg.blockmap
-            release/Aurora Pulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.zip.blockmap
+            release/AuroraPulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.dmg
+            release/AuroraPulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.zip
           if-no-files-found: error
           overwrite: true
 
@@ -183,7 +182,6 @@ jobs:
           name: windows
           path: |
             release/*.exe
-            release/*.blockmap
           if-no-files-found: error
           overwrite: true
 
@@ -300,11 +298,37 @@ jobs:
           name: Release ${{ needs.meta.outputs.tag }}
           prerelease: ${{ needs.meta.outputs.prerelease }}
           overwrite_files: true
+          body: |
+            ### Release 1.5.0 (Beta 2)
+            Changelog (based on code changes between v1.4.0 and v1.5.0)
+            
+            **Added**
+            - Shared collection view controls across Albums, Artists, Playlists, and Podcasts (cover-size slider + unified sorting controls).
+            - Global single-instance right sideview state store to prevent stacked overlays and enable clean content replacement.
+            - Linux Flatpak packaging support (x86_64) including build scripts, Flatpak metadata, and a dedicated GitHub Actions workflow.
+            - Library export utility script for JSON snapshots and diagnostics.
+            - Extended track metadata persistence for technical audio details (sample rate, bit depth, bitrate, codec, file type).
+            
+            **Changed**
+            - Equalizer evolved into a fuller tuning workflow with AutoEQ profile support, history handling, and stronger UX.
+            - Podcasts area was redesigned for parity with Library layout, sorting, and cover-size synchronization.
+            - Player and sideview interaction model refined: title click opens/reuses sideview, transitions are smoother, and visual focus is more consistent.
+            - README rewritten as a product-focused landing page with clearer value messaging and fork rationale.
+            - Settings, topbar actions, and secondary button styling were streamlined for clearer primary/secondary action hierarchy.
+            
+            **Fixed**
+            - Resolved sideview stacking behavior by reusing a single global sideview instance.
+            - Fixed inconsistent hover/text styling for secondary actions.
+            - Fixed multiple layout mismatches between Library and Podcasts (header, spacing, grid alignment, cover presentation).
+            - Improved reliability of metadata display paths in player and media ingestion flow.
+            - Stabilized packaging prerequisites for native sharp runtimes across targets.
+            
+            **Notes**
+            - Scope intentionally reflects the practical delta from v1.4.0 to v1.5.0 across UX, playback transparency, build/release workflow, and platform packaging readiness.
           files: |
             release/**/*.dmg
             release/**/*.zip
             release/**/*.exe
             release/**/*.flatpak
-            release/**/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
