@@ -4,15 +4,6 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
-  schedule:
-    - cron: '30 2 * * *'
-
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*.*.*'
-
   workflow_dispatch:
     inputs:
       version:
@@ -52,15 +43,18 @@ jobs:
           python-version: '3.10'
 
       - name: Remove npm lockfiles
+        shell: bash
         run: |
           rm -f package-lock.json src/package-lock.json
 
       - name: Force GitHub HTTPS for git dependencies
+        shell: bash
         run: |
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
 
       - name: Install dependencies
+        shell: bash
         run: |
           yarn install --frozen-lockfile --non-interactive || yarn install --non-interactive
 
