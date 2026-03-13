@@ -53,15 +53,18 @@ export class MediaCollectionService {
       type: MediaCollectionItemType.Album,
       name: mediaAlbum.album_name,
       picture: mediaAlbum.album_cover_picture,
+      hidden: mediaAlbum.hidden,
     };
   }
 
   static getMediaItemFromArtist(mediaArtist: IMediaArtist): IMediaCollectionItem {
+    const artistExtra = mediaArtist.extra as { artist_feature_picture_loading?: boolean } | undefined;
     return {
       id: mediaArtist.id,
       name: mediaArtist.artist_name,
       type: MediaCollectionItemType.Artist,
       picture: mediaArtist.artist_feature_picture,
+      pictureLoading: !mediaArtist.artist_feature_picture && !!artistExtra?.artist_feature_picture_loading,
     };
   }
 
@@ -71,6 +74,7 @@ export class MediaCollectionService {
       name: mediaPlaylist.name,
       type: MediaCollectionItemType.Playlist,
       picture: mediaPlaylist.cover_picture,
+      hidden: mediaPlaylist.is_hidden_album,
     };
   }
 

@@ -27,6 +27,9 @@ export interface IMediaAlbumData {
   album_name: string;
   album_artist_id: string;
   album_cover_picture?: IMediaPicture;
+  album_genre?: string;
+  album_year?: number;
+  hidden?: boolean;
   extra?: object;
 }
 
@@ -59,6 +62,14 @@ export interface IMediaAlbum extends IMediaAlbumData {
   album_artist: IMediaArtist;
 }
 
+export interface IMediaAlbumUpdateData {
+  album_name?: string;
+  album_artist_id?: string;
+  album_genre?: string;
+  album_year?: number;
+  album_cover_picture?: IMediaPicture;
+}
+
 export interface IMediaArtist extends IMediaArtistData {
 }
 
@@ -67,8 +78,17 @@ export interface IMediaPicture {
   image_data_type: MediaTrackCoverPictureImageDataType;
 }
 
+export type MediaPlaybackPreparationPhase = 'preparing' | 'converting';
+
+export interface IMediaPlaybackPreparationStatus {
+  phase: MediaPlaybackPreparationPhase;
+  progress: number;
+}
+
 export interface IMediaPlayback {
   play(): Promise<boolean>;
+
+  setPreparationStatusListener(listener?: (status?: IMediaPlaybackPreparationStatus) => void): void;
 
   checkIfLoading(): boolean;
 
@@ -148,6 +168,8 @@ export interface IMediaCollectionItem {
   type: MediaCollectionItemType;
   name: string;
   picture?: IMediaPicture;
+  pictureLoading?: boolean;
+  hidden?: boolean;
 }
 
 export interface IMediaCollectionSearchResults {
@@ -164,6 +186,10 @@ export interface IMediaPlaylistData {
   cover_picture?: IMediaPicture;
   created_at: number;
   updated_at: number;
+  is_hidden_album?: boolean;
+  is_smart?: boolean;
+  smart_match_mode?: IMediaPlaylistSmartMatchMode;
+  smart_rules?: IMediaPlaylistSmartRuleData[];
 }
 
 export interface IMediaPlaylistTrackData extends IMediaProviderTrackData {
@@ -181,6 +207,9 @@ export interface IMediaPlaylistInputData {
   name?: string;
   tracks?: IMediaPlaylistTrackInputData[];
   cover_picture?: IMediaPicture;
+  is_smart?: boolean;
+  smart_match_mode?: IMediaPlaylistSmartMatchMode;
+  smart_rules?: IMediaPlaylistSmartRuleData[];
 }
 
 export interface IMediaPlaylistTrackInputData extends IMediaProviderTrackData {
@@ -190,10 +219,22 @@ export interface IMediaPlaylistUpdateData {
   name?: string;
   tracks?: IMediaPlaylistTrackUpdateData[];
   cover_picture?: IMediaPicture;
+  is_smart?: boolean;
+  smart_match_mode?: IMediaPlaylistSmartMatchMode;
+  smart_rules?: IMediaPlaylistSmartRuleData[];
 }
 
 export interface IMediaPlaylistTrackUpdateData {
   playlist_track_id: string;
+}
+
+export type IMediaPlaylistSmartKeyword = 'track' | 'album' | 'artist' | 'genre' | 'path';
+
+export type IMediaPlaylistSmartMatchMode = 'all' | 'any';
+
+export interface IMediaPlaylistSmartRuleData {
+  keyword: IMediaPlaylistSmartKeyword;
+  pattern: string;
 }
 
 export interface IMediaLikedTrackData extends IMediaProviderTrackData {
@@ -221,4 +262,48 @@ export interface IMediaPinnedItemInputData extends Pick<IMediaCollectionItem, 'i
 
 export interface IMediaPinnedItem extends IMediaPinnedItemData, IMediaCollectionItem {
   pinned_item_id: string;
+}
+
+export type IPodcastDirectorySource = 'global' | 'de' | 'eu';
+
+export interface IPodcastDirectorySearchFilters {
+  query: string;
+  publisher?: string;
+  genre?: string;
+  minRating?: number;
+  source?: IPodcastDirectorySource;
+}
+
+export interface IPodcastDirectoryEntry {
+  id: string;
+  title: string;
+  publisher: string;
+  genre: string;
+  rating: number;
+  imageUrl: string;
+  feedUrl: string;
+  source: IPodcastDirectorySource;
+}
+
+export interface IPodcastEpisode {
+  id: string;
+  title: string;
+  audioUrl: string;
+  publishedAt: number;
+  description?: string;
+  isNew: boolean;
+}
+
+export interface IPodcastSubscription {
+  id: string;
+  title: string;
+  publisher: string;
+  genre: string;
+  rating: number;
+  imageUrl: string;
+  feedUrl: string;
+  source: IPodcastDirectorySource;
+  hasNewEpisodes: boolean;
+  updatedAt: number;
+  episodes: IPodcastEpisode[];
 }

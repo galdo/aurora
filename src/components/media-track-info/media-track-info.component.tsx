@@ -101,6 +101,7 @@ export function MediaTrackInfo(props: {
   className?: string;
   onContextMenu?: (e: React.MouseEvent) => void;
   marquee?: boolean;
+  onTitleClick?: (e: React.MouseEvent) => void;
 }) {
   const {
     mediaTrack,
@@ -108,42 +109,58 @@ export function MediaTrackInfo(props: {
     className,
     onContextMenu,
     marquee,
+    onTitleClick,
   } = props;
+  let titleContent: React.ReactNode;
+  if (disableAlbumLink) {
+    titleContent = (
+      <MediaTrackName
+        mediaTrack={mediaTrack}
+        onContextMenu={onContextMenu}
+        marquee={marquee}
+      />
+    );
+  } else {
+    titleContent = (
+      <MediaTrackAlbumLink
+        mediaTrack={mediaTrack}
+        onContextMenu={onContextMenu}
+        marquee={marquee}
+      />
+    );
+  }
+
+  if (onTitleClick) {
+    titleContent = (
+      <div
+        role="button"
+        tabIndex={0}
+        className={cx('media-track-title-action')}
+        onClick={onTitleClick}
+        onKeyPress={e => (e.key === 'Enter' || e.key === ' ') && onTitleClick(e as any)}
+      >
+        {titleContent}
+      </div>
+    );
+  }
 
   return (
     <div className={cx('media-track-info', className)}>
       <div className={cx('media-track-info-title')}>
-        <MediaText marquee={marquee}>
-          {
-            disableAlbumLink
-              ? (
-                <MediaTrackName
-                  mediaTrack={mediaTrack}
-                  onContextMenu={onContextMenu}
-                />
-              )
-              : (
-                <MediaTrackAlbumLink
-                  mediaTrack={mediaTrack}
-                  onContextMenu={onContextMenu}
-                />
-              )
-          }
-        </MediaText>
+        {titleContent}
       </div>
       <div className={cx('media-track-info-subtitle')}>
-        <MediaText marquee={marquee}>
-          {withSeparator(
-            mediaTrack.track_artists,
-            mediaArtist => (
-              <MediaArtistLink
-                key={mediaArtist.id}
-                mediaArtist={mediaArtist}
-              />
-            ),
-            <MediaArtistLinkSeparator/>,
-          )}
-        </MediaText>
+        {withSeparator(
+          mediaTrack.track_artists,
+          mediaArtist => (
+            <MediaArtistLink
+              key={mediaArtist.id}
+              mediaArtist={mediaArtist}
+              marquee={marquee}
+            />
+          ),
+          <MediaArtistLinkSeparator/>,
+        )}
       </div>
     </div>
   );

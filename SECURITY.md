@@ -1,6 +1,6 @@
 # Security Policy
 
-If you discover a security vulnerability in Aurora, please report it responsibly.
+If you discover a security vulnerability in Aurora Pulse, please report it responsibly.
 
 📧 Email: bbbneo333@gmail.com
 

@@ -84,6 +84,15 @@ class MediaPlaylistDatastore {
       },
     });
   }
+
+  upsertMediaPlaylist(mediaPlaylistFilterData: DataStoreFilterData<IMediaPlaylistData>, mediaPlaylistInputData: DataStoreInputData<IMediaPlaylistData>) {
+    const now = Date.now();
+    return IPCRenderer.sendAsyncMessage(IPCCommChannel.DSUpsertOne, this.mediaPlaylistsDatastoreName, mediaPlaylistFilterData, {
+      ...mediaPlaylistInputData,
+      updated_at: now,
+      created_at: now,
+    });
+  }
 }
 
 export default new MediaPlaylistDatastore();

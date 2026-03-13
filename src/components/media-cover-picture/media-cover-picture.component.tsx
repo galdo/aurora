@@ -5,6 +5,7 @@ import { MediaEnums } from '../../enums';
 import { IMediaPicture } from '../../interfaces';
 
 import { Icon } from '../icon/icon.component';
+import { LoaderCircle } from '../loader/loader-circle.component';
 
 import styles from './media-cover-picture.component.css';
 
@@ -15,6 +16,7 @@ export type MediaCoverPictureProps = {
   mediaPicture?: IMediaPicture;
   mediaPictureAltText?: string;
   mediaCoverPlaceholderIcon?: string;
+  isLoading?: boolean;
   className?: string;
   contentClassName?: string;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -26,12 +28,12 @@ export function MediaCoverPicture(props: MediaCoverPictureProps) {
     mediaPicture,
     mediaPictureAltText,
     mediaCoverPlaceholderIcon,
+    isLoading,
     className,
     contentClassName,
     onContextMenu,
   } = props;
 
-  // determine image source for the cover image based on the cover picture and image data type provided
   let mediaCoverPictureImageSrc;
 
   if (mediaPicture) {
@@ -44,27 +46,48 @@ export function MediaCoverPicture(props: MediaCoverPictureProps) {
         throw new Error(`MediaTrackCoverPictureComponent component encountered error while process media track - Unsupported image data type - ${mediaPicture.image_data_type}`);
     }
   }
+  const [imageLoadFailed, setImageLoadFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setImageLoadFailed(false);
+  }, [mediaCoverPictureImageSrc]);
+
+  let mediaCoverContent = mediaCoverPlaceholderIcon ? (
+    <div className={cx('media-cover-placeholder')}>
+      <Icon
+        className={cx('media-cover-placeholder-icon')}
+        name={mediaCoverPlaceholderIcon}
+      />
+    </div>
+  ) : null;
+
+  if (isLoading) {
+    mediaCoverContent = (
+      <div className={cx('media-cover-placeholder')}>
+        <LoaderCircle
+          size={28}
+          className={cx('media-cover-loader')}
+        />
+      </div>
+    );
+  }
+
+  if (mediaCoverPictureImageSrc && !imageLoadFailed) {
+    mediaCoverContent = (
+      <img
+        alt={mediaPictureAltText}
+        src={mediaCoverPictureImageSrc}
+        onError={() => setImageLoadFailed(true)}
+      />
+    );
+  }
 
   return (
     <div
       className={cx('media-cover-picture', { has_content: !!children }, className)}
       onContextMenu={onContextMenu}
     >
-      {mediaCoverPictureImageSrc ? (
-        <img
-          alt={mediaPictureAltText}
-          src={mediaCoverPictureImageSrc}
-        />
-      ) : (
-        mediaCoverPlaceholderIcon && (
-          <div className={cx('media-cover-placeholder')}>
-            <Icon
-              className={cx('media-cover-placeholder-icon')}
-              name={mediaCoverPlaceholderIcon}
-            />
-          </div>
-        )
-      )}
+      {mediaCoverContent}
       <div className={cx('media-cover-picture-content', contentClassName)}>
         {children}
       </div>

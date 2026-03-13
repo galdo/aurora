@@ -24,6 +24,7 @@ export type SliderProps = {
   value?: number;
   maxValue?: number;
   disabled?: boolean;
+  orientation?: 'horizontal' | 'vertical';
   sliderContainerClassName?: string;
   sliderTrackClassName?: string;
   sliderThumbClassName?: string;
@@ -38,6 +39,7 @@ export function Slider(props: SliderProps = {}) {
     value = 0,
     maxValue = 100,
     disabled = false,
+    orientation = 'horizontal',
     sliderContainerClassName,
     sliderTrackClassName,
     sliderThumbClassName,
@@ -86,9 +88,16 @@ export function Slider(props: SliderProps = {}) {
       return;
     }
 
-    const eventDirection = e.key === SystemEnums.KeyboardKeyCodes.ArrowLeft
-      ? ProgressJumpDirection.Left
-      : ProgressJumpDirection.Right;
+    let eventDirection: ProgressJumpDirection;
+    if (orientation === 'vertical') {
+      eventDirection = e.key === 'ArrowUp'
+        ? ProgressJumpDirection.Up
+        : ProgressJumpDirection.Down;
+    } else {
+      eventDirection = e.key === SystemEnums.KeyboardKeyCodes.ArrowLeft
+        ? ProgressJumpDirection.Left
+        : ProgressJumpDirection.Right;
+    }
     debug('onButtonMove - event direction - %s', eventDirection);
 
     mediaProgressStateDispatch({
@@ -97,11 +106,13 @@ export function Slider(props: SliderProps = {}) {
         eventDirection,
         mediaProgressBarContainerRef,
         mediaProgressMaxValue: maxValue,
+        orientation,
       },
     });
   }, [
     disabled,
     maxValue,
+    orientation,
   ]);
   const handleOnProgressContainerMouseClick = useCallback((e: ReactMouseEvent) => {
     // for jumping progress when click is received on progress container
@@ -116,8 +127,10 @@ export function Slider(props: SliderProps = {}) {
       type: ProgressStateActionType.Jump,
       data: {
         eventPositionX: e.pageX,
+        eventPositionY: e.pageY,
         mediaProgressBarContainerRef,
         mediaProgressMaxValue: maxValue,
+        orientation,
       },
     });
 
@@ -126,6 +139,7 @@ export function Slider(props: SliderProps = {}) {
   }, [
     disabled,
     maxValue,
+    orientation,
   ]);
 
   useEffect(() => {
@@ -175,8 +189,10 @@ export function Slider(props: SliderProps = {}) {
         type: ProgressStateActionType.UpdateDrag,
         data: {
           eventPositionX: e.pageX,
+          eventPositionY: e.pageY,
           mediaProgressBarContainerRef,
           mediaProgressMaxValue: maxValue,
+          orientation,
         },
       });
 
@@ -219,6 +235,7 @@ export function Slider(props: SliderProps = {}) {
     disabled,
     maxValue,
     mediaProgressIsDragging,
+    orientation,
   ]);
 
   useEffect(() => {
@@ -313,9 +330,15 @@ export function Slider(props: SliderProps = {}) {
   const mediaProgressPercentage = `${mediaProgressUncommittedDragPercent !== undefined
     ? mediaProgressUncommittedDragPercent
     : mediaProgressDragPercent}%`;
+  const mediaProgressBarStyle = orientation === 'vertical'
+    ? { height: mediaProgressPercentage, width: '100%' }
+    : { width: mediaProgressPercentage };
+  const mediaProgressHandlerStyle = orientation === 'vertical'
+    ? { bottom: mediaProgressPercentage }
+    : { left: mediaProgressPercentage };
 
   return (
-    <div className={cx('media-progress-container', sliderContainerClassName, {
+    <div className={cx('media-progress-container', orientation, sliderContainerClassName, {
       disabled,
       dragging: mediaProgressIsDragging,
     })}
@@ -328,16 +351,12 @@ export function Slider(props: SliderProps = {}) {
         onClick={handleOnProgressContainerMouseClick}
       >
         <div
-          style={{
-            width: mediaProgressPercentage,
-          }}
+          style={mediaProgressBarStyle}
           className={cx('media-progress-bar', sliderTrackClassName)}
         />
       </div>
       <Button
-        style={{
-          left: mediaProgressPercentage,
-        }}
+        style={mediaProgressHandlerStyle}
         className={cx('media-progress-handler', sliderThumbClassName)}
         onMouseDown={handleOnProgressHandlerMouseDown}
         onButtonMove={handleOnProgressHandlerButtonMove}

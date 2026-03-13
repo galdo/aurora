@@ -11,6 +11,8 @@ import { dependencies as externals } from '../../src/package.json';
 const { execSync } = require('child_process');
 
 const commitHash = execSync('git rev-parse --short HEAD').toString().trim();
+const buildNumberDefault = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+const buildNumber = process.env.BUILD_NUMBER || process.env.GITHUB_RUN_NUMBER || buildNumberDefault;
 
 export default {
   externals: [...Object.keys(externals || {})],
@@ -42,7 +44,7 @@ export default {
     new webpack.EnvironmentPlugin({
       NODE_ENV: 'production',
       APP_VERSION: packageJson.version,
-      BUILD_VERSION: commitHash,
+      BUILD_VERSION: buildNumber,
     }),
   ],
 };

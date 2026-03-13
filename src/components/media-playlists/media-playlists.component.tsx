@@ -1,4 +1,3 @@
-import { isEmpty } from 'lodash';
 import React from 'react';
 import classNames from 'classnames/bind';
 
@@ -7,7 +6,8 @@ import { IMediaPlaylist } from '../../interfaces';
 import { I18nService, MediaCollectionService } from '../../services';
 import { StringUtils } from '../../utils';
 
-import { MediaCollectionItem } from '../media-collection-item/media-collection-item.component';
+import { MediaCollectionTile } from '../media-collection-tile/media-collection-tile.component';
+import { openPlaylistSideView } from '../media-sideview/media-sideview.store';
 
 import {
   MediaCollectionContextMenu,
@@ -20,30 +20,35 @@ const cx = classNames.bind(styles);
 
 export function MediaPlaylists(props: {
   mediaPlaylists: IMediaPlaylist[],
+  coverSize?: number,
 }) {
-  const { mediaPlaylists } = props;
+  const { mediaPlaylists, coverSize } = props;
   const mediaContextMenuId = 'media_playlists_context_menu';
+  const containerStyle = coverSize ? {
+    '--album-cover-size': `${coverSize}px`,
+  } as React.CSSProperties : undefined;
 
   return (
     <>
-      <div className={cx('media-playlists')}>
+      <div className={cx('media-playlists')} style={containerStyle}>
         {mediaPlaylists.map((mediaPlaylist) => {
           const mediaItem = MediaCollectionService.getMediaItemFromPlaylist(mediaPlaylist);
 
           return (
-            <MediaCollectionItem
-              key={mediaPlaylist.id}
-              mediaItem={mediaItem}
-              contextMenuId={mediaContextMenuId}
-              routerLink={StringUtils.buildRoute(Routes.LibraryPlaylist, {
-                playlistId: mediaPlaylist.id,
-              })}
-              subtitle={I18nService.getString('label_playlist_subtitle', {
-                trackCount: mediaPlaylist.tracks.length.toString(),
-              })}
-              disablePlayback={isEmpty(mediaPlaylist.tracks)}
-              coverPlaceholderIcon={Icons.PlaylistPlaceholder}
-            />
+            <div key={mediaPlaylist.id}>
+              <MediaCollectionTile
+                mediaItem={mediaItem}
+                contextMenuId={mediaContextMenuId}
+                routerLink={StringUtils.buildRoute(Routes.LibraryPlaylist, {
+                  playlistId: mediaPlaylist.id,
+                })}
+                subtitle={I18nService.getString('label_playlist_subtitle', {
+                  trackCount: mediaPlaylist.tracks.length.toString(),
+                })}
+                onClick={() => openPlaylistSideView(mediaPlaylist.id)}
+                coverPlaceholderIcon={Icons.PlaylistPlaceholder}
+              />
+            </div>
           );
         })}
       </div>
@@ -52,6 +57,7 @@ export function MediaPlaylists(props: {
         menuItems={[
           MediaCollectionContextMenuItem.AddToQueue,
           MediaCollectionContextMenuItem.ManagePlaylist,
+          MediaCollectionContextMenuItem.ToggleHidden,
         ]}
       />
     </>

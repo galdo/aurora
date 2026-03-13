@@ -11,7 +11,47 @@
 .app-splash {
   width: 100%;
   height: 100%;
-  background-color: var(--stage-content-bg-color);
+  background: radial-gradient(circle at top, #282828 0%, #151515 56%, #0e0e0e 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-splash-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.app-splash-title {
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #fff;
+}
+
+.app-splash-loader {
+  width: 84px;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #7f5af0, #2cb67d, #7f5af0);
+  background-size: 200% 100%;
+  animation: app-splash-pulse 1.35s linear infinite;
+}
+
+@keyframes app-splash-pulse {
+  0% {
+    background-position: 0 50%;
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    background-position: 100% 50%;
+    opacity: 0.45;
+  }
 }
 
 .app-stage {
@@ -23,7 +63,13 @@
 .app-player {
   flex: 0 0 100px;
   margin-bottom: -100px;
-  transition: margin-bottom .4s ease;
+  transition: margin-bottom .4s ease, margin-right .4s ease;
+  position: relative;
+  z-index: 1100; /* above sideview/backdrop (1000/999) so player stays sharp and visible */
+}
+
+:global(body.sideview-open) .app-player {
+  margin-right: clamp(420px, 30vw, 640px);
 }
 
 .app-player.active {

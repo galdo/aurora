@@ -12,6 +12,8 @@ import { MediaPlaylistService } from './media-playlist.service';
 import { MediaProviderService } from './media-provider.service';
 import { MediaTrackService } from './media-track.service';
 import { NotificationService } from './notification.service';
+import { PodcastService } from './podcast.service';
+import { EqualizerService } from './equalizer.service';
 
 export {
   AppService,
@@ -27,4 +29,6 @@ export {
   MediaProviderService,
   MediaTrackService,
   NotificationService,
+  PodcastService,
+  EqualizerService,
 };

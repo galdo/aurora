@@ -1,4 +1,8 @@
-import { getPercentFromPosition, getPercentFromValue } from './slider.utils';
+import {
+  getPercentFromHorizontalPosition,
+  getPercentFromValue,
+  getPercentFromVerticalPosition,
+} from './slider.utils';
 
 export enum ProgressStateActionType {
   Update = 'progress/update',
@@ -23,6 +27,8 @@ export type ProgressStateAction = {
 export enum ProgressJumpDirection {
   Left = 'progress/jump/left',
   Right = 'progress/jump/right',
+  Up = 'progress/jump/up',
+  Down = 'progress/jump/down',
 }
 
 export function progressStateReducer(state: ProgressState, action: ProgressStateAction): ProgressState {
@@ -49,8 +55,10 @@ export function progressStateReducer(state: ProgressState, action: ProgressState
     case ProgressStateActionType.UpdateDrag: {
       const {
         eventPositionX,
+        eventPositionY,
         mediaProgressBarContainerRef,
         mediaProgressMaxValue,
+        orientation,
       } = action.data;
 
       // if any of the required references is missing, do nothing, this is just for safety and won't likely happen
@@ -59,7 +67,9 @@ export function progressStateReducer(state: ProgressState, action: ProgressState
       }
 
       const mediaProgressContainerElement = (mediaProgressBarContainerRef.current as unknown as HTMLDivElement);
-      const mediaProgressUncommittedDragPercent = getPercentFromPosition(eventPositionX, mediaProgressContainerElement, mediaProgressMaxValue);
+      const mediaProgressUncommittedDragPercent = orientation === 'vertical'
+        ? getPercentFromVerticalPosition(eventPositionY, mediaProgressContainerElement, mediaProgressMaxValue)
+        : getPercentFromHorizontalPosition(eventPositionX, mediaProgressContainerElement, mediaProgressMaxValue);
 
       // we won't be doing anything in case the computed progress value is same
       if (mediaProgressUncommittedDragPercent === state.mediaProgressDragPercent) {
@@ -80,9 +90,11 @@ export function progressStateReducer(state: ProgressState, action: ProgressState
     case ProgressStateActionType.Jump: {
       const {
         eventPositionX,
+        eventPositionY,
         eventDirection,
         mediaProgressBarContainerRef,
         mediaProgressMaxValue,
+        orientation,
       } = action.data;
 
       // allow jump without committing
@@ -101,10 +113,12 @@ export function progressStateReducer(state: ProgressState, action: ProgressState
       // - via providing event direction (left / right)
       let mediaProgressUncommittedDragPercent;
 
-      if (eventPositionX) {
-        mediaProgressUncommittedDragPercent = getPercentFromPosition(eventPositionX, mediaProgressContainerElement, mediaProgressMaxValue);
+      if (orientation === 'vertical' && eventPositionY !== undefined) {
+        mediaProgressUncommittedDragPercent = getPercentFromVerticalPosition(eventPositionY, mediaProgressContainerElement, mediaProgressMaxValue);
+      } else if (eventPositionX !== undefined) {
+        mediaProgressUncommittedDragPercent = getPercentFromHorizontalPosition(eventPositionX, mediaProgressContainerElement, mediaProgressMaxValue);
       } else if (eventDirection) {
-        if (eventDirection === ProgressJumpDirection.Left) {
+        if (eventDirection === ProgressJumpDirection.Left || eventDirection === ProgressJumpDirection.Down) {
           mediaProgressUncommittedDragPercent = Math.max(state.mediaProgressDragPercent - 10, 0);
         } else {
           mediaProgressUncommittedDragPercent = Math.min(state.mediaProgressDragPercent + 10, 100);

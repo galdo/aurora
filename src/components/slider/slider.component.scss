@@ -2,6 +2,30 @@
   position: relative;
 }
 
+.media-progress-container.vertical {
+  .media-progress-bar-container {
+    width: 8px;
+    height: 190px;
+    margin: 0 auto;
+    align-items: flex-end;
+  }
+
+  .media-progress-bar {
+    width: 100%;
+    transition: height .1s ease, background-color .1s ease;
+  }
+
+  .media-progress-handler {
+    left: 50%;
+    top: auto;
+    margin-left: -7px;
+    margin-bottom: -7px;
+    height: 14px;
+    width: 14px;
+    transition: bottom .1s ease, opacity .1s ease;
+  }
+}
+
 .media-progress-container:not(.disabled):hover,
 .media-progress-container:not(.disabled).dragging {
   cursor: pointer;

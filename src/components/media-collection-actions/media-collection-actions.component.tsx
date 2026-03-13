@@ -18,6 +18,7 @@ import { MediaPlaylistContextMenu } from '../media-playlist-context-menu/media-p
 import { MediaPlaybackButton } from '../media-playback-button/media-playback-button.component';
 import { Button } from '../button/button.component';
 import { Icon } from '../icon/icon.component';
+import { MediaAlbumEditModal } from '../media-album-edit-modal/media-album-edit-modal.component';
 import { MediaPlaylistEditModal } from '../media-playlist-edit-modal/media-playlist-edit-modal.component';
 import { MediaPlaylistDeleteModal } from '../media-playlist-delete-modal/media-playlist-delete-modal.component';
 
@@ -28,8 +29,15 @@ const cx = classNames.bind(styles);
 export function MediaCollectionActions(props: {
   mediaItem: IMediaCollectionItem;
   hasTracks?: boolean;
+  onReloadAlbum?: () => void;
+  reloadingAlbum?: boolean;
 }) {
-  const { mediaItem, hasTracks = true } = props;
+  const {
+    mediaItem,
+    hasTracks = true,
+    onReloadAlbum,
+    reloadingAlbum = false,
+  } = props;
   const { showMenu } = useContextMenu();
   const { showModal } = useModal();
   const { triggerScrollLock } = useScrollLock({
@@ -39,6 +47,7 @@ export function MediaCollectionActions(props: {
 
   const mediaContextMenuId = 'media_collection_context_menu';
   const allowAddToPlaylist = [MediaCollectionItemType.Artist, MediaCollectionItemType.Album].includes(mediaItem.type);
+  const isAlbum = mediaItem.type === MediaCollectionItemType.Album;
   const isPlaylist = mediaItem.type === MediaCollectionItemType.Playlist;
 
   const {
@@ -145,6 +154,31 @@ export function MediaCollectionActions(props: {
       >
         <Icon name={Icons.MediaPin}/>
       </Button>
+      {isAlbum && (
+        <>
+          <Button
+            variant={['rounded', 'outline']}
+            tooltip={I18nService.getString('tooltip_edit_album')}
+            onButtonSubmit={() => {
+              showModal(MediaAlbumEditModal, {
+                mediaAlbumId: mediaItem.id,
+              });
+            }}
+          >
+            <Icon name={Icons.Edit}/>
+          </Button>
+          {!!onReloadAlbum && (
+            <Button
+              variant={['rounded', 'outline']}
+              tooltip="Album neu einlesen"
+              onButtonSubmit={onReloadAlbum}
+              disabled={reloadingAlbum}
+            >
+              <Icon name={reloadingAlbum ? Icons.Refreshing : Icons.Refresh}/>
+            </Button>
+          )}
+        </>
+      )}
     </div>
   );
 }

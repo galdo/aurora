@@ -48,7 +48,7 @@ export function mediaPlaylistComparator(
   mediaPlaylistA: IMediaPlaylist,
   mediaPlaylistB: IMediaPlaylist,
 ) {
-  return mediaPlaylistA.updated_at > mediaPlaylistB.updated_at ? -1 : 1;
+  return String(mediaPlaylistA.name).localeCompare(String(mediaPlaylistB.name), 'de', { sensitivity: 'base' });
 }
 
 export function mediaLikedTracksComparator(

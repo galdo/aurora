@@ -1,4 +1,5 @@
 import React, { useEffect, useSyncExternalStore } from 'react';
+import { Form } from 'react-bootstrap';
 import classNames from 'classnames/bind';
 import { ArgumentArray } from 'classnames';
 import { isNil, isNumber } from 'lodash';
@@ -13,13 +14,11 @@ import {
 
 import { Icons } from '../../constants';
 import { I18nService, MediaProviderService } from '../../services';
-import { DateTimeUtils } from '../../utils';
 
 import { IPCRenderer, IPCCommChannel } from '../../modules/ipc';
 
 import MediaLocalConstants from './media-local.constants.json';
 import { mediaLocalStore, MediaLocalStateActionType, MediaSyncDirectoryStats } from './media-local.store';
-import MediaLocalLibraryService from './media-local-library.service';
 
 import styles from './media-local-settings.component.css';
 
@@ -92,11 +91,27 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
     loading,
     saving,
     syncing,
-    syncDuration,
-    syncFilesFoundCount,
-    syncFilesProcessedCount,
     syncDirectoryStats,
   } = state;
+  const cdImportSettings = settings.cd_import || {
+    output_directory: '',
+    naming_template: '<Artist> - <Album-Title> (<Year>)',
+    discogs_token: '',
+  };
+  const keywordGroups = [
+    {
+      label: I18nService.getString('label_settings_keyword_album_artist'),
+      keywords: ['<Artist>', '<Album-Artist>', '<Album Artist>'],
+    },
+    {
+      label: I18nService.getString('label_settings_keyword_album_title'),
+      keywords: ['<Album-Title>', '<Album Title>', '<Album>'],
+    },
+    {
+      label: I18nService.getString('label_settings_keyword_release_year'),
+      keywords: ['<Year>'],
+    },
+  ];
 
   useEffect(() => {
     mediaLocalStore.dispatch({
@@ -110,6 +125,15 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
           type: MediaLocalStateActionType.SettingsLoaded,
           data: {
             settings: mediaSettings,
+          },
+        });
+      })
+      .catch((error) => {
+        console.error('MediaLocalSettingsComponent - failed loading settings - %o', error);
+        mediaLocalStore.dispatch({
+          type: MediaLocalStateActionType.SettingsLoaded,
+          data: {
+            settings: mediaLocalStore.getState().settings,
           },
         });
       });
@@ -130,6 +154,12 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
         mediaLocalStore.dispatch({
           type: MediaLocalStateActionType.SettingsSaved,
         });
+      })
+      .catch((error) => {
+        console.error('MediaLocalSettingsComponent - failed saving settings - %o', error);
+        mediaLocalStore.dispatch({
+          type: MediaLocalStateActionType.SettingsSaved,
+        });
       });
   }, [
     dirty,
@@ -142,72 +172,144 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
         {I18nService.getString('label_settings_directories')}
       </div>
       <div className={cx('settings-content')}>
-        <div className={cl('settings-directory-list')}>
-          <ActionList
-            items={settings.library.directories.map((directory) => {
-              const dirStats = syncDirectoryStats[directory];
+        <div style={{ marginTop: '20px' }}>
+          <div className={cx('settings-subheading')} style={{ marginBottom: '10px' }}>
+            {I18nService.getString('label_settings_managed_directories')}
+          </div>
+          <div className={cl('settings-directory-list')}>
+            <ActionList
+              items={settings.library.directories.map((directory) => {
+                const dirStats = syncDirectoryStats[directory];
 
-              return {
-                id: directory,
-                label: directory,
-                icon: (<MediaDirectoryIcon stats={dirStats} syncing={syncing}/>),
-              };
-            })}
-            onRemove={(directory) => {
-              mediaLocalStore.dispatch({
-                type: MediaLocalStateActionType.RemoveDirectory,
-                data: {
-                  directory,
-                },
-              });
-            }}
-          />
-        </div>
-        <div className={cl('settings-directory-action')}>
-          <Button
-            disabled={loading || saving}
-            icon={Icons.AddCircle}
-            onButtonSubmit={() => {
-              const selectedDirectory = openDirectorySelectionDialog();
-              if (selectedDirectory) {
+                return {
+                  id: directory,
+                  label: directory,
+                  icon: (<MediaDirectoryIcon stats={dirStats} syncing={syncing}/>),
+                };
+              })}
+              onRemove={(directory) => {
                 mediaLocalStore.dispatch({
-                  type: MediaLocalStateActionType.AddDirectory,
+                  type: MediaLocalStateActionType.RemoveDirectory,
                   data: {
-                    selectedDirectory,
+                    directory,
                   },
                 });
-              }
-            }}
-          >
-            {I18nService.getString('button_settings_sync_add_directory')}
-          </Button>
+              }}
+            />
+          </div>
+
+          <div className={cx('settings-action-row')}>
+            <Button
+              className={cl('settings-action-button')}
+              variant={['secondary']}
+              disabled={loading || saving}
+              icon={Icons.AddCircle}
+              onButtonSubmit={() => {
+                const selectedDirectory = openDirectorySelectionDialog();
+                if (selectedDirectory) {
+                  mediaLocalStore.dispatch({
+                    type: MediaLocalStateActionType.AddDirectory,
+                    data: {
+                      selectedDirectory,
+                    },
+                  });
+                }
+              }}
+            >
+              {I18nService.getString('button_settings_sync_add_directory')}
+            </Button>
+          </div>
         </div>
-        <div className={cl('settings-sync-action')}>
-          <Button
-            icon={syncing ? Icons.Refreshing : Icons.Refresh}
-            disabled={syncing}
-            onButtonSubmit={() => {
-              MediaLocalLibraryService.syncMediaTracks();
-            }}
-            tooltip={(
-              <>
-                {I18nService.getString('tooltip_settings_sync_file_found')}
-                :&nbsp;
-                {syncFilesFoundCount}
-                <br/>
-                {I18nService.getString('tooltip_settings_sync_file_processed')}
-                :&nbsp;
-                {syncFilesProcessedCount}
-                <br/>
-                {I18nService.getString('tooltip_settings_sync_time_taken')}
-                :&nbsp;
-                {DateTimeUtils.formatDuration(syncDuration)}
-              </>
-            )}
-          >
-            {I18nService.getString('button_settings_sync_refresh')}
-          </Button>
+
+        <div style={{ marginTop: '20px', borderTop: '1px solid var(--stage-overlay-outline-color)', paddingTop: '20px' }}>
+          <div className={cx('settings-subheading')}>Audio-CD Import</div>
+          <div className={cx('settings-description')} style={{ marginBottom: '12px' }}>
+            {I18nService.getString('label_settings_audio_cd_import_description')}
+          </div>
+          <div className={cx('settings-row')}>
+            <div style={{ flex: 1, minWidth: '320px' }}>
+              <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_import_directory')}</div>
+              <div className={cx('settings-description')}>
+                {cdImportSettings.output_directory || I18nService.getString('label_settings_no_directory_selected')}
+              </div>
+            </div>
+            <Button
+              className={cl('settings-action-button')}
+              variant={['secondary']}
+              icon={Icons.Folder}
+              onButtonSubmit={() => {
+                const selectedDirectory = openDirectorySelectionDialog();
+                if (selectedDirectory) {
+                  mediaLocalStore.dispatch({
+                    type: MediaLocalStateActionType.SetCdImportDirectory,
+                    data: {
+                      outputDirectory: selectedDirectory,
+                    },
+                  });
+                }
+              }}
+            >
+              {I18nService.getString('button_settings_select_directory')}
+            </Button>
+          </div>
+          <Form.Group>
+            <Form.Label>{I18nService.getString('label_settings_naming_template')}</Form.Label>
+            <Form.Control
+              type="text"
+              value={cdImportSettings.naming_template || ''}
+              onChange={(event) => {
+                mediaLocalStore.dispatch({
+                  type: MediaLocalStateActionType.SetCdImportNamingTemplate,
+                  data: {
+                    namingTemplate: event.target.value,
+                  },
+                });
+              }}
+              placeholder="<Artist> - <Album-Title> (<Year>)"
+            />
+          </Form.Group>
+          <div className={cl('settings-keywords-help')}>
+            <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_available_keywords')}</div>
+            <div className={cx('settings-description')}>
+              {I18nService.getString('label_settings_keywords_description')}
+              {' '}
+              {'<Keyword>'}
+            </div>
+            <div className={cl('settings-keywords-grid')}>
+              {keywordGroups.map(keywordGroup => (
+                <div key={keywordGroup.label} className={cl('settings-keyword-group')}>
+                  <div className={cl('settings-keyword-group-label')}>
+                    {keywordGroup.label}
+                  </div>
+                  <div className={cl('settings-keyword-chip-row')}>
+                    {keywordGroup.keywords.map(keyword => (
+                      <span key={keyword} className={cl('settings-keyword-chip')}>
+                        {keyword}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <Form.Group>
+            <Form.Label>{I18nService.getString('label_settings_discogs_dev_key')}</Form.Label>
+            <Form.Control
+              type="password"
+              value={cdImportSettings.discogs_token || ''}
+              onChange={(event) => {
+                mediaLocalStore.dispatch({
+                  type: MediaLocalStateActionType.SetDiscogsToken,
+                  data: {
+                    discogsToken: event.target.value,
+                  },
+                });
+              }}
+              placeholder={I18nService.getString('placeholder_settings_discogs_token')}
+            />
+          </Form.Group>
         </div>
+
       </div>
     </div>
   );

@@ -32,6 +32,10 @@ import {
   app,
   shell,
   BrowserWindow,
+  screen,
+  globalShortcut,
+  dialog,
+  systemPreferences,
 } from 'electron';
 
 import {
@@ -45,11 +49,17 @@ import { PlatformOS } from './modules/platform';
 import { DatastoreModule } from './modules/datastore';
 import { FileSystemModule } from './modules/file-system';
 import { ImageModule } from './modules/image';
+import { DeviceModule } from './modules/device';
 
 import { MenuBuilder } from './main/builders';
 
 const sourceMapSupport = require('source-map-support');
-const debug = require('debug')('aurora:main');
+const debug = require('debug')('aurora_pulse:main');
+
+const APP_DISPLAY_NAME = 'Aurora Pulse';
+const APP_DATA_DIR_NAME = 'Aurora_Pulse';
+const APP_LEGACY_DATA_DIR_NAMES = ['AI_Music_Player', 'Aurora'];
+type MediaHardwareControlAction = 'play_pause' | 'next_track' | 'previous_track' | 'stop';
 
 function createElectronLogger(name: string, filePath: string) {
   const logger = electronLog.create({ logId: name });
@@ -68,10 +78,11 @@ class App implements IAppMain {
   readonly version?: string;
   readonly build?: string;
   readonly platform?: string;
-  readonly displayName = 'Aurora';
-  readonly description = 'A cross-platform music player built with Electron';
+  readonly displayName = APP_DISPLAY_NAME;
+  readonly description = 'A local-first music player built with Electron';
 
   private mainWindow?: BrowserWindow;
+  private splashWindow?: BrowserWindow;
   private readonly forceExtensionDownload: boolean;
   private readonly startMinimized?: boolean;
   private readonly resourcesPath: string;
@@ -79,16 +90,19 @@ class App implements IAppMain {
   private readonly htmlFilePath: string;
   private readonly builders: IAppBuilder[] = [];
   private readonly modules: IAppModule[] = [];
-  private readonly windowWidth = 1024;
-  private readonly windowHeight = 642;
-  private readonly windowMinWidth = 1024;
-  private readonly windowMinHeight = 642;
+  private readonly windowDefaultSizeRatio = 0.8;
+  private readonly windowMinWidth = 900;
+  private readonly windowMinHeight = 560;
   private readonly dataPath: string;
   private isQuitting = false;
   private localProtocols = new Set(['file:', 'app:']);
   private logsDataDir = 'Logs';
   private logsMainFile = 'main.log';
   private logsRendererFile = 'renderer.log';
+  private mediaHardwareShortcutRegistrationDisabled = false;
+  private mediaHardwareShortcutWarningShown = false;
+  private mediaHardwareShortcutLastAttemptAt = 0;
+  private mediaHardwareShortcutsRegistered = false;
 
   constructor() {
     this.env = process.env.NODE_ENV;
@@ -100,9 +114,11 @@ class App implements IAppMain {
     this.forceExtensionDownload = !!process.env.UPGRADE_EXTENSIONS;
     this.startMinimized = process.env.START_MINIMIZED === 'true';
     this.resourcesPath = process.resourcesPath;
-    this.dataPath = this.debug ? `${this.displayName}-debug` : this.displayName;
+    this.dataPath = this.debug ? `${APP_DATA_DIR_NAME}-debug` : APP_DATA_DIR_NAME;
     this.htmlFilePath = path.join(__dirname, 'index.html');
 
+    this.configureUserDataPath();
+    this.migrateLegacyUserDataPath();
     this.configureLogger();
     this.configureApp();
     this.installSourceMapSupport();
@@ -143,7 +159,7 @@ class App implements IAppMain {
   }
 
   getDataPath(...paths: string[]): string {
-    return path.join(app.getPath('userData'), this.dataPath, ...paths);
+    return path.join(app.getPath('userData'), ...paths);
   }
 
   getLogsPath(file?: string) {
@@ -254,9 +270,10 @@ class App implements IAppMain {
   }
 
   private configureApp(): void {
-    app.name = this.displayName;
-    app.setName(this.displayName);
-    app.setAppUserModelId('com.bbbneo333.aurora');
+    app.name = APP_DISPLAY_NAME;
+    app.setName(APP_DISPLAY_NAME);
+    process.title = APP_DISPLAY_NAME;
+    app.setAppUserModelId('com.bbbneo333.aurorapulse');
 
     app.setAboutPanelOptions({
       applicationName: this.displayName,
@@ -266,6 +283,66 @@ class App implements IAppMain {
 
     // darwin only
     app.dock?.setIcon(this.iconPath);
+  }
+
+  private configureUserDataPath(): void {
+    const appDataPath = app.getPath('appData');
+    app.setPath('userData', path.join(appDataPath, this.dataPath));
+  }
+
+  private migrateLegacyUserDataPath(): void {
+    const currentUserDataPath = app.getPath('userData');
+    if (fs.existsSync(currentUserDataPath) && fs.readdirSync(currentUserDataPath).length > 0) {
+      return;
+    }
+
+    const legacyUserDataPath = this.findLegacyUserDataPath(currentUserDataPath);
+    if (!legacyUserDataPath) {
+      return;
+    }
+
+    try {
+      this.copyDirectoryRecursive(legacyUserDataPath, currentUserDataPath);
+    } catch (error: any) {
+      console.error('migrateLegacyUserDataPath - encountered error - %o', error);
+    }
+  }
+
+  private findLegacyUserDataPath(currentUserDataPath: string): string | undefined {
+    const appDataPath = app.getPath('appData');
+    const debugSuffix = this.debug ? '-debug' : '';
+    const legacyBaseNames = APP_LEGACY_DATA_DIR_NAMES.map(name => `${name}${debugSuffix}`);
+    const candidates = [
+      ...legacyBaseNames.map(name => path.join(appDataPath, name)),
+      ...legacyBaseNames.map(name => path.join(appDataPath, 'Electron', name)),
+    ];
+    const uniqueCandidates = _.uniq(candidates);
+
+    return uniqueCandidates.find((candidatePath) => {
+      if (candidatePath === currentUserDataPath || !fs.existsSync(candidatePath)) {
+        return false;
+      }
+
+      return fs.readdirSync(candidatePath).length > 0;
+    });
+  }
+
+  private copyDirectoryRecursive(sourcePath: string, destinationPath: string): void {
+    fs.mkdirSync(destinationPath, { recursive: true });
+    const sourceEntries = fs.readdirSync(sourcePath, {
+      withFileTypes: true,
+    });
+
+    sourceEntries.forEach((sourceEntry) => {
+      const sourceEntryPath = path.join(sourcePath, sourceEntry.name);
+      const destinationEntryPath = path.join(destinationPath, sourceEntry.name);
+
+      if (sourceEntry.isDirectory()) {
+        this.copyDirectoryRecursive(sourceEntryPath, destinationEntryPath);
+      } else {
+        fs.copyFileSync(sourceEntryPath, destinationEntryPath);
+      }
+    });
   }
 
   private removeDirectorySafe(directory: string) {
@@ -315,7 +392,7 @@ class App implements IAppMain {
   }
 
   private installDebugSupport(): void {
-    if (!this.debug) {
+    if (!this.debug || process.env.ENABLE_ELECTRON_DEBUG !== 'true') {
       return;
     }
 
@@ -323,7 +400,7 @@ class App implements IAppMain {
   }
 
   private async installExtensions(): Promise<void> {
-    if (!this.debug) {
+    if (!this.debug || process.env.ENABLE_ELECTRON_EXTENSIONS !== 'true') {
       return;
     }
 
@@ -372,20 +449,37 @@ class App implements IAppMain {
   private async createWindow(): Promise<BrowserWindow> {
     await this.installExtensions();
     const isDarwin = this.platform === PlatformOS.Darwin;
+    const primaryDisplayWorkArea = screen.getPrimaryDisplay().workAreaSize;
+    const defaultWidth = Math.max(
+      this.windowMinWidth,
+      Math.round(primaryDisplayWorkArea.width * this.windowDefaultSizeRatio),
+    );
+    const defaultHeight = Math.max(
+      this.windowMinHeight,
+      Math.round(primaryDisplayWorkArea.height * this.windowDefaultSizeRatio),
+    );
+
+    const splashWindow = this.createSplashWindow();
+    this.splashWindow = splashWindow;
+    splashWindow.once('ready-to-show', () => {
+      splashWindow.show();
+    });
+    splashWindow.loadURL(this.getSplashDataURL());
 
     const mainWindow = new BrowserWindow({
       show: false,
-      width: this.windowWidth,
-      height: this.windowHeight,
+      width: defaultWidth,
+      height: defaultHeight,
       minWidth: this.windowMinWidth,
       minHeight: this.windowMinHeight,
       icon: this.iconPath,
+      title: APP_DISPLAY_NAME,
       titleBarStyle: isDarwin ? 'hiddenInset' : 'hidden',
       ...(!isDarwin ? {
         titleBarOverlay: {
-          color: '#1d1d1d', // should match --stage-content-bg-color
-          symbolColor: '#e9ecef', // should match --text-light-color
-          height: 60, // should match --titlebar-overlay-height
+          color: '#141414',
+          symbolColor: '#f3f5f7',
+          height: 54,
         },
       } : {}),
       frame: false,
@@ -394,7 +488,23 @@ class App implements IAppMain {
         contextIsolation: false,
         nodeIntegrationInWorker: true,
       },
+      backgroundColor: '#141414',
     });
+
+    let mainWindowShown = false;
+    const showMainWindow = () => {
+      if (mainWindowShown || mainWindow.isDestroyed()) {
+        return;
+      }
+      mainWindowShown = true;
+      this.closeSplashWindow();
+      if (this.startMinimized) {
+        mainWindow.minimize();
+      } else {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    };
 
     mainWindow
       .loadURL(`file://${this.htmlFilePath}`)
@@ -402,22 +512,13 @@ class App implements IAppMain {
         debug('main window loaded HTML - %s', this.htmlFilePath);
       });
 
-    // @TODO: Use 'ready-to-show' event
-    //    https://github.com/electron/electron/blob/master/docs/api/browser-window.md#using-ready-to-show-event
-    mainWindow.webContents.on('did-finish-load', () => {
-      if (!mainWindow) {
-        throw new Error('App encountered error at createWindow - "mainWindow" is not defined');
-      }
-
-      if (this.startMinimized) {
-        mainWindow.minimize();
-      } else {
-        mainWindow.show();
-        mainWindow.focus();
-      }
-    });
+    mainWindow.once('ready-to-show', showMainWindow);
+    mainWindow.webContents.once('did-finish-load', showMainWindow);
+    const showFallbackTimeout = setTimeout(showMainWindow, 3500);
 
     mainWindow.on('closed', () => {
+      clearTimeout(showFallbackTimeout);
+      this.closeSplashWindow();
       this.mainWindow = undefined;
     });
 
@@ -469,7 +570,109 @@ class App implements IAppMain {
     return mainWindow;
   }
 
+  private closeSplashWindow() {
+    if (!this.splashWindow || this.splashWindow.isDestroyed()) {
+      return;
+    }
+    this.splashWindow.close();
+    this.splashWindow = undefined;
+  }
+
+  private createSplashWindow(): BrowserWindow {
+    return new BrowserWindow({
+      width: 420,
+      height: 240,
+      show: false,
+      frame: false,
+      alwaysOnTop: true,
+      center: true,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+  }
+
+  private getSplashDataURL(): string {
+    const splashHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .wrap {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at top, #282828 0%, #151515 56%, #0e0e0e 100%);
+      color: #f5f5f5;
+      border-radius: 16px;
+    }
+    .inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      letter-spacing: 0.03em;
+    }
+    .title {
+      font-size: 30px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .pulse {
+      width: 56px;
+      height: 4px;
+      border-radius: 8px;
+      background: linear-gradient(90deg, #7f5af0, #2cb67d, #7f5af0);
+      background-size: 200% 100%;
+      animation: pulse 1.5s linear infinite;
+    }
+    @keyframes pulse {
+      0% { background-position: 0% 50%; opacity: 0.5; }
+      50% { opacity: 1; }
+      100% { background-position: 100% 50%; opacity: 0.5; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="inner">
+      <div class="title">${APP_DISPLAY_NAME}</div>
+      <div class="pulse"></div>
+    </div>
+  </div>
+</body>
+</html>`;
+    return `data:text/html;charset=UTF-8,${encodeURIComponent(splashHtml)}`;
+  }
+
   private registerEvents(): void {
+    process.once('SIGINT', () => {
+      this.isQuitting = true;
+      app.quit();
+    });
+
+    process.once('SIGTERM', () => {
+      this.isQuitting = true;
+      app.quit();
+    });
+
     app.on('window-all-closed', () => {
       // respect the OSX convention of having the application in memory even
       // after all windows have been closed
@@ -481,11 +684,15 @@ class App implements IAppMain {
     app.on('before-quit', () => {
       // this apparently called right before when user requests to quit (not close) the app
       this.isQuitting = true;
+      globalShortcut.unregisterAll();
     });
 
     app.whenReady()
       .then(async () => {
+        app.setName(APP_DISPLAY_NAME);
+        app.dock?.setIcon(this.iconPath);
         this.mainWindow = await this.createWindow();
+        this.registerMediaHardwareShortcuts();
       })
       .catch(debug);
 
@@ -497,6 +704,11 @@ class App implements IAppMain {
       } else {
         this.mainWindow.show();
       }
+      this.registerMediaHardwareShortcuts();
+    });
+
+    app.on('browser-window-focus', () => {
+      this.registerMediaHardwareShortcuts();
     });
   }
 
@@ -512,8 +724,9 @@ class App implements IAppMain {
     debug('registering modules...');
 
     this.modules.push(new DatastoreModule(this));
-    this.modules.push(new ImageModule(this));
     this.modules.push(new FileSystemModule(this));
+    this.modules.push(new ImageModule(this));
+    this.modules.push(new DeviceModule(this));
 
     debug('module registration completed!');
   }
@@ -537,6 +750,70 @@ class App implements IAppMain {
     IPCMain.addSyncMessageHandler(IPCCommChannel.AppReadDetails, () => this.getDetails());
   }
 
+  private registerMediaHardwareShortcuts() {
+    if (this.mediaHardwareShortcutsRegistered || this.mediaHardwareShortcutRegistrationDisabled) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.mediaHardwareShortcutLastAttemptAt < 3000) {
+      return;
+    }
+    this.mediaHardwareShortcutLastAttemptAt = now;
+
+    if (this.platform === PlatformOS.Darwin) {
+      const trustedAccessibility = systemPreferences.isTrustedAccessibilityClient(false);
+      if (!trustedAccessibility) {
+        systemPreferences.isTrustedAccessibilityClient(true);
+        if (!this.mediaHardwareShortcutWarningShown) {
+          this.mediaHardwareShortcutWarningShown = true;
+          dialog.showMessageBox({
+            type: 'info',
+            title: APP_DISPLAY_NAME,
+            message: 'Multimediatasten benötigen Bedienungshilfen-Zugriff.',
+            detail: 'Bitte in macOS Einstellungen unter Datenschutz & Sicherheit > Bedienungshilfen Aurora Pulse erlauben und die App neu starten.',
+          }).catch(() => undefined);
+        }
+        return;
+      }
+    }
+
+    const shortcuts: { accelerator: string; action: MediaHardwareControlAction }[] = [{
+      accelerator: 'MediaPlayPause',
+      action: 'play_pause',
+    }, {
+      accelerator: 'MediaNextTrack',
+      action: 'next_track',
+    }, {
+      accelerator: 'MediaPreviousTrack',
+      action: 'previous_track',
+    }, {
+      accelerator: 'MediaStop',
+      action: 'stop',
+    }];
+
+    let failedRegistrationCount = 0;
+    shortcuts.forEach(({ accelerator, action }) => {
+      globalShortcut.unregister(accelerator);
+      const isRegistered = globalShortcut.register(accelerator, () => {
+        this.sendMessageToRenderer(IPCRendererCommChannel.MediaHardwareControl, action);
+      });
+
+      if (!isRegistered) {
+        failedRegistrationCount += 1;
+      }
+    });
+
+    if (failedRegistrationCount === 0) {
+      this.mediaHardwareShortcutWarningShown = false;
+      this.mediaHardwareShortcutsRegistered = true;
+      return;
+    }
+    if (!this.mediaHardwareShortcutWarningShown) {
+      this.mediaHardwareShortcutWarningShown = true;
+      console.warn('registerMediaHardwareShortcuts - global registration unavailable (likely claimed by macOS/other app); using MediaSession handlers only');
+    }
+  }
+
   private isUrlLocal(url: string): boolean {
     try {
       const { protocol } = new URL(url);
@@ -549,12 +826,17 @@ class App implements IAppMain {
   }
 
   private getDetails() {
+    const accessibilityTrusted = this.platform === PlatformOS.Darwin
+      ? systemPreferences.isTrustedAccessibilityClient(false)
+      : true;
     return {
       display_name: this.displayName,
       version: this.version,
       build: this.build,
       platform: this.platform,
       logs_path: this.getLogsPath(this.logsRendererFile),
+      media_hardware_shortcuts_registered: this.mediaHardwareShortcutsRegistered,
+      media_hardware_shortcuts_accessibility_trusted: accessibilityTrusted,
     };
   }
 }

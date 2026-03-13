@@ -7,29 +7,44 @@ export function getValueFromPercent(mediaProgressPercent: number, mediaProgressM
   return Number(value.toFixed());
 }
 
-export function getPercentFromPosition(mediaProgressPosition: number, mediaProgressContainerElement: HTMLDivElement, mediaProgressMaxThreshold: number): number {
-  const mediaProgressContainerPositionStartX = mediaProgressContainerElement.getBoundingClientRect().left;
-  const mediaProgressContainerPositionEndX = mediaProgressContainerElement.getBoundingClientRect().right;
+export function getPercentFromHorizontalPosition(mediaProgressPosition: number, mediaProgressContainerElement: HTMLDivElement, mediaProgressMaxThreshold: number): number {
+  const mediaProgressContainerPositionStart = mediaProgressContainerElement.getBoundingClientRect().left;
+  const mediaProgressContainerPositionEnd = mediaProgressContainerElement.getBoundingClientRect().right;
 
   let mediaProgressPercent: number;
 
-  if (mediaProgressPosition < mediaProgressContainerPositionStartX) {
-    // drag is out of bounds from the start
+  if (mediaProgressPosition < mediaProgressContainerPositionStart) {
     mediaProgressPercent = 0;
-  } else if (mediaProgressPosition > mediaProgressContainerPositionEndX) {
-    // drag is out of bounds from the end
+  } else if (mediaProgressPosition > mediaProgressContainerPositionEnd) {
     mediaProgressPercent = 100;
   } else {
-    // debug('getPercentFromPosition - media progress position - (x) %f', mediaProgressPosition);
-    // debug('getPercentFromPosition - media progress container position - (start) %f (end) %f', mediaProgressContainerPositionStartX, mediaProgressContainerPositionEndX);
-
-    const mediaProgressOffset = mediaProgressPosition - mediaProgressContainerPositionStartX;
-    const mediaProgressContainerWidth = mediaProgressContainerPositionEndX - mediaProgressContainerPositionStartX;
+    const mediaProgressOffset = mediaProgressPosition - mediaProgressContainerPositionStart;
+    const mediaProgressContainerWidth = mediaProgressContainerPositionEnd - mediaProgressContainerPositionStart;
 
     const mediaProgressContainerBreakpoint = mediaProgressContainerWidth / mediaProgressMaxThreshold;
     const mediaProgressNearBreakpoint = Math.ceil((mediaProgressOffset / mediaProgressContainerBreakpoint)) * mediaProgressContainerBreakpoint;
 
     mediaProgressPercent = getPercentFromValue(mediaProgressNearBreakpoint, mediaProgressContainerWidth);
+  }
+
+  return mediaProgressPercent;
+}
+
+export function getPercentFromVerticalPosition(mediaProgressPosition: number, mediaProgressContainerElement: HTMLDivElement, mediaProgressMaxThreshold: number): number {
+  const mediaProgressContainerPositionTop = mediaProgressContainerElement.getBoundingClientRect().top;
+  const mediaProgressContainerPositionBottom = mediaProgressContainerElement.getBoundingClientRect().bottom;
+  let mediaProgressPercent: number;
+
+  if (mediaProgressPosition < mediaProgressContainerPositionTop) {
+    mediaProgressPercent = 100;
+  } else if (mediaProgressPosition > mediaProgressContainerPositionBottom) {
+    mediaProgressPercent = 0;
+  } else {
+    const mediaProgressContainerHeight = mediaProgressContainerPositionBottom - mediaProgressContainerPositionTop;
+    const mediaProgressOffset = mediaProgressContainerPositionBottom - mediaProgressPosition;
+    const mediaProgressContainerBreakpoint = mediaProgressContainerHeight / mediaProgressMaxThreshold;
+    const mediaProgressNearBreakpoint = Math.ceil((mediaProgressOffset / mediaProgressContainerBreakpoint)) * mediaProgressContainerBreakpoint;
+    mediaProgressPercent = getPercentFromValue(mediaProgressNearBreakpoint, mediaProgressContainerHeight);
   }
 
   return mediaProgressPercent;

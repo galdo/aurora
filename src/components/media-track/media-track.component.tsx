@@ -10,6 +10,10 @@ import { MediaCoverPicture } from '../media-cover-picture/media-cover-picture.co
 import { MediaTrackInfo } from '../media-track-info/media-track-info.component';
 import { MediaPlaybackButton } from '../media-playback-button/media-playback-button.component';
 import { MediaTrackLikeButton } from '../media-track-like-button/media-track-like-button.component';
+import { MediaTrackEditModal } from '../media-track-edit-modal/media-track-edit-modal.component';
+import { Button } from '../button/button.component';
+import { Icon } from '../icon/icon.component';
+import { useModal } from '../../contexts';
 
 import styles from './media-track.component.css';
 
@@ -24,6 +28,7 @@ export type MediaTrackProps<T> = {
   disableAlbumLink?: boolean;
   isSelected?: boolean;
   isActive?: boolean;
+  variant?: 'default' | 'sideview';
 } & HTMLAttributes<HTMLDivElement>;
 
 export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
@@ -38,7 +43,9 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
     isActive = false,
     className,
     onDoubleClick,
+    onClick,
     onKeyDown,
+    variant = 'default',
     ...rest
   } = props;
 
@@ -55,6 +62,8 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
     isPlaying,
   });
 
+  const { showModal } = useModal();
+
   return (
     <div
       role="row"
@@ -68,21 +77,51 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
         onDoubleClick?.(e);
         toggle();
       }}
+      onClick={(e) => {
+        onClick?.(e);
+        if (variant !== 'sideview') {
+          return;
+        }
+        const targetElement = e.target as HTMLElement | null;
+        if (targetElement?.closest('button, a, input, select, textarea')) {
+          return;
+        }
+        if (isActive || isTrackActive) {
+          toggle();
+          return;
+        }
+        play();
+      }}
       onKeyDown={(e) => {
         onKeyDown?.(e);
         if (Events.isEnterKey(e) && e.target === e.currentTarget) toggle();
       }}
     >
       <div className={cx('media-track-content')}>
-        <div className={cx('media-track-section', 'button')}>
-          <MediaPlaybackButton
-            isPlaying={isTrackPlaying}
-            className={cx('media-track-playback-button')}
-            onPlay={play}
-            onPause={pause}
-            tabIndex={-1}
-          />
-        </div>
+        {variant !== 'sideview' && (
+          <div className={cx('media-track-section', 'button')}>
+            <Button
+              className={cx('media-track-edit-button')}
+              variant={['rounded', 'outline']}
+              onButtonSubmit={(e) => {
+                e.stopPropagation();
+                showModal(MediaTrackEditModal, {
+                  mediaTrackId: mediaTrack.id,
+                });
+              }}
+              tabIndex={-1}
+            >
+              <Icon name={Icons.Edit}/>
+            </Button>
+            <MediaPlaybackButton
+              isPlaying={isTrackPlaying}
+              className={cx('media-track-playback-button')}
+              onPlay={play}
+              onPause={pause}
+              tabIndex={-1}
+            />
+          </div>
+        )}
         {!disableCover && (
           <div className={cx('media-track-section', 'cover')}>
             <MediaCoverPicture
@@ -94,6 +133,18 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
           </div>
         )}
         <div className={cx('media-track-section', 'info')}>
+          {variant === 'sideview' && (
+            <span className={cx('media-track-number-slot')}>
+              <span className={cx('media-track-number')}>{mediaTrack.track_number}</span>
+              <MediaPlaybackButton
+                isPlaying={isTrackPlaying}
+                className={cx('media-track-playback-button', 'sideview', 'sideview-number')}
+                onPlay={play}
+                onPause={pause}
+                tabIndex={-1}
+              />
+            </span>
+          )}
           <MediaTrackInfo
             mediaTrack={mediaTrack}
             disableAlbumLink={disableAlbumLink}
@@ -101,6 +152,16 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
           />
         </div>
         <div className={cx('media-track-section', 'end')}>
+          {(mediaTrack.extra as any)?.status === 'completed' && (
+            <div className={cx('media-track-status')} style={{ color: '#28a745' }}>
+              <Icon name={Icons.Completed}/>
+            </div>
+          )}
+          {(mediaTrack.extra as any)?.status === 'in-progress' && (
+            <div className={cx('media-track-status')} style={{ color: '#007bff' }}>
+              <Icon name={Icons.Refreshing}/>
+            </div>
+          )}
           <div className={cx('media-track-like')}>
             <MediaTrackLikeButton
               mediaTrack={mediaTrack}

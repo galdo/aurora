@@ -52,6 +52,10 @@ export function ArtistPage() {
               mediaPicture={mediaSelectedArtist.artist_feature_picture}
               mediaPictureAltText={mediaSelectedArtist.artist_name}
               mediaCoverPlaceholderIcon={Icons.ArtistPlaceholder}
+              isLoading={
+                !mediaSelectedArtist.artist_feature_picture
+                && !!(mediaSelectedArtist.extra as { artist_feature_picture_loading?: boolean } | undefined)?.artist_feature_picture_loading
+              }
               className={cx('artist-cover-picture')}
             />
           </div>

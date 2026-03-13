@@ -2,16 +2,29 @@
   margin-bottom: 20px;
 }
 
+.album-header-cover-column {
+  flex: 0 0 240px !important;
+  max-width: 240px !important;
+}
+
 .album-cover-picture {
-  /* size for placeholder icon */
-  font-size: 50px;
+  font-size: 40px;
+  width: 240px !important;
+  height: 240px !important;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .album-header-info-column {
   display: flex;
   flex-direction: column;
-  align-self: flex-end;
-  justify-items: flex-start;
+  justify-content: center;
+  padding-left: 15px;
+  min-width: 0; /* Enable text truncation in flex items */
 }
 
 .album-header-label {
@@ -22,21 +35,92 @@
 }
 
 .album-header-name {
-  font-size: 36px;
+  font-size: 32px;
   font-weight: bold;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: horizontal;
+  line-height: 1.2;
+  margin-bottom: 5px;
+  word-break: break-word;
 }
 
-.album-header-info {
-  color: var(--text-dark-color);
+.album-header-artist {
+  margin-bottom: 20px;
+}
+
+.album-header-artist .media-track-artist-link {
+  color: var(--color-primary-highlight) !important;
+  font-size: 16px !important;
+  font-weight: normal !important;
+  opacity: 0.9;
+}
+
+.album-header-artist .media-track-artist-link:hover {
+  text-decoration: underline;
+  opacity: 1;
+}
+
+.album-header-genres {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.album-genre-chip {
+  background-color: var(--bg-color-hover);
+  color: var(--text-color);
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+}
+
+.album-header-actions {
+  display: flex;
+  margin-top: 5px;
 }
 
 .album-actions {
   margin: 15px 0;
   padding-bottom: 15px;
   border-bottom: 1px solid var(--selectable-outline-color);
+}
+
+.album-header-topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.album-header-topbar-button {
+  position: relative;
+}
+
+.album-header-repeat-indicator,
+.album-header-shuffle-indicator {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--selectable-bg-color);
+  color: var(--text-light-color);
+  border: 1px solid var(--selectable-outline-color);
+}
+
+.album-header-repeat-indicator.active {
+  background: var(--button-primary-bg-color);
+  color: #fff;
+  border-color: var(--button-primary-bg-color);
 }
