@@ -268,5 +268,18 @@
   "label_settings_media_keys_status_missing": "Fehlt",
   "label_settings_media_keys_open_accessibility": "Bedienungshilfen in macOS öffnen",
   "label_settings_media_keys_restart_hint": "Nach Änderung bitte Aurora Pulse neu starten.",
-  "label_player_audio_details_unavailable": "Detailinformationen nicht verfügbar"
+  "label_player_audio_details_unavailable": "Detailinformationen nicht verfügbar",
+  "label_language_pt": "Português",
+  "label_language_zh": "简体中文",
+  "label_language_ja": "日本語",
+  "label_language_pl": "Polski",
+  "label_language_tr": "Türkçe",
+  "label_language_ru": "Русский",
+  "label_language_hi": "हिन्दी",
+  "label_settings_artist_view_mode": "Künstleransicht",
+  "label_settings_artist_view_mode_description": "Steuert die Künstler-Seite: Aus blendet Künstler aus, Künstler zeigt alle Track-Künstler, Album-Künstler zeigt Album-Künstler und nutzt Track-Künstler nur bei Samplern wie Various Artists.",
+  "label_artist_view_mode_off": "Aus",
+  "label_artist_view_mode_album_artists": "Album-Künstler",
+  "label_artist_view_mode_artists": "Künstler",
+  "label_playlist_most_played": "Meistgespielt"
 }

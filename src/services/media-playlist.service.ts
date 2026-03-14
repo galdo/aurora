@@ -48,6 +48,8 @@ export class MediaLibraryPlaylistDuplicateTracksError extends BaseError {
 
 export class MediaPlaylistService {
   static readonly removeOnMissing = false;
+  static readonly mostPlayedPlaylistId = 'auto-playlist-most-played';
+  static readonly mostPlayedPlaylistLimit = 100;
 
   static loadMediaPlaylists(): void {
     this
@@ -95,6 +97,10 @@ export class MediaPlaylistService {
   }
 
   static async getMediaPlaylist(mediaPlaylistId: string): Promise<IMediaPlaylist | undefined> {
+    if (mediaPlaylistId === this.mostPlayedPlaylistId) {
+      return this.buildMostPlayedPlaylist();
+    }
+
     let mediaPlaylistData = await MediaPlaylistDatastore.findMediaPlaylist({
       id: mediaPlaylistId,
     });
@@ -158,6 +164,8 @@ export class MediaPlaylistService {
       hidden: true,
     });
 
+    const mostPlayedPlaylist = await this.buildMostPlayedPlaylist();
+
     if (!_.isEmpty(hiddenAlbums)) {
       const hiddenAlbumIds = hiddenAlbums.map(album => album.id);
       const allTracks = await MediaTrackDatastore.findMediaTracks({
@@ -179,10 +187,10 @@ export class MediaPlaylistService {
           return this.buildMediaPlaylistFromAlbum(album, playlistTracks);
         }),
       );
-      return MediaUtils.sortMediaPlaylists([...mediaPlaylists, ...hiddenAlbumPlaylists]);
+      return MediaUtils.sortMediaPlaylists([...mediaPlaylists, ...hiddenAlbumPlaylists, mostPlayedPlaylist]);
     }
 
-    return MediaUtils.sortMediaPlaylists(mediaPlaylists);
+    return MediaUtils.sortMediaPlaylists([...mediaPlaylists, mostPlayedPlaylist]);
   }
 
   static async createMediaPlaylist(mediaPlaylistInputData?: IMediaPlaylistInputData): Promise<IMediaPlaylist> {
@@ -444,6 +452,37 @@ export class MediaPlaylistService {
 
   private static async buildMediaPlaylists(mediaPlaylistDataList: IMediaPlaylistData[]) {
     return Promise.all(mediaPlaylistDataList.map((mediaPlaylistData: any) => this.buildMediaPlaylist(mediaPlaylistData)));
+  }
+
+  private static async buildMostPlayedPlaylist(): Promise<IMediaPlaylist> {
+    const allTracks = await MediaTrackDatastore.findMediaTracks();
+    const sortedByPlayCount = _.orderBy(
+      allTracks,
+      [
+        track => Number(_.get(track, 'extra.play_count', 0)),
+        track => Number(_.get(track, 'extra.last_played_at', 0)),
+        track => Number(track.sync_timestamp || 0),
+      ],
+      ['desc', 'desc', 'desc'],
+    ).slice(0, this.mostPlayedPlaylistLimit);
+
+    const tracks: IMediaPlaylistTrackData[] = sortedByPlayCount
+      .filter(track => Number(_.get(track, 'extra.play_count', 0)) > 0)
+      .map(track => ({
+        playlist_track_id: `${this.mostPlayedPlaylistId}:${track.id}`,
+        provider: track.provider,
+        provider_id: track.provider_id,
+        added_at: Number(_.get(track, 'extra.last_played_at', track.sync_timestamp || Date.now())),
+      }));
+
+    return {
+      id: this.mostPlayedPlaylistId,
+      name: I18nService.getString('label_playlist_most_played'),
+      tracks,
+      created_at: 0,
+      updated_at: Date.now(),
+      is_auto_generated: true,
+    };
   }
 
   private static async buildMediaPlaylistTrack(mediaPlaylistTrackData: IMediaPlaylistTrackData): Promise<IMediaPlaylistTrack> {

@@ -5,6 +5,7 @@ import _ from 'lodash';
 import { CollectionViewControls, MediaArtists } from '../../components';
 import { RootState } from '../../reducers';
 import { I18nService, MediaArtistService } from '../../services';
+import { ArtistViewMode } from '../../services/media-artist.service';
 import { IMediaArtist } from '../../interfaces';
 import {
   COLLECTION_COVER_SIZE_DEFAULT,
@@ -18,15 +19,35 @@ type SortOption = 'artist' | 'added' | 'genre';
 type SortDirection = 'asc' | 'desc';
 
 const SETTINGS_KEY = 'aurora:artists-view-settings';
+const UI_SETTINGS_KEY = 'aurora:ui-settings';
+
+const getArtistViewMode = (): ArtistViewMode => {
+  const saved = localStorage.getItem(UI_SETTINGS_KEY);
+  if (!saved) {
+    return 'artists';
+  }
+
+  try {
+    const parsed = JSON.parse(saved);
+    const parsedMode = String(parsed.artistViewMode || '').trim();
+    if (parsedMode === 'off' || parsedMode === 'artists' || parsedMode === 'album_artists') {
+      return parsedMode;
+    }
+    return parsed.hideArtist ? 'off' : 'artists';
+  } catch (_error) {
+    return 'artists';
+  }
+};
 
 export function ArtistsPage() {
   const { mediaArtists, mediaAlbums } = useSelector((state: RootState) => state.mediaLibrary);
   const [coverSize, setCoverSize] = useState(COLLECTION_COVER_SIZE_DEFAULT);
   const [sortBy, setSortBy] = useState<SortOption>('artist');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [artistViewMode, setArtistViewMode] = useState<ArtistViewMode>(() => getArtistViewMode());
 
   useEffect(() => {
-    MediaArtistService.loadMediaArtists();
+    MediaArtistService.loadMediaArtists(artistViewMode);
     const saved = localStorage.getItem(SETTINGS_KEY);
     if (saved) {
       try {
@@ -42,6 +63,15 @@ export function ArtistsPage() {
       }
     }
     setCoverSize(getCollectionCoverSize());
+  }, [artistViewMode]);
+
+  useEffect(() => {
+    const handleSettingsChanged = () => {
+      setArtistViewMode(getArtistViewMode());
+    };
+
+    window.addEventListener('aurora:settings-changed', handleSettingsChanged);
+    return () => window.removeEventListener('aurora:settings-changed', handleSettingsChanged);
   }, []);
 
   useEffect(() => {

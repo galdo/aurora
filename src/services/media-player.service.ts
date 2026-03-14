@@ -15,6 +15,7 @@ import {
 } from '../interfaces';
 
 import { I18nService } from './i18n.service';
+import { MediaTrackService } from './media-track.service';
 import { MediaProviderService } from './media-provider.service';
 import { NotificationService } from './notification.service';
 import { PodcastService } from './podcast.service';
@@ -25,6 +26,9 @@ class MediaPlayerService {
   private mediaProgressReportRetryCount = 15;
   private mediaProgressReportRetryDelayMS = 150;
   private mediaProgressReportCurrentRetryCount = 0;
+  private gaplessPreloadLeadSeconds = 8;
+  private preloadedPlaybackByQueueEntryId: Map<string, IMediaPlayback> = new Map();
+  private preloadedQueueEntryId?: string;
 
   // media queue control API
 
@@ -323,29 +327,13 @@ class MediaPlayerService {
   }
 
   loadMediaTrack(mediaQueueTrack: IMediaQueueTrack): IMediaPlayback {
-    const {
-      mediaPlayer,
-    } = store.getState();
-
-    const {
-      mediaPlaybackVolumeCurrent,
-      mediaPlaybackVolumeMaxLimit,
-      mediaPlaybackVolumeMuted,
-    } = mediaPlayer;
-
     // loading a media track will always remove the track repeat
     this.removeTrackRepeat();
 
-    // request media playback instance for the provided track from the media provider
-    const { mediaPlaybackService } = MediaProviderService.getMediaProvider(mediaQueueTrack.provider);
-    const mediaPlayback = mediaPlaybackService.playMediaTrack(mediaQueueTrack, {
-      mediaPlaybackVolume: mediaPlaybackVolumeCurrent,
-      mediaPlaybackMaxVolume: mediaPlaybackVolumeMaxLimit,
-      mediaPlaybackVolumeMuted,
-    });
-    mediaPlayback.setPreparationStatusListener((mediaPlaybackPreparationStatus) => {
-      this.setPlaybackPreparationStatus(mediaPlaybackPreparationStatus);
-    });
+    const preloadedPlayback = this.preloadedPlaybackByQueueEntryId.get(mediaQueueTrack.queue_entry_id);
+    const mediaPlayback = preloadedPlayback || this.createMediaPlayback(mediaQueueTrack, true);
+    this.preloadedPlaybackByQueueEntryId.delete(mediaQueueTrack.queue_entry_id);
+    this.preloadedQueueEntryId = undefined;
 
     // load the track
     store.dispatch({
@@ -363,6 +351,7 @@ class MediaPlayerService {
   }
 
   loadMediaQueueTracks(mediaQueueTracks: IMediaQueueTrack[], mediaTrackList?: IMediaTrackList) {
+    this.clearGaplessPreloads();
     store.dispatch({
       type: MediaEnums.MediaPlayerActions.SetTracks,
       data: {
@@ -1003,6 +992,7 @@ class MediaPlayerService {
     this.updateMediaPlaybackProgress(mediaPlaybackProgress);
 
     if (mediaPlaybackCurrentPlayingInstance.checkIfPlaying()) {
+      this.preloadNextTrackForGapless(mediaPlaybackCurrentMediaTrack, mediaPlaybackProgress);
       this.startMediaProgressReporting();
     } else if (mediaPlaybackCurrentPlayingInstance.checkIfLoading()) {
       debug('reportMediaPlaybackProgress - media playback loading, waiting...');
@@ -1016,7 +1006,15 @@ class MediaPlayerService {
       this.startMediaProgressReporting();
     } else if (mediaPlaybackCurrentPlayingInstance.checkIfEnded()) {
       debug('reportMediaPlaybackProgress - media playback ended, playing next...');
-      this.pauseMediaPlayer();
+      this.incrementTrackPlayCount(mediaPlaybackCurrentMediaTrack);
+      const mediaTrackNextInQueue = this.getNextFromList();
+      const shouldUseGaplessTransition = this.shouldUseGaplessTransition(
+        mediaPlaybackCurrentMediaTrack,
+        mediaTrackNextInQueue,
+      );
+      if (!shouldUseGaplessTransition) {
+        this.pauseMediaPlayer();
+      }
       this.playNext();
     } else if (!this.retryMediaProgressReporting()) {
       debug('reportMediaPlaybackProgress - media instance did not reported valid state, aborting...');
@@ -1214,6 +1212,108 @@ class MediaPlayerService {
 
   private stopPodcastPlayback() {
     PodcastService.stopPlayback();
+  }
+
+  private createMediaPlayback(mediaQueueTrack: IMediaQueueTrack, bindPreparationStatus: boolean): IMediaPlayback {
+    const {
+      mediaPlayer,
+    } = store.getState();
+
+    const {
+      mediaPlaybackVolumeCurrent,
+      mediaPlaybackVolumeMaxLimit,
+      mediaPlaybackVolumeMuted,
+    } = mediaPlayer;
+
+    const { mediaPlaybackService } = MediaProviderService.getMediaProvider(mediaQueueTrack.provider);
+    const mediaPlayback = mediaPlaybackService.playMediaTrack(mediaQueueTrack, {
+      mediaPlaybackVolume: mediaPlaybackVolumeCurrent,
+      mediaPlaybackMaxVolume: mediaPlaybackVolumeMaxLimit,
+      mediaPlaybackVolumeMuted,
+    });
+
+    if (bindPreparationStatus) {
+      mediaPlayback.setPreparationStatusListener((mediaPlaybackPreparationStatus) => {
+        this.setPlaybackPreparationStatus(mediaPlaybackPreparationStatus);
+      });
+    }
+
+    return mediaPlayback;
+  }
+
+  private preloadNextTrackForGapless(currentTrack: IMediaQueueTrack, currentProgress: number) {
+    const nextTrack = this.getNextFromList();
+    if (!this.shouldUseGaplessTransition(currentTrack, nextTrack)) {
+      return;
+    }
+    if (!nextTrack) {
+      return;
+    }
+    const remainingDuration = Number(currentTrack.track_duration || 0) - Number(currentProgress || 0);
+    if (remainingDuration > this.gaplessPreloadLeadSeconds) {
+      return;
+    }
+    if (this.preloadedPlaybackByQueueEntryId.has(nextTrack.queue_entry_id) || this.preloadedQueueEntryId === nextTrack.queue_entry_id) {
+      return;
+    }
+
+    this.preloadedQueueEntryId = nextTrack.queue_entry_id;
+    const playbackToPreload = this.createMediaPlayback(nextTrack, false);
+    const preloadPromise = playbackToPreload.prepareForPlayback
+      ? playbackToPreload.prepareForPlayback()
+      : Promise.resolve(false);
+
+    preloadPromise
+      .then((prepared) => {
+        if (!prepared) {
+          return;
+        }
+        this.preloadedPlaybackByQueueEntryId.set(nextTrack.queue_entry_id, playbackToPreload);
+      })
+      .catch((error) => {
+        debug('preloadNextTrackForGapless - failed for queue entry id - %s - error %o', nextTrack.queue_entry_id, error);
+      });
+  }
+
+  private shouldUseGaplessTransition(currentTrack: IMediaQueueTrack, nextTrack?: IMediaQueueTrack): boolean {
+    if (!nextTrack) {
+      return false;
+    }
+    if (currentTrack.track_album_id !== nextTrack.track_album_id) {
+      return false;
+    }
+    const currentAlbumArtist = String(currentTrack.track_album?.album_artist?.artist_name || '').toLowerCase().trim();
+    if (this.isCompilationAlbumArtistName(currentAlbumArtist)) {
+      return false;
+    }
+    return true;
+  }
+
+  private isCompilationAlbumArtistName(artistName: string): boolean {
+    return [
+      'various artists',
+      'various artist',
+      'various',
+      'v.a.',
+      'va',
+      'sampler',
+      'compilation',
+      'anthology',
+      'soundtrack',
+      'ost',
+    ].includes(artistName);
+  }
+
+  private clearGaplessPreloads() {
+    this.preloadedQueueEntryId = undefined;
+    this.preloadedPlaybackByQueueEntryId.clear();
+  }
+
+  private incrementTrackPlayCount(mediaTrack: IMediaTrack) {
+    MediaTrackService.incrementTrackPlayCount(mediaTrack.id)
+      .catch((error) => {
+        debug('incrementTrackPlayCount - failed for track id - %s - error %o', mediaTrack.id, error);
+      });
   }
 }
 

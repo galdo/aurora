@@ -6,7 +6,12 @@ import { isNil } from 'lodash';
 import { useModal } from '../../contexts';
 import { MediaCollectionItemType } from '../../enums';
 import { IMediaPinnedItem } from '../../interfaces';
-import { MediaCollectionService, MediaPinnedItemService } from '../../services';
+import {
+  I18nService,
+  MediaCollectionService,
+  MediaPinnedItemService,
+  MediaPlaylistService,
+} from '../../services';
 import { selectSortedPinnedItems } from '../../selectors';
 
 import { List } from '../list/list.component';
@@ -17,6 +22,24 @@ import { MediaPlaylistDeleteModal } from '../media-playlist-delete-modal/media-p
 import styles from './media-pinned-item-list.component.css';
 
 const cx = classNames.bind(styles);
+
+const getLocalizedPinnedItem = (pinnedItem: IMediaPinnedItem): IMediaPinnedItem => {
+  if (pinnedItem.type === MediaCollectionItemType.LikedTracks) {
+    return {
+      ...pinnedItem,
+      name: I18nService.getString('label_liked_tracks_collection_name'),
+    };
+  }
+
+  if (pinnedItem.type === MediaCollectionItemType.Playlist && pinnedItem.id === MediaPlaylistService.mostPlayedPlaylistId) {
+    return {
+      ...pinnedItem,
+      name: I18nService.getString('label_playlist_most_played'),
+    };
+  }
+
+  return pinnedItem;
+};
 
 export function MediaPinnedItemList() {
   const sortedMediaPinnedItems = useSelector(selectSortedPinnedItems);
@@ -63,17 +86,20 @@ export function MediaPinnedItemList() {
         onItemsSorted={handleItemsSorted}
         onItemsDelete={handleItemsDelete}
       >
-        {pinnedItem => (
-          <MediaCollectionItem
-            key={pinnedItem.id}
-            mediaItem={pinnedItem}
-            variant="compact"
-            routerLink={MediaCollectionService.getItemRouterLink(pinnedItem)}
-            coverPlaceholderIcon={MediaCollectionService.getItemCoverPlaceholderIcon(pinnedItem)}
-            subtitle={MediaCollectionService.getItemSubtitle(pinnedItem)}
-            contextMenuId={contextMenuId}
-          />
-        )}
+        {(pinnedItem) => {
+          const localizedPinnedItem = getLocalizedPinnedItem(pinnedItem);
+          return (
+            <MediaCollectionItem
+              key={localizedPinnedItem.id}
+              mediaItem={localizedPinnedItem}
+              variant="compact"
+              routerLink={MediaCollectionService.getItemRouterLink(localizedPinnedItem)}
+              coverPlaceholderIcon={MediaCollectionService.getItemCoverPlaceholderIcon(localizedPinnedItem)}
+              subtitle={MediaCollectionService.getItemSubtitle(localizedPinnedItem)}
+              contextMenuId={contextMenuId}
+            />
+          );
+        }}
       </List>
       <MediaCollectionContextMenu
         id={contextMenuId}

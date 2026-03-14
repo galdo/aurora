@@ -18,6 +18,7 @@ export * from './media-collection-context-menu/media-collection-context-menu.com
 export * from './media-content-header-user/media-content-header-user.component';
 export * from './media-header-navigation-link/media-header-navigation-link.component';
 export * from './media-liked-tracks-collection-item/media-liked-tracks-collection-item.component';
+export * from './media-most-played-collection-item/media-most-played-collection-item.component';
 export * from './media-liked-tracks-delete-modal/media-liked-tracks-delete-modal.component';
 export * from './media-pinned-item-list/media-pinned-item-list.component';
 export * from './media-playback-button/media-playback-button.component';

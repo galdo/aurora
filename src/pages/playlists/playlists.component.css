@@ -14,9 +14,13 @@
 
 .playlist-liked-tracks {
   margin-bottom: 15px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .playlist-liked-tracks-collection-item {
   border: 1px solid var(--selectable-outline-color);
   padding: 10px;
+  flex: 1 1 280px;
 }

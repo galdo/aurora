@@ -25,7 +25,7 @@ export function LibraryPage() {
 }
 
 export function LibraryHeader() {
-  const [hideArtist, setHideArtist] = useState(false);
+  const [artistViewMode, setArtistViewMode] = useState<'off' | 'artists' | 'album_artists'>('artists');
 
   useEffect(() => {
     const checkSettings = () => {
@@ -33,12 +33,17 @@ export function LibraryHeader() {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          setHideArtist(!!parsed.hideArtist);
+          const parsedMode = String(parsed.artistViewMode || '').trim();
+          if (parsedMode === 'off' || parsedMode === 'artists' || parsedMode === 'album_artists') {
+            setArtistViewMode(parsedMode);
+          } else {
+            setArtistViewMode(parsed.hideArtist ? 'off' : 'artists');
+          }
         } catch (e) {
           // ignore
         }
       } else {
-        setHideArtist(false);
+        setArtistViewMode('artists');
       }
     };
 
@@ -56,7 +61,7 @@ export function LibraryHeader() {
       <div className={cx('library-header-navigation-list')}>
         {routes.map((route) => {
           if (!route.tHeaderName) return null;
-          if (hideArtist && route.path === Routes.LibraryArtists) return null;
+          if (artistViewMode === 'off' && route.path === Routes.LibraryArtists) return null;
 
           return (
             <MediaHeaderNavigationLink

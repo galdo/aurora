@@ -2,20 +2,27 @@ import LocalizedStrings, { LocalizedStringsMethods } from 'react-localization';
 
 import { IPCRenderer, IPCCommChannel } from '../modules/ipc';
 
-export type AppLocale = 'de' | 'en' | 'fr' | 'it' | 'es';
+export type AppLocale = 'de' | 'en' | 'fr' | 'it' | 'es' | 'pt' | 'zh' | 'ja' | 'pl' | 'tr' | 'ru' | 'hi';
 
 export class I18nService {
   private static readonly localeAssetPath = 'locales';
   private static readonly localeDefault: AppLocale = 'en';
   private static readonly localeStorageKey = 'app_locale';
   private static readonly localeChangeEventName = 'aurora:locale-changed';
-  private static readonly localeSupported: AppLocale[] = ['de', 'en', 'fr', 'it', 'es'];
+  private static readonly localeSupported: AppLocale[] = ['de', 'en', 'fr', 'it', 'es', 'pt', 'zh', 'ja', 'pl', 'tr', 'ru', 'hi'];
   private static readonly localeStrings: LocalizedStringsMethods = new LocalizedStrings({
     de: this.getLocaleFile('de'),
     en: this.getLocaleFile('en'),
     fr: this.getLocaleFile('fr'),
     it: this.getLocaleFile('it'),
     es: this.getLocaleFile('es'),
+    pt: this.getLocaleFile('pt'),
+    zh: this.getLocaleFile('zh'),
+    ja: this.getLocaleFile('ja'),
+    pl: this.getLocaleFile('pl'),
+    tr: this.getLocaleFile('tr'),
+    ru: this.getLocaleFile('ru'),
+    hi: this.getLocaleFile('hi'),
   });
 
   static getString(key: string, values?: Record<string, string | number | JSX.Element>): string {

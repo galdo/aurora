@@ -64,12 +64,12 @@
 .button.secondary:not(.disabled):hover {
   background-color: color-mix(in srgb, var(--button-primary-bg-color) 18%, var(--stage-content-bg-color));
   border-color: var(--button-primary-bg-color);
-  color: #000;
+  color: var(--text-light-color);
 }
 
 .button.secondary:not(.disabled):active {
   background-color: color-mix(in srgb, var(--button-primary-bg-color) 24%, var(--stage-content-bg-color));
-  color: #000;
+  color: var(--text-light-color);
 }
 
 .button.secondary.disabled {

@@ -88,6 +88,8 @@ export interface IMediaPlaybackPreparationStatus {
 export interface IMediaPlayback {
   play(): Promise<boolean>;
 
+  prepareForPlayback?(): Promise<boolean>;
+
   setPreparationStatusListener(listener?: (status?: IMediaPlaybackPreparationStatus) => void): void;
 
   checkIfLoading(): boolean;
@@ -187,6 +189,7 @@ export interface IMediaPlaylistData {
   created_at: number;
   updated_at: number;
   is_hidden_album?: boolean;
+  is_auto_generated?: boolean;
   is_smart?: boolean;
   smart_match_mode?: IMediaPlaylistSmartMatchMode;
   smart_rules?: IMediaPlaylistSmartRuleData[];

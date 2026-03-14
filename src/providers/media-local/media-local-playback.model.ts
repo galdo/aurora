@@ -85,6 +85,44 @@ export class MediaLocalPlayback implements IMediaPlayback {
     return mediaPlayed;
   }
 
+  async prepareForPlayback(): Promise<boolean> {
+    this.mediaPlaybackEnded = false;
+    const sourcePath = this.mediaTrack.extra.file_path;
+
+    if (!this.mediaPlaybackLocalAudio) {
+      this.initializeAudio(sourcePath);
+    }
+
+    if (!this.mediaPlaybackLocalAudio) {
+      return false;
+    }
+
+    const playbackAudio = this.mediaPlaybackLocalAudio;
+    if (playbackAudio.state() === 'loaded') {
+      return true;
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const settle = (prepared: boolean) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(prepared);
+      };
+
+      timeoutId = setTimeout(() => {
+        settle(playbackAudio.state() === 'loaded');
+      }, 4000);
+
+      playbackAudio.once('load', () => settle(true));
+      playbackAudio.once('loaderror', () => settle(false));
+    });
+  }
+
   checkIfLoading(): boolean {
     if (!this.mediaPlaybackLocalAudio) {
       return false;

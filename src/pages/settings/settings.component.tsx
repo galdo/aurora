@@ -29,7 +29,7 @@ const appLogoModule = require('../../../assets/icons/icon-squircle-no-background
 
 const AppLogo = appLogoModule.default || appLogoModule;
 
-const languageOptions: AppLocale[] = ['de', 'en', 'fr', 'it', 'es'];
+const languageOptions: AppLocale[] = ['de', 'en', 'fr', 'it', 'es', 'pt', 'zh', 'ja', 'pl', 'tr', 'ru', 'hi'];
 
 function ProviderSettings() {
   const mediaProviderRegistry = useSelector((state: RootState) => state.mediaProviderRegistry);
@@ -62,11 +62,12 @@ function ProviderSettings() {
 }
 
 const UI_SETTINGS_KEY = 'aurora:ui-settings';
+type ArtistViewMode = 'off' | 'artists' | 'album_artists';
 
 export function SettingsPage() {
   const { showModal } = useModal();
   const [themeMode, setThemeMode] = React.useState<ThemeMode>(ThemeService.mode);
-  const [hideArtist, setHideArtist] = React.useState(false);
+  const [artistViewMode, setArtistViewMode] = React.useState<ArtistViewMode>('artists');
   const [locale, setLocale] = React.useState<AppLocale>(I18nService.locale);
   const [dapTargetDirectory, setDapTargetDirectory] = React.useState('');
   const [dapAutoSyncEnabled, setDapAutoSyncEnabled] = React.useState(false);
@@ -82,7 +83,12 @@ export function SettingsPage() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        setHideArtist(!!parsed.hideArtist);
+        const parsedMode = String(parsed.artistViewMode || '').trim();
+        if (parsedMode === 'off' || parsedMode === 'artists' || parsedMode === 'album_artists') {
+          setArtistViewMode(parsedMode);
+        } else {
+          setArtistViewMode(parsed.hideArtist ? 'off' : 'artists');
+        }
       } catch (e) {
         // ignore
       }
@@ -123,10 +129,12 @@ export function SettingsPage() {
     });
   }, []);
 
-  const toggleHideArtist = () => {
-    const newValue = !hideArtist;
-    setHideArtist(newValue);
-    localStorage.setItem(UI_SETTINGS_KEY, JSON.stringify({ hideArtist: newValue }));
+  const updateArtistViewMode = (nextMode: ArtistViewMode) => {
+    setArtistViewMode(nextMode);
+    localStorage.setItem(UI_SETTINGS_KEY, JSON.stringify({
+      hideArtist: nextMode === 'off',
+      artistViewMode: nextMode,
+    }));
     window.dispatchEvent(new Event('aurora:settings-changed'));
   };
 
@@ -266,19 +274,31 @@ export function SettingsPage() {
                 </div>
               </div>
               <div className={cx('settings-row')}>
-                <div>
-                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_hide_artist')}</div>
-                  <div className={cx('settings-description')}>{I18nService.getString('label_settings_hide_artist_description')}</div>
+                <div className={cx('settings-row-content')}>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_artist_view_mode')}</div>
+                  <div className={cx('settings-description')}>{I18nService.getString('label_settings_artist_view_mode_description')}</div>
                 </div>
-                <div className={cx('theme-switch')}>
+                <div className={cx('theme-switch', 'settings-row-switch-right')}>
                   <button
                     type="button"
-                    className={cx('theme-switch-item', { active: hideArtist })}
-                    onClick={toggleHideArtist}
+                    className={cx('theme-switch-item', { active: artistViewMode === 'off' })}
+                    onClick={() => updateArtistViewMode('off')}
                   >
-                    {hideArtist
-                      ? I18nService.getString('label_toggle_on')
-                      : I18nService.getString('label_toggle_off')}
+                    {I18nService.getString('label_artist_view_mode_off')}
+                  </button>
+                  <button
+                    type="button"
+                    className={cx('theme-switch-item', { active: artistViewMode === 'album_artists' })}
+                    onClick={() => updateArtistViewMode('album_artists')}
+                  >
+                    {I18nService.getString('label_artist_view_mode_album_artists')}
+                  </button>
+                  <button
+                    type="button"
+                    className={cx('theme-switch-item', { active: artistViewMode === 'artists' })}
+                    onClick={() => updateArtistViewMode('artists')}
+                  >
+                    {I18nService.getString('label_artist_view_mode_artists')}
                   </button>
                 </div>
               </div>

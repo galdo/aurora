@@ -16,6 +16,7 @@ import {
   CollectionViewControls,
   MediaPlaylists,
   MediaLikedTracksCollectionItem,
+  MediaMostPlayedCollectionItem,
   MediaPlaylistWizardModal,
 } from '../../components';
 import {
@@ -109,6 +110,10 @@ export function PlaylistsPage() {
       : (playlist: any) => String(playlist.name || '').toLowerCase();
     return _.orderBy(mediaPlaylists, [iteratee], [sortDirection]);
   }, [mediaPlaylists, sortBy, sortDirection]);
+  const visiblePlaylists = useMemo(
+    () => sortedPlaylists.filter(playlist => playlist.id !== MediaPlaylistService.mostPlayedPlaylistId),
+    [sortedPlaylists],
+  );
 
   const updateSort = (nextSortBy: SortOption, nextSortDirection: SortDirection) => {
     const effectiveSortDirection = nextSortBy === 'added' && nextSortDirection === 'asc'
@@ -139,11 +144,12 @@ export function PlaylistsPage() {
       />
       <div className={cx('playlist-liked-tracks')}>
         <MediaLikedTracksCollectionItem className={cx('playlist-liked-tracks-collection-item')}/>
+        <MediaMostPlayedCollectionItem className={cx('playlist-liked-tracks-collection-item')}/>
       </div>
-      {_.isEmpty(mediaPlaylists) && (
+      {_.isEmpty(visiblePlaylists) && (
         <PlaylistsEmptySection/>
       )}
-      <MediaPlaylists mediaPlaylists={sortedPlaylists} coverSize={coverSize}/>
+      <MediaPlaylists mediaPlaylists={visiblePlaylists} coverSize={coverSize}/>
     </div>
   );
 }

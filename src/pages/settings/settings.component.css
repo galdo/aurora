@@ -221,11 +221,35 @@
 
 .settings-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   padding: 4px 0;
+}
+
+.settings-row-content {
+  flex: 1 1 calc(100% - clamp(265px, 34vw, 420px) - 16px);
+  max-width: calc(100% - clamp(265px, 34vw, 420px) - 16px);
+  min-width: 0;
+}
+
+.settings-row-switch-right {
+  margin-left: auto;
+  align-self: flex-start;
+  width: clamp(265px, 34vw, 420px);
+  min-width: 265px;
+}
+
+.settings-row-switch-right .theme-switch-item {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+  padding: 7px 8px;
+  font-size: 13px;
 }
 
 .settings-subheading {
@@ -341,5 +365,21 @@
   .settings-info-logo {
     min-height: 220px;
     margin-top: 8px;
+  }
+}
+
+@media (max-width: 860px) {
+  .settings-row {
+    flex-wrap: wrap;
+  }
+
+  .settings-row-content {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+
+  .settings-row-switch-right {
+    min-width: 0;
+    width: 100%;
   }
 }

@@ -143,6 +143,30 @@ export class MediaTrackService {
     return this.buildMediaTrack(mediaTrackData, true);
   }
 
+  static async incrementTrackPlayCount(mediaTrackId: string): Promise<void> {
+    const mediaTrack = await this.getMediaTrack(mediaTrackId);
+    if (!mediaTrack) {
+      return;
+    }
+
+    const existingExtra = (mediaTrack.extra || {}) as Record<string, any>;
+    const currentPlayCount = Number(existingExtra.play_count || 0);
+    const nextPlayCount = Number.isFinite(currentPlayCount) && currentPlayCount > 0
+      ? currentPlayCount + 1
+      : 1;
+
+    await this.updateMediaTrack({
+      id: mediaTrackId,
+    }, {
+      extra: {
+        ...existingExtra,
+        play_count: nextPlayCount,
+        last_played_at: Date.now(),
+      } as any,
+      sync_timestamp: Date.now(),
+    } as any);
+  }
+
   static async syncTrackMetadata(mediaTrackId: string): Promise<void> {
     const mediaTrack = await this.getMediaTrack(mediaTrackId);
     if (!mediaTrack) {
