@@ -43,6 +43,25 @@ const TopBarSearchDebounceMs = 150;
 const TopBarSearchStateKey = 'aurora:topbar-search-query';
 const TopBarSearchChangeEvent = 'aurora:topbar-search-changed';
 
+function getWindowsControlsSafeWidth() {
+  const scaleFactor = Number(window.devicePixelRatio || 1);
+
+  if (scaleFactor >= 2) {
+    return 212;
+  }
+  if (scaleFactor >= 1.75) {
+    return 196;
+  }
+  if (scaleFactor >= 1.5) {
+    return 184;
+  }
+  if (scaleFactor >= 1.25) {
+    return 168;
+  }
+
+  return 152;
+}
+
 function BrowserLinks() {
   return (
     <RouterSwitchComponent routes={routes.header}/>
@@ -210,6 +229,7 @@ function BrowserSearch() {
 
 function BrowserHeader() {
   const [isSyncRunning, setIsSyncRunning] = useState(false);
+  const [windowsControlsSafeWidth, setWindowsControlsSafeWidth] = useState(getWindowsControlsSafeWidth());
   const history = useHistory();
   const location = useLocation();
   const { showModal } = useModal();
@@ -218,11 +238,33 @@ function BrowserHeader() {
   const isPodcastModule = location.pathname.startsWith(Routes.Podcasts);
   const shouldShowCreateButton = isPlaylistModule || isPodcastModule;
 
+  useEffect(() => {
+    if (!isWindows) {
+      return () => {};
+    }
+
+    const updateWindowsControlsSafeWidth = () => {
+      setWindowsControlsSafeWidth(getWindowsControlsSafeWidth());
+    };
+
+    updateWindowsControlsSafeWidth();
+    window.addEventListener('resize', updateWindowsControlsSafeWidth);
+
+    return () => {
+      window.removeEventListener('resize', updateWindowsControlsSafeWidth);
+    };
+  }, [isWindows]);
+
   return (
     <div
       className={cx('browser-header', 'app-window-drag', {
         'browser-header-windows': isWindows,
       })}
+      style={isWindows
+        ? {
+          '--windows-controls-safe-width': `${windowsControlsSafeWidth}px`,
+        } as React.CSSProperties
+        : undefined}
     >
       <BrowserNavigation/>
       <BrowserSearch/>
