@@ -15,12 +15,20 @@ import {
 import { Icons, Links } from '../../constants';
 import { useModal } from '../../contexts';
 import { RootState } from '../../reducers';
-import { AppService, I18nService, MediaLibraryService } from '../../services';
+import {
+  AppService,
+  BitPerfectService,
+  DlnaService,
+  I18nService,
+  MediaLibraryService,
+} from '../../services';
 import { IDapSyncProgressSnapshot } from '../../services/media-library.service';
 import { AppLocale } from '../../services/i18n.service';
 import { ThemeService, ThemeMode } from '../../services/theme.service';
 import { IPCCommChannel, IPCRenderer } from '../../modules/ipc';
 import { mediaLocalStore, MediaLocalStateActionType } from '../../providers/media-local/media-local.store';
+import { DlnaState } from '../../services/dlna.service';
+import { BitPerfectState } from '../../services/bit-perfect.service';
 
 import styles from './settings.component.css';
 
@@ -73,6 +81,8 @@ export function SettingsPage() {
   const [dapAutoSyncEnabled, setDapAutoSyncEnabled] = React.useState(false);
   const [dapDeleteMissingOnDevice, setDapDeleteMissingOnDevice] = React.useState(true);
   const [dapSyncProgress, setDapSyncProgress] = React.useState<IDapSyncProgressSnapshot>(MediaLibraryService.getDapSyncProgressSnapshot());
+  const [dlnaState, setDlnaState] = React.useState<DlnaState>(DlnaService.getState());
+  const [bitPerfectState, setBitPerfectState] = React.useState<BitPerfectState>(BitPerfectService.getState());
   const mediaLocalState = React.useSyncExternalStore(
     mediaLocalStore.subscribe,
     mediaLocalStore.getState,
@@ -105,6 +115,24 @@ export function SettingsPage() {
   React.useEffect(() => MediaLibraryService.subscribeDapSyncProgress((snapshot) => {
     setDapSyncProgress(snapshot);
   }), []);
+
+  React.useEffect(() => {
+    DlnaService.initialize();
+    BitPerfectService.initialize();
+    setDlnaState(DlnaService.getState());
+    setBitPerfectState(BitPerfectService.getState());
+
+    const unsubscribeDlna = DlnaService.subscribe((state) => {
+      setDlnaState(state);
+    });
+    const unsubscribeBitPerfect = BitPerfectService.subscribe((state) => {
+      setBitPerfectState(state);
+    });
+    return () => {
+      unsubscribeDlna();
+      unsubscribeBitPerfect();
+    };
+  }, []);
 
   React.useEffect(() => {
     const onLocaleChanged = () => {
@@ -339,47 +367,53 @@ export function SettingsPage() {
                 {I18nService.getString('label_settings_media_keys_heading')}
               </div>
               <div className={cx('settings-content')}>
-                <div className={cx('settings-row')}>
-                  <div>
-                    <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_media_keys_global_shortcuts')}</div>
-                    <div className={cx('settings-description')}>
-                      {mediaKeysRegistered
-                        ? I18nService.getString('label_settings_media_keys_global_shortcuts_enabled')
-                        : I18nService.getString('label_settings_media_keys_global_shortcuts_disabled')}
-                    </div>
-                  </div>
-                  <span className={cx('settings-status-chip', { ok: mediaKeysRegistered, error: !mediaKeysRegistered })}>
+                <div className={cx('settings-compact-meta')}>
+                  <span className={cx('settings-compact-label')}>Shortcuts</span>
+                  <strong>
                     {mediaKeysRegistered
                       ? I18nService.getString('label_settings_media_keys_status_active')
                       : I18nService.getString('label_settings_media_keys_status_inactive')}
-                  </span>
-                </div>
-                <div className={cx('settings-row')}>
-                  <div>
-                    <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_media_keys_accessibility')}</div>
-                    <div className={cx('settings-description')}>
-                      {mediaKeysAccessibilityTrusted
-                        ? I18nService.getString('label_settings_media_keys_accessibility_allowed')
-                        : I18nService.getString('label_settings_media_keys_accessibility_missing')}
-                    </div>
-                  </div>
-                  <span className={cx('settings-status-chip', { ok: mediaKeysAccessibilityTrusted, error: !mediaKeysAccessibilityTrusted })}>
+                  </strong>
+                  <span className={cx('settings-compact-separator')}>•</span>
+                  <span className={cx('settings-compact-label')}>Accessibility</span>
+                  <strong>
                     {mediaKeysAccessibilityTrusted
                       ? I18nService.getString('label_settings_media_keys_status_allowed')
                       : I18nService.getString('label_settings_media_keys_status_missing')}
-                  </span>
+                  </strong>
                 </div>
-                <div className={cx('settings-action-row')}>
-                  <Link
-                    href="x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                    className={cx('settings-info-link')}
-                  >
-                    {I18nService.getString('label_settings_media_keys_open_accessibility')}
-                  </Link>
-                </div>
-                <div className={cx('settings-description')}>
-                  {I18nService.getString('label_settings_media_keys_restart_hint')}
-                </div>
+                <details className={cx('settings-details-block')}>
+                  <summary>{I18nService.getString('label_settings_media_keys_heading')}</summary>
+                  <div className={cx('settings-technical-grid')}>
+                    <div className={cx('settings-technical-item')}>
+                      <span>{I18nService.getString('label_settings_media_keys_global_shortcuts')}</span>
+                      <strong>
+                        {mediaKeysRegistered
+                          ? I18nService.getString('label_settings_media_keys_global_shortcuts_enabled')
+                          : I18nService.getString('label_settings_media_keys_global_shortcuts_disabled')}
+                      </strong>
+                    </div>
+                    <div className={cx('settings-technical-item')}>
+                      <span>{I18nService.getString('label_settings_media_keys_accessibility')}</span>
+                      <strong>
+                        {mediaKeysAccessibilityTrusted
+                          ? I18nService.getString('label_settings_media_keys_accessibility_allowed')
+                          : I18nService.getString('label_settings_media_keys_accessibility_missing')}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className={cx('settings-action-row')}>
+                    <Link
+                      href="x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                      className={cx('settings-info-link')}
+                    >
+                      {I18nService.getString('label_settings_media_keys_open_accessibility')}
+                    </Link>
+                  </div>
+                  <div className={cx('settings-description')}>
+                    {I18nService.getString('label_settings_media_keys_restart_hint')}
+                  </div>
+                </details>
               </div>
             </div>
           )}
@@ -503,6 +537,108 @@ export function SettingsPage() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className={cx('settings-section', 'settings-card')}>
+            <div className={cx('settings-heading')}>
+              Audio-Ausgabe
+            </div>
+            <div className={cx('settings-content')}>
+              <div className={cx('settings-row')}>
+                <div>
+                  <div className={cx('settings-subheading')}>Bit-Perfect</div>
+                  <div className={cx('settings-description')}>
+                    Exklusiver Audiopfad zum DAC. Bei nicht verfügbarem Backend bleibt die normale Wiedergabe aktiv.
+                  </div>
+                  <div className={cx('settings-compact-meta')}>
+                    <span className={cx('settings-compact-label')}>Status</span>
+                    <strong>{bitPerfectState.active ? 'Active' : 'Idle'}</strong>
+                    <span className={cx('settings-compact-separator')}>•</span>
+                    <span className={cx('settings-compact-label')}>Backend</span>
+                    <strong>{bitPerfectState.backend}</strong>
+                  </div>
+                </div>
+                <div className={cx('theme-switch')}>
+                  <button
+                    type="button"
+                    className={cx('theme-switch-item', { active: bitPerfectState.enabled })}
+                    onClick={() => {
+                      BitPerfectService.setEnabled(!bitPerfectState.enabled).catch((error) => {
+                        console.error(error);
+                      });
+                    }}
+                  >
+                    {bitPerfectState.enabled
+                      ? I18nService.getString('label_toggle_on')
+                      : I18nService.getString('label_toggle_off')}
+                  </button>
+                </div>
+              </div>
+              <div className={cx('settings-row')}>
+                <div>
+                  <div className={cx('settings-subheading')}>DLNA Server</div>
+                  <div className={cx('settings-description')}>
+                    Stellt deine Bibliothek im WLAN bereit. Clients finden den Server automatisch im gleichen Netzwerk.
+                  </div>
+                  <div className={cx('settings-compact-meta')}>
+                    <span className={cx('settings-compact-label')}>Status</span>
+                    <strong>{dlnaState.running ? 'Running' : 'Stopped'}</strong>
+                    <span className={cx('settings-compact-separator')}>•</span>
+                    <span className={cx('settings-compact-label')}>Server</span>
+                    <strong>{`${(dlnaState.ipAddresses[0] || dlnaState.hostname || 'localhost')}:${dlnaState.port}`}</strong>
+                  </div>
+                </div>
+                <div className={cx('theme-switch')}>
+                  <button
+                    type="button"
+                    className={cx('theme-switch-item', { active: dlnaState.enabled })}
+                    onClick={() => {
+                      DlnaService.setEnabled(!dlnaState.enabled).catch((error) => {
+                        console.error(error);
+                      });
+                    }}
+                  >
+                    {dlnaState.enabled
+                      ? I18nService.getString('label_toggle_on')
+                      : I18nService.getString('label_toggle_off')}
+                  </button>
+                </div>
+              </div>
+              {(bitPerfectState.lastError || dlnaState.lastError) && (
+                <div className={cx('settings-inline-error')}>
+                  {bitPerfectState.lastError || dlnaState.lastError}
+                </div>
+              )}
+              <details className={cx('settings-details-block')}>
+                <summary>Technische Diagnose</summary>
+                <div className={cx('settings-technical-grid')}>
+                  <div className={cx('settings-technical-item')}>
+                    <span>DLNA Description URL</span>
+                    <strong>{dlnaState.descriptionUrl}</strong>
+                  </div>
+                  <div className={cx('settings-technical-item')}>
+                    <span>DLNA Content URL</span>
+                    <strong>{dlnaState.contentUrl}</strong>
+                  </div>
+                  <div className={cx('settings-technical-item')}>
+                    <span>DLNA Stream URL</span>
+                    <strong>{dlnaState.currentStreamUrl}</strong>
+                  </div>
+                  <div className={cx('settings-technical-item')}>
+                    <span>DLNA Netzwerk</span>
+                    <strong>{dlnaState.ipAddresses.join(', ') || '-'}</strong>
+                  </div>
+                  <div className={cx('settings-technical-item')}>
+                    <span>Bit-Perfect Binary</span>
+                    <strong>{bitPerfectState.binaryPath || '-'}</strong>
+                  </div>
+                  <div className={cx('settings-technical-item')}>
+                    <span>Bit-Perfect Process ID</span>
+                    <strong>{bitPerfectState.processId || '-'}</strong>
+                  </div>
+                </div>
+              </details>
             </div>
           </div>
 

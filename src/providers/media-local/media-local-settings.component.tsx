@@ -269,28 +269,30 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
             />
           </Form.Group>
           <div className={cl('settings-keywords-help')}>
-            <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_available_keywords')}</div>
-            <div className={cx('settings-description')}>
-              {I18nService.getString('label_settings_keywords_description')}
-              {' '}
-              {'<Keyword>'}
-            </div>
-            <div className={cl('settings-keywords-grid')}>
-              {keywordGroups.map(keywordGroup => (
-                <div key={keywordGroup.label} className={cl('settings-keyword-group')}>
-                  <div className={cl('settings-keyword-group-label')}>
-                    {keywordGroup.label}
+            <details className={cx('settings-details-block')}>
+              <summary>{I18nService.getString('label_settings_available_keywords')}</summary>
+              <div className={cx('settings-description')}>
+                {I18nService.getString('label_settings_keywords_description')}
+                {' '}
+                {'<Keyword>'}
+              </div>
+              <div className={cl('settings-keywords-grid')}>
+                {keywordGroups.map(keywordGroup => (
+                  <div key={keywordGroup.label} className={cl('settings-keyword-group')}>
+                    <div className={cl('settings-keyword-group-label')}>
+                      {keywordGroup.label}
+                    </div>
+                    <div className={cl('settings-keyword-chip-row')}>
+                      {keywordGroup.keywords.map(keyword => (
+                        <span key={keyword} className={cl('settings-keyword-chip')}>
+                          {keyword}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <div className={cl('settings-keyword-chip-row')}>
-                    {keywordGroup.keywords.map(keyword => (
-                      <span key={keyword} className={cl('settings-keyword-chip')}>
-                        {keyword}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </details>
           </div>
           <Form.Group>
             <Form.Label>{I18nService.getString('label_settings_discogs_dev_key')}</Form.Label>

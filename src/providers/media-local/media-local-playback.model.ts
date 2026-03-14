@@ -16,6 +16,8 @@ import {
 import { IMediaLocalTrack } from './media-local.interfaces';
 import MediaLocalUtils from './media-local.utils';
 import { EqualizerService } from '../../services/equalizer.service';
+import { DlnaService } from '../../services/dlna.service';
+import { BitPerfectService } from '../../services/bit-perfect.service';
 
 const debug = require('debug')('aurora:provider:media_local:media_playback');
 
@@ -27,6 +29,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
   private mediaPlaybackEnded = false;
   private playbackSourcePath = '';
   private hasTriedConversionFallback = false;
+  private bitPerfectMutedPrimaryPath = false;
   private preparationStatusListener?: (status?: IMediaPlaybackPreparationStatus) => void;
 
   constructor(mediaTrack: IMediaLocalTrack, mediaPlaybackOptions: IMediaPlaybackOptions) {
@@ -56,6 +59,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
     let mediaPlayed = await this.playCurrentAudio();
     if (mediaPlayed) {
+      this.syncSecondaryAudioPaths();
       this.setPreparationStatus(undefined);
       return true;
     }
@@ -81,6 +85,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
     this.initializeAudio(convertedPath);
     mediaPlayed = await this.playCurrentAudio();
+    if (mediaPlayed) {
+      this.syncSecondaryAudioPaths();
+    }
     this.setPreparationStatus(undefined);
     return mediaPlayed;
   }
@@ -136,7 +143,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
       return false;
     }
 
-    return this.mediaPlaybackLocalAudio.playing(this.mediaPlaybackId);
+    const isPlaying = this.mediaPlaybackLocalAudio.playing(this.mediaPlaybackId);
+    this.syncOutputRouting(isPlaying);
+    return isPlaying;
   }
 
   checkIfEnded(): boolean {
@@ -164,6 +173,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
         //  Check this unresolved issue - https://github.com/goldfire/howler.js/issues/1235
         setTimeout(() => {
           debug('audio event %s - playback id - %d, playing ? - %s', 'seek', mediaPlaybackAudioId, this.checkIfPlaying());
+          if (this.checkIfPlaying()) {
+            BitPerfectService.seekTrack(this.playbackSourcePath, mediaPlaybackSeekPosition);
+          }
           resolve(true);
         }, 100);
       });
@@ -182,6 +194,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
     return new Promise((resolve) => {
       playbackAudio.once('pause', (mediaPlaybackAudioId: number) => {
         debug('audio event %s - playback id - %d', 'pause', mediaPlaybackAudioId);
+        BitPerfectService.stopPlayback();
         resolve(true);
       });
 
@@ -203,6 +216,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
     return new Promise((resolve) => {
       playbackAudio.once('stop', (mediaPlaybackAudioId: number) => {
         debug('audio event %s - playback id - %d', 'stop', mediaPlaybackAudioId);
+        BitPerfectService.stopPlayback();
         resolve(true);
       });
 
@@ -249,6 +263,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }
+    if (BitPerfectService.isEnabled()) {
+      return Promise.resolve(true);
+    }
 
     const playbackAudio = this.mediaPlaybackLocalAudio;
     return new Promise((resolve) => {
@@ -264,6 +281,11 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
   private static getVolumeForLocalAudioPlayer(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): number {
     return mediaPlaybackVolume / mediaPlaybackMaxVolume;
+  }
+
+  private syncSecondaryAudioPaths() {
+    DlnaService.registerTrackFromMediaTrack(this.mediaTrack, this.playbackSourcePath);
+    this.syncOutputRouting(this.checkIfPlaying());
   }
 
   private initializeAudio(playbackSourcePath: string): void {
@@ -316,6 +338,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
       const onPlay = (mediaPlaybackAudioId: number) => {
         debug('audio event %s - playback id - %d', 'play', mediaPlaybackAudioId);
+        this.syncOutputRouting(true);
         settle(true);
       };
 
@@ -351,6 +374,39 @@ export class MediaLocalPlayback implements IMediaPlayback {
     if (this.preparationStatusListener) {
       this.preparationStatusListener(status);
     }
+  }
+
+  private syncOutputRouting(isPlaying: boolean) {
+    if (!this.mediaPlaybackLocalAudio) {
+      return;
+    }
+
+    const playbackAudio = this.mediaPlaybackLocalAudio;
+    const bitPerfectEnabled = BitPerfectService.isEnabled();
+    const bitPerfectState = BitPerfectService.getState();
+    const backendAvailable = bitPerfectState.backend !== 'none';
+
+    if (bitPerfectEnabled && backendAvailable) {
+      const currentlyMuted = Boolean(playbackAudio.mute());
+      if (!currentlyMuted) {
+        playbackAudio.mute(true, this.mediaPlaybackId);
+        this.bitPerfectMutedPrimaryPath = true;
+      }
+
+      if (isPlaying && this.playbackSourcePath) {
+        if (!bitPerfectState.active || bitPerfectState.currentFilePath !== this.playbackSourcePath) {
+          BitPerfectService.playTrack(this.playbackSourcePath, this.getPlaybackProgress());
+        }
+      }
+      return;
+    }
+
+    if (this.bitPerfectMutedPrimaryPath) {
+      playbackAudio.mute(false, this.mediaPlaybackId);
+      this.bitPerfectMutedPrimaryPath = false;
+    }
+
+    BitPerfectService.stopPlayback();
   }
 
   private isAudioCdTrack(): boolean {

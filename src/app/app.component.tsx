@@ -16,6 +16,8 @@ import {
   MediaProviderService,
   PodcastService,
   EqualizerService,
+  DlnaService,
+  BitPerfectService,
 } from '../services';
 import { ThemeService } from '../services/theme.service';
 import { IPCCommChannel, IPCRenderer, IPCRendererCommChannel } from '../modules/ipc';
@@ -202,6 +204,8 @@ export function App() {
     ThemeService.initialize();
     I18nService.initialize();
     EqualizerService.initialize();
+    DlnaService.initialize();
+    BitPerfectService.initialize();
 
     // register media providers
     const mediaLocalProvider = new MediaLocalProvider();
