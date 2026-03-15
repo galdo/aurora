@@ -107,11 +107,9 @@ jobs:
             exit 1
           fi
 
-          ZIP_PATH="release/AuroraPulse-mac-${ARCH}-${VERSION}.zip"
           DMG_PATH="release/AuroraPulse-mac-${ARCH}-${VERSION}.dmg"
           codesign --deep --force --sign - "$APP_PATH"
           xattr -cr "$APP_PATH"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
           STAGE_DIR="$(mktemp -d)"
           cp -R "$APP_PATH" "$STAGE_DIR/$(basename "$APP_PATH")"
           hdiutil create -volname "Aurora Pulse" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_PATH"
@@ -123,9 +121,6 @@ jobs:
           name: macos-${{ matrix.arch }}
           path: |
             release/AuroraPulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.dmg
-            release/AuroraPulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.zip
-            release/*.yml
-            release/*.blockmap
           if-no-files-found: error
           overwrite: true
 
@@ -300,7 +295,6 @@ jobs:
           tag_name: ${{ needs.meta.outputs.tag }}
           name: Release ${{ needs.meta.outputs.tag }}
           prerelease: ${{ needs.meta.outputs.prerelease }}
-          overwrite_files: true
           body: |
             ### Release 1.5.0 (Beta 2)
             Changelog (based on code changes between v1.4.0 and v1.5.0)
@@ -330,7 +324,6 @@ jobs:
             - Scope intentionally reflects the practical delta from v1.4.0 to v1.5.0 across UX, playback transparency, build/release workflow, and platform packaging readiness.
           files: |
             release/**/*.dmg
-            release/**/*.zip
             release/**/*.exe
             release/**/*.flatpak
             release/**/*.yml

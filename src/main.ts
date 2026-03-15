@@ -196,7 +196,10 @@ class App implements IAppMain {
   }
 
   sendMessageToRenderer(messageChannel: string, ...messageArgs: any[]): any {
-    const window = this.getCurrentWindow();
+    const window = this.mainWindow;
+    if (!window || window.isDestroyed()) {
+      return;
+    }
     window.webContents.send(messageChannel, ...messageArgs);
   }
 
