@@ -87,6 +87,8 @@ export function SettingsPage() {
   const [bitPerfectState, setBitPerfectState] = React.useState<BitPerfectState>(BitPerfectService.getState());
   const [updateSettings, setUpdateSettings] = React.useState<UpdateSettings>(UpdateService.getSettings());
   const [updateState, setUpdateState] = React.useState<UpdateState>(UpdateService.getState());
+  const [updateSettingsSaving, setUpdateSettingsSaving] = React.useState(false);
+  const [updateSettingsError, setUpdateSettingsError] = React.useState('');
   const [whatsNewPayload, setWhatsNewPayload] = React.useState<WhatsNewPayload | undefined>(() => UpdateService.getWhatsNew());
   const mediaLocalState = React.useSyncExternalStore(
     mediaLocalStore.subscribe,
@@ -243,34 +245,35 @@ export function SettingsPage() {
       label: I18nService.getString('settings_info_ai_source_gemini_pro'),
     },
   ];
-  const whatsNewTitleByLocale: Record<string, string> = {
-    de: 'Was ist neu',
-    en: "What's new",
-    fr: 'Nouveautés',
-    it: 'Novità',
-    es: 'Novedades',
-    pt: 'Novidades',
-    zh: '更新内容',
-    ja: '新機能',
-    pl: 'Co nowego',
-    tr: 'Yenilikler',
-    ru: 'Что нового',
-    hi: 'नया क्या है',
-  };
-  const whatsNewTitle = whatsNewTitleByLocale[locale] || "What's new";
+  const whatsNewTitle = I18nService.getString('label_settings_whats_new');
   const updateStateLabelMap: Record<UpdateState['status'], string> = {
-    idle: 'Idle',
-    checking: 'Suche nach Updates...',
-    available: 'Update verfügbar',
-    not_available: 'Keine Updates verfügbar',
-    downloading: 'Update wird heruntergeladen...',
-    downloaded: 'Update bereit zur Installation',
-    installing: 'Update wird installiert...',
-    error: 'Update-Fehler',
+    idle: I18nService.getString('label_settings_updates_status_idle'),
+    checking: I18nService.getString('label_settings_updates_status_checking'),
+    available: I18nService.getString('label_settings_updates_status_available'),
+    not_available: I18nService.getString('label_settings_updates_status_not_available'),
+    downloading: I18nService.getString('label_settings_updates_status_downloading'),
+    downloaded: I18nService.getString('label_settings_updates_status_downloaded'),
+    installing: I18nService.getString('label_settings_updates_status_installing'),
+    error: I18nService.getString('label_settings_updates_status_error'),
   };
   const autoUpdateEnabled = updateSettings.checkOnStartup
     && updateSettings.downloadMode === 'auto'
     && updateSettings.autoInstallOnDownload;
+  const applyUpdateSettings = React.useCallback(async (nextSettings: UpdateSettings) => {
+    setUpdateSettings(nextSettings);
+    setUpdateSettingsSaving(true);
+    setUpdateSettingsError('');
+    try {
+      const savedSettings = await UpdateService.setSettings(nextSettings);
+      setUpdateSettings(savedSettings);
+    } catch (error) {
+      console.error(error);
+      setUpdateSettings(UpdateService.getSettings());
+      setUpdateSettingsError(I18nService.getString('label_settings_updates_save_error'));
+    } finally {
+      setUpdateSettingsSaving(false);
+    }
+  }, []);
   const groupCompilationsByFolder = mediaLocalState.settings?.library?.group_compilations_by_folder || false;
   const appDetails = AppService.details;
   const mediaKeysRegistered = !!appDetails.media_hardware_shortcuts_registered;
@@ -583,20 +586,24 @@ export function SettingsPage() {
 
           <div className={cx('settings-section', 'settings-card')}>
             <div className={cx('settings-heading')}>
-              Audio-Ausgabe
+              {I18nService.getString('label_settings_audio_output')}
             </div>
             <div className={cx('settings-content')}>
               <div className={cx('settings-row')}>
                 <div>
-                  <div className={cx('settings-subheading')}>Bit-Perfect</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_bit_perfect')}</div>
                   <div className={cx('settings-description')}>
-                    Exklusiver Audiopfad zum DAC. Bei nicht verfügbarem Backend bleibt die normale Wiedergabe aktiv.
+                    {I18nService.getString('label_settings_bit_perfect_description')}
                   </div>
                   <div className={cx('settings-compact-meta')}>
-                    <span className={cx('settings-compact-label')}>Status</span>
-                    <strong>{bitPerfectState.active ? 'Active' : 'Idle'}</strong>
+                    <span className={cx('settings-compact-label')}>{I18nService.getString('label_settings_status')}</span>
+                    <strong>
+                      {bitPerfectState.active
+                        ? I18nService.getString('label_settings_status_active')
+                        : I18nService.getString('label_settings_status_idle')}
+                    </strong>
                     <span className={cx('settings-compact-separator')}>•</span>
-                    <span className={cx('settings-compact-label')}>Backend</span>
+                    <span className={cx('settings-compact-label')}>{I18nService.getString('label_settings_backend')}</span>
                     <strong>{bitPerfectState.backend}</strong>
                   </div>
                 </div>
@@ -618,15 +625,19 @@ export function SettingsPage() {
               </div>
               <div className={cx('settings-row')}>
                 <div>
-                  <div className={cx('settings-subheading')}>DLNA Server</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dlna_server')}</div>
                   <div className={cx('settings-description')}>
-                    Stellt deine Bibliothek im WLAN bereit. Clients finden den Server automatisch im gleichen Netzwerk.
+                    {I18nService.getString('label_settings_dlna_server_description')}
                   </div>
                   <div className={cx('settings-compact-meta')}>
-                    <span className={cx('settings-compact-label')}>Status</span>
-                    <strong>{dlnaState.running ? 'Running' : 'Stopped'}</strong>
+                    <span className={cx('settings-compact-label')}>{I18nService.getString('label_settings_status')}</span>
+                    <strong>
+                      {dlnaState.running
+                        ? I18nService.getString('label_settings_status_running')
+                        : I18nService.getString('label_settings_status_stopped')}
+                    </strong>
                     <span className={cx('settings-compact-separator')}>•</span>
-                    <span className={cx('settings-compact-label')}>Server</span>
+                    <span className={cx('settings-compact-label')}>{I18nService.getString('label_settings_server')}</span>
                     <strong>{`${(dlnaState.ipAddresses[0] || dlnaState.hostname || 'localhost')}:${dlnaState.port}`}</strong>
                   </div>
                 </div>
@@ -652,30 +663,30 @@ export function SettingsPage() {
                 </div>
               )}
               <details className={cx('settings-details-block')}>
-                <summary>Technische Diagnose</summary>
+                <summary>{I18nService.getString('label_settings_technical_diagnostics')}</summary>
                 <div className={cx('settings-technical-grid')}>
                   <div className={cx('settings-technical-item')}>
-                    <span>DLNA Description URL</span>
+                    <span>{I18nService.getString('label_settings_dlna_description_url')}</span>
                     <strong>{dlnaState.descriptionUrl}</strong>
                   </div>
                   <div className={cx('settings-technical-item')}>
-                    <span>DLNA Content URL</span>
+                    <span>{I18nService.getString('label_settings_dlna_content_url')}</span>
                     <strong>{dlnaState.contentUrl}</strong>
                   </div>
                   <div className={cx('settings-technical-item')}>
-                    <span>DLNA Stream URL</span>
+                    <span>{I18nService.getString('label_settings_dlna_stream_url')}</span>
                     <strong>{dlnaState.currentStreamUrl}</strong>
                   </div>
                   <div className={cx('settings-technical-item')}>
-                    <span>DLNA Netzwerk</span>
+                    <span>{I18nService.getString('label_settings_dlna_network')}</span>
                     <strong>{dlnaState.ipAddresses.join(', ') || '-'}</strong>
                   </div>
                   <div className={cx('settings-technical-item')}>
-                    <span>Bit-Perfect Binary</span>
+                    <span>{I18nService.getString('label_settings_bit_perfect_binary')}</span>
                     <strong>{bitPerfectState.binaryPath || '-'}</strong>
                   </div>
                   <div className={cx('settings-technical-item')}>
-                    <span>Bit-Perfect Process ID</span>
+                    <span>{I18nService.getString('label_settings_bit_perfect_process_id')}</span>
                     <strong>{bitPerfectState.processId || '-'}</strong>
                   </div>
                 </div>
@@ -685,35 +696,37 @@ export function SettingsPage() {
 
           <div className={cx('settings-section', 'settings-card')}>
             <div className={cx('settings-heading')}>
-              Updates
+              {I18nService.getString('label_settings_updates_heading')}
             </div>
             <div className={cx('settings-content')}>
               <div className={cx('settings-row')}>
                 <div>
-                  <div className={cx('settings-subheading')}>Auto-Update</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_updates_auto')}</div>
                   <div className={cx('settings-description')}>
-                    Aktiv: automatische Suche, Download, Installation und Neustart. Deaktiviert: manuelle Suche und Installation.
+                    {I18nService.getString('label_settings_updates_auto_description')}
                   </div>
                 </div>
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
                     className={cx('theme-switch-item', { active: autoUpdateEnabled })}
+                    disabled={updateSettingsSaving}
                     onClick={() => {
+                      const currentSettings = updateSettings;
                       if (autoUpdateEnabled) {
-                        UpdateService.setSettings({
+                        applyUpdateSettings({
                           checkOnStartup: false,
                           downloadMode: 'manual',
                           autoInstallOnDownload: false,
-                          betaChannelEnabled: updateSettings.betaChannelEnabled,
-                        }).then(setUpdateSettings).catch(console.error);
+                          betaChannelEnabled: currentSettings.betaChannelEnabled,
+                        }).catch(console.error);
                       } else {
-                        UpdateService.setSettings({
+                        applyUpdateSettings({
                           checkOnStartup: true,
                           downloadMode: 'auto',
                           autoInstallOnDownload: true,
-                          betaChannelEnabled: updateSettings.betaChannelEnabled,
-                        }).then(setUpdateSettings).catch(console.error);
+                          betaChannelEnabled: currentSettings.betaChannelEnabled,
+                        }).catch(console.error);
                       }
                     }}
                   >
@@ -725,20 +738,21 @@ export function SettingsPage() {
               </div>
               <div className={cx('settings-row')}>
                 <div>
-                  <div className={cx('settings-subheading')}>Beta-Channel</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_updates_beta_channel')}</div>
                   <div className={cx('settings-description')}>
-                    Aktiv: Stable-Versionen erhalten auch neuere Beta-Releases.
+                    {I18nService.getString('label_settings_updates_beta_description')}
                   </div>
                 </div>
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
                     className={cx('theme-switch-item', { active: updateSettings.betaChannelEnabled })}
+                    disabled={updateSettingsSaving}
                     onClick={() => {
-                      UpdateService.setSettings({
+                      applyUpdateSettings({
                         ...updateSettings,
                         betaChannelEnabled: !updateSettings.betaChannelEnabled,
-                      }).then(setUpdateSettings).catch(console.error);
+                      }).catch(console.error);
                     }}
                   >
                     {updateSettings.betaChannelEnabled
@@ -748,23 +762,28 @@ export function SettingsPage() {
                 </div>
               </div>
               <div className={cx('settings-compact-meta')}>
-                <span className={cx('settings-compact-label')}>Status</span>
+                <span className={cx('settings-compact-label')}>{I18nService.getString('label_settings_status')}</span>
                 <strong>{updateStateLabelMap[updateState.status]}</strong>
                 {updateState.availableVersion && (
                   <>
                     <span className={cx('settings-compact-separator')}>•</span>
-                    <span className={cx('settings-compact-label')}>Version</span>
+                    <span className={cx('settings-compact-label')}>{I18nService.getString('label_settings_version')}</span>
                     <strong>{updateState.availableVersion}</strong>
                   </>
                 )}
                 {Number.isFinite(updateState.downloadProgressPercent) && (
                   <>
                     <span className={cx('settings-compact-separator')}>•</span>
-                    <span className={cx('settings-compact-label')}>Download</span>
+                    <span className={cx('settings-compact-label')}>{I18nService.getString('label_settings_download')}</span>
                     <strong>{`${Math.round(Number(updateState.downloadProgressPercent || 0))}%`}</strong>
                   </>
                 )}
               </div>
+              {!!updateSettingsError && (
+                <div className={cx('settings-inline-error')}>
+                  {updateSettingsError}
+                </div>
+              )}
               {!!updateState.message && (
                 <div className={cx('settings-inline-error')}>
                   {updateState.message}
@@ -778,7 +797,7 @@ export function SettingsPage() {
                       UpdateService.checkForUpdates().catch(console.error);
                     }}
                   >
-                    Nach Updates suchen
+                    {I18nService.getString('button_settings_check_updates')}
                   </Button>
                   {updateState.canDownload && (
                     <Button
@@ -787,7 +806,7 @@ export function SettingsPage() {
                         UpdateService.downloadUpdate().catch(console.error);
                       }}
                     >
-                      Update herunterladen
+                      {I18nService.getString('button_settings_download_update')}
                     </Button>
                   )}
                   {updateState.canInstall && (
@@ -797,7 +816,7 @@ export function SettingsPage() {
                         UpdateService.installUpdate().catch(console.error);
                       }}
                     >
-                      Jetzt installieren
+                      {I18nService.getString('button_settings_install_update')}
                     </Button>
                   )}
                 </div>
@@ -905,7 +924,7 @@ export function SettingsPage() {
                         setWhatsNewPayload(undefined);
                       }}
                     >
-                      Gelesen
+                      {I18nService.getString('button_settings_mark_read')}
                     </Button>
                   </div>
                 </div>

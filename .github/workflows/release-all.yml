@@ -98,9 +98,13 @@ jobs:
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
           npm run "prepare:sharp:mac:${ARCH}"
+          npm run "prepare:mpv:mac:${ARCH}"
           npm run package -- --mac --${ARCH} --c.mac.identity=-
 
-          APP_PATH=$(find release -maxdepth 2 -type d -name "*.app" | head -n 1)
+          APP_PATH="release/mac-${ARCH}/AuroraPulse.app"
+          if [ ! -d "$APP_PATH" ]; then
+            APP_PATH=$(find release -maxdepth 3 -type d -name "*.app" | head -n 1)
+          fi
           if [ -z "$APP_PATH" ]; then
             echo "No .app bundle found under release/"
             ls -lah release || true

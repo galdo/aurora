@@ -150,6 +150,7 @@ class App implements IAppMain {
 
   private pendingWhatsNew?: AppWhatsNewPayload;
   private autoUpdaterRegistered = false;
+  private rendererEventsRegistered = false;
   private latestUpdateInfo?: any;
 
   constructor() {
@@ -617,7 +618,9 @@ class App implements IAppMain {
 
   private saveUpdateSettings(nextSettings: AppUpdateSettings) {
     this.updateSettings = nextSettings;
-    fs.writeFileSync(this.getUpdateSettingsPath(), JSON.stringify(this.updateSettings));
+    const updateSettingsPath = this.getUpdateSettingsPath();
+    fs.mkdirSync(path.dirname(updateSettingsPath), { recursive: true });
+    fs.writeFileSync(updateSettingsPath, JSON.stringify(this.updateSettings));
     if (app.isPackaged) {
       electronUpdater.autoUpdater.autoDownload = this.updateSettings.downloadMode === 'auto';
       electronUpdater.autoUpdater.allowPrerelease = this.updateSettings.betaChannelEnabled;
@@ -782,6 +785,9 @@ class App implements IAppMain {
       },
       backgroundColor: '#141414',
     });
+    this.mainWindow = mainWindow;
+
+    this.registerRendererEvents();
 
     let mainWindowShown = false;
     const showMainWindow = () => {
@@ -799,9 +805,13 @@ class App implements IAppMain {
     };
 
     mainWindow
-      .loadURL(`file://${this.htmlFilePath}`)
+      .loadFile(this.htmlFilePath)
       .then(() => {
         debug('main window loaded HTML - %s', this.htmlFilePath);
+      })
+      .catch((error) => {
+        console.error('mainWindow.loadFile encountered error - %o', error);
+        return mainWindow.loadURL(this.getStartupErrorDataURL(this.htmlFilePath));
       });
 
     mainWindow.once('ready-to-show', showMainWindow);
@@ -855,9 +865,6 @@ class App implements IAppMain {
 
     // register handler for auto-updates
     this.registerAutoUpdater();
-
-    // register handlers for renderer messages
-    this.registerRendererEvents();
 
     return mainWindow;
   }
@@ -954,6 +961,70 @@ class App implements IAppMain {
     return `data:text/html;charset=UTF-8,${encodeURIComponent(splashHtml)}`;
   }
 
+  private getStartupErrorDataURL(failedPath: string): string {
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: #141414;
+      color: #f3f5f7;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .wrap {
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .card {
+      width: min(760px, calc(100vw - 48px));
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    h1 {
+      margin: 0 0 12px 0;
+      font-size: 22px;
+      color: #ffffff;
+    }
+    p {
+      margin: 0;
+      line-height: 1.5;
+      color: #d8dde2;
+    }
+    code {
+      display: block;
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.35);
+      overflow-wrap: anywhere;
+      color: #e7eef7;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>${APP_DISPLAY_NAME} konnte die Oberfläche nicht laden</h1>
+      <p>Der Build enthält keinen gültigen Einstiegspunkt. Bitte Release erneut herunterladen oder neu installieren.</p>
+      <code>${_.escape(failedPath)}</code>
+    </div>
+  </div>
+</body>
+</html>`;
+    return `data:text/html;charset=UTF-8,${encodeURIComponent(html)}`;
+  }
+
   private registerEvents(): void {
     process.once('SIGINT', () => {
       this.isQuitting = true;
@@ -976,6 +1047,7 @@ class App implements IAppMain {
     app.on('before-quit', () => {
       // this apparently called right before when user requests to quit (not close) the app
       this.isQuitting = true;
+      this.sendMessageToRenderer(IPCRendererCommChannel.UIAppBeforeQuit);
       globalShortcut.unregisterAll();
     });
 
@@ -1030,6 +1102,11 @@ class App implements IAppMain {
   }
 
   private registerRendererEvents(): void {
+    if (this.rendererEventsRegistered) {
+      return;
+    }
+    this.rendererEventsRegistered = true;
+
     IPCMain.addSyncMessageHandler(IPCCommChannel.AppToggleWindowFill, () => {
       this.toggleWindowFill();
     });

@@ -84,6 +84,19 @@ function Stage() {
   }, []);
 
   useEffect(() => {
+    const stopBitPerfectPlayback = () => {
+      BitPerfectService.stopPlayback();
+    };
+    const quitListener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.UIAppBeforeQuit, stopBitPerfectPlayback);
+    window.addEventListener('beforeunload', stopBitPerfectPlayback);
+
+    return () => {
+      IPCRenderer.removeMessageHandler(IPCRendererCommChannel.UIAppBeforeQuit, quitListener);
+      window.removeEventListener('beforeunload', stopBitPerfectPlayback);
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       // Initial check
       const status = IPCRenderer.sendSyncMessage(IPCCommChannel.DeviceGetAudioCdStatus);

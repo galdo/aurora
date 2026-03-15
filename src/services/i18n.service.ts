@@ -25,9 +25,11 @@ export class I18nService {
     hi: this.getLocaleFile('hi'),
   });
 
+  private static readonly localeFallbackStrings = this.getLocaleFile(this.localeDefault) as Record<string, string>;
+
   static getString(key: string, values?: Record<string, string | number | JSX.Element>): string {
     const languageStrings = this.localeStrings as unknown as Record<string, string>;
-    const template = languageStrings[key] || key;
+    const template = languageStrings[key] || this.localeFallbackStrings[key] || key;
     // @ts-ignore
     return this.localeStrings.formatString(template, values) as string;
   }

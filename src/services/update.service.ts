@@ -74,15 +74,29 @@ export class UpdateService {
     canInstall: false,
   };
 
+  private static isValidSettings(settings: any): settings is UpdateSettings {
+    return settings
+      && typeof settings.checkOnStartup === 'boolean'
+      && (settings.downloadMode === 'auto' || settings.downloadMode === 'manual')
+      && typeof settings.autoInstallOnDownload === 'boolean'
+      && typeof settings.betaChannelEnabled === 'boolean';
+  }
+
   static initialize() {
     if (this.initialized) {
       return;
     }
     this.initialized = true;
-    this.settings = IPCRenderer.sendSyncMessage(IPCCommChannel.AppReadUpdateSettings);
-    this.state = IPCRenderer.sendSyncMessage(IPCCommChannel.AppReadUpdateState);
-    IPCRenderer.addMessageHandler(IPCRendererCommChannel.UIAppUpdateStateChanged, (state: UpdateState) => {
+    const settings = IPCRenderer.sendSyncMessage(IPCCommChannel.AppReadUpdateSettings);
+    if (this.isValidSettings(settings)) {
+      this.settings = settings;
+    }
+    const state = IPCRenderer.sendSyncMessage(IPCCommChannel.AppReadUpdateState);
+    if (state && typeof state.status === 'string') {
       this.state = state;
+    }
+    IPCRenderer.addMessageHandler(IPCRendererCommChannel.UIAppUpdateStateChanged, (nextState: UpdateState) => {
+      this.state = nextState;
       window.dispatchEvent(new Event(updateChangedEventName));
     });
   }
@@ -104,7 +118,10 @@ export class UpdateService {
   }
 
   static async setSettings(nextSettings: UpdateSettings): Promise<UpdateSettings> {
-    this.settings = await IPCRenderer.sendAsyncMessage(IPCCommChannel.AppSaveUpdateSettings, nextSettings);
+    const savedSettings = await IPCRenderer.sendAsyncMessage(IPCCommChannel.AppSaveUpdateSettings, nextSettings);
+    if (this.isValidSettings(savedSettings)) {
+      this.settings = savedSettings;
+    }
     return this.settings;
   }
 

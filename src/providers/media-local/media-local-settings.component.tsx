@@ -222,7 +222,7 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
         </div>
 
         <div style={{ marginTop: '20px', borderTop: '1px solid var(--stage-overlay-outline-color)', paddingTop: '20px' }}>
-          <div className={cx('settings-subheading')}>Audio-CD Import</div>
+          <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_audio_cd_import_heading')}</div>
           <div className={cx('settings-description')} style={{ marginBottom: '12px' }}>
             {I18nService.getString('label_settings_audio_cd_import_description')}
           </div>
