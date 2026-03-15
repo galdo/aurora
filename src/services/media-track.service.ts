@@ -13,6 +13,10 @@ import { MediaArtistService } from './media-artist.service';
 import { MediaAlbumService } from './media-album.service';
 
 export class MediaTrackService {
+  private static readonly collectionCacheTtlMs = 15000;
+  private static readonly albumTracksCache = new Map<string, { expiresAt: number; tracks: IMediaTrack[] }>();
+  private static readonly albumTracksInFlight = new Map<string, Promise<IMediaTrack[]>>();
+
   static async searchTracksByName(query: string): Promise<IMediaTrack[]> {
     const tracks = await MediaTrackDatastore.findMediaTracks({
       track_name: {
@@ -81,21 +85,48 @@ export class MediaTrackService {
   }
 
   static async getMediaAlbumTracks(mediaAlbumId: string): Promise<IMediaTrack[]> {
+    const now = Date.now();
+    const cachedEntry = this.albumTracksCache.get(mediaAlbumId);
+    if (cachedEntry && cachedEntry.expiresAt > now) {
+      return cachedEntry.tracks;
+    }
+    const inFlight = this.albumTracksInFlight.get(mediaAlbumId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const requestPromise = this.resolveMediaAlbumTracks(mediaAlbumId)
+      .then((tracks) => {
+        this.albumTracksCache.set(mediaAlbumId, {
+          tracks,
+          expiresAt: Date.now() + this.collectionCacheTtlMs,
+        });
+        this.albumTracksInFlight.delete(mediaAlbumId);
+        return tracks;
+      })
+      .catch((error) => {
+        this.albumTracksInFlight.delete(mediaAlbumId);
+        throw error;
+      });
+
+    this.albumTracksInFlight.set(mediaAlbumId, requestPromise);
+    return requestPromise;
+  }
+
+  private static async resolveMediaAlbumTracks(mediaAlbumId: string): Promise<IMediaTrack[]> {
     const mediaAlbum = await MediaAlbumService.getMediaAlbum(mediaAlbumId);
     if (!mediaAlbum) {
       return [];
     }
 
-    const allAlbums = await MediaAlbumService.getMediaAlbums();
     const selectedAlbumSourceFingerprint = String((mediaAlbum.extra as any)?.source_fingerprint || '').trim();
-    const matchingAlbumIds = allAlbums
-      .filter((candidateAlbum) => {
-        const candidateSourceFingerprint = String((candidateAlbum.extra as any)?.source_fingerprint || '').trim();
-        return selectedAlbumSourceFingerprint
-          && candidateSourceFingerprint
-          && candidateSourceFingerprint === selectedAlbumSourceFingerprint;
-      })
-      .map(candidateAlbum => candidateAlbum.id);
+    const matchingAlbumIds = selectedAlbumSourceFingerprint
+      ? (await MediaAlbumDatastore.findMediaAlbums({
+        provider: mediaAlbum.provider,
+        // @ts-ignore
+        'extra.source_fingerprint': selectedAlbumSourceFingerprint,
+      } as any)).map(candidateAlbum => candidateAlbum.id)
+      : [];
 
     const directAlbumTrackDataList = await MediaTrackDatastore.findMediaTracks({
       track_album_id: {
@@ -103,18 +134,9 @@ export class MediaTrackService {
       },
     } as any);
 
-    const albumTrackFileSources = directAlbumTrackDataList
-      .map(track => String((track.extra as any)?.file_source || '').trim())
-      .filter(Boolean);
-
-    const mediaAlbumTrackDataFromFileSource = albumTrackFileSources.length > 0
-      ? await MediaTrackDatastore.findMediaTracks({
-        // @ts-ignore
-        'extra.file_source': {
-          $in: _.uniq(albumTrackFileSources),
-        },
-      } as any)
-      : [];
+    const mediaAlbumTrackDataFromFileSource = selectedAlbumSourceFingerprint
+      ? []
+      : await this.getFallbackAlbumTracksByFileSource(directAlbumTrackDataList);
 
     const mediaAlbumTrackDataList = _.uniqBy([
       ...directAlbumTrackDataList,
@@ -123,6 +145,21 @@ export class MediaTrackService {
 
     const mediaAlbumTracks = await this.buildMediaTracks(mediaAlbumTrackDataList);
     return MediaUtils.sortMediaAlbumTracks(mediaAlbumTracks);
+  }
+
+  private static async getFallbackAlbumTracksByFileSource(mediaAlbumTrackDataList: IMediaTrackData[]): Promise<IMediaTrackData[]> {
+    const albumTrackFileSources = mediaAlbumTrackDataList
+      .map(track => String((track.extra as any)?.file_source || '').trim())
+      .filter(Boolean);
+    if (albumTrackFileSources.length === 0) {
+      return [];
+    }
+    return MediaTrackDatastore.findMediaTracks({
+      // @ts-ignore
+      'extra.file_source': {
+        $in: _.uniq(albumTrackFileSources),
+      },
+    } as any);
   }
 
   static async getMediaArtistTracks(mediaArtistId: string): Promise<IMediaTrack[]> {

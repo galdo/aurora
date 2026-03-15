@@ -1,8 +1,10 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const projectRoot = path.resolve(__dirname, '..', '..');
 const srcDir = path.join(projectRoot, 'src');
+const cacheDir = path.join(projectRoot, '.cache');
 
 const platform = process.platform;
 const arch = process.arch;
@@ -48,6 +50,38 @@ function sharpLoadsForHost() {
   }
 }
 
+function getHostCacheMarkerPath() {
+  const markerName = `sharp-host-ready-${platform}-${arch}.json`;
+  return path.join(cacheDir, markerName);
+}
+
+function isHostCacheValid() {
+  try {
+    const markerPath = getHostCacheMarkerPath();
+    if (!fs.existsSync(markerPath)) {
+      return false;
+    }
+    const markerPayload = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+    if (markerPayload.platform !== platform || markerPayload.arch !== arch) {
+      return false;
+    }
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function writeHostCacheMarker() {
+  fs.mkdirSync(cacheDir, {
+    recursive: true,
+  });
+  fs.writeFileSync(getHostCacheMarkerPath(), JSON.stringify({
+    platform,
+    arch,
+    readyAt: Date.now(),
+  }));
+}
+
 function installSharpForHost() {
   const platformPackages = packageMap[platform] || {};
   const hostPackages = platformPackages[arch] || [];
@@ -70,6 +104,9 @@ function installSharpForHost() {
   run(process.platform === 'win32' ? 'npm.cmd' : 'npm', args);
 }
 
-if (!sharpLoadsForHost()) {
-  installSharpForHost();
+if (!isHostCacheValid()) {
+  if (!sharpLoadsForHost()) {
+    installSharpForHost();
+  }
+  writeHostCacheMarker();
 }

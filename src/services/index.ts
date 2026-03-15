@@ -14,6 +14,9 @@ import { MediaTrackService } from './media-track.service';
 import { NotificationService } from './notification.service';
 import { PodcastService } from './podcast.service';
 import { EqualizerService } from './equalizer.service';
+import { DlnaService } from './dlna.service';
+import { BitPerfectService } from './bit-perfect.service';
+import { UpdateService } from './update.service';
 
 export {
   AppService,
@@ -31,4 +34,7 @@ export {
   NotificationService,
   PodcastService,
   EqualizerService,
+  DlnaService,
+  BitPerfectService,
+  UpdateService,
 };

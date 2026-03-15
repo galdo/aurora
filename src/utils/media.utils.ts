@@ -33,7 +33,24 @@ export function mediaTrackComparator(
   mediaTrackA: IMediaTrack,
   mediaTrackB: IMediaTrack,
 ) {
-  return mediaTrackA.track_number < mediaTrackB.track_number ? -1 : 1;
+  const discNumberA = Number((mediaTrackA.extra as any)?.disc_number || 0);
+  const discNumberB = Number((mediaTrackB.extra as any)?.disc_number || 0);
+  if (discNumberA !== discNumberB) {
+    return discNumberA - discNumberB;
+  }
+
+  const trackNumberA = Number(mediaTrackA.track_number || 0);
+  const trackNumberB = Number(mediaTrackB.track_number || 0);
+  if (trackNumberA !== trackNumberB) {
+    return trackNumberA - trackNumberB;
+  }
+
+  const titleCompare = String(mediaTrackA.track_name || '').localeCompare(String(mediaTrackB.track_name || ''), 'de', { sensitivity: 'base' });
+  if (titleCompare !== 0) {
+    return titleCompare;
+  }
+
+  return String(mediaTrackA.id).localeCompare(String(mediaTrackB.id), 'de', { sensitivity: 'base' });
 }
 
 export function mediaArtistTrackComparator(

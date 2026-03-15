@@ -115,7 +115,6 @@ jobs:
           STAGE_DIR="$(mktemp -d)"
           cp -R "$APP_PATH" "$STAGE_DIR/$(basename "$APP_PATH")"
           hdiutil create -volname "Aurora Pulse" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_PATH"
-          rm -f release/*.blockmap
           rm -rf "$STAGE_DIR"
 
       - name: Upload macOS artifacts
@@ -125,6 +124,8 @@ jobs:
           path: |
             release/AuroraPulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.dmg
             release/AuroraPulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.zip
+            release/*.yml
+            release/*.blockmap
           if-no-files-found: error
           overwrite: true
 
@@ -182,6 +183,8 @@ jobs:
           name: windows
           path: |
             release/*.exe
+            release/*.yml
+            release/*.blockmap
           if-no-files-found: error
           overwrite: true
 
@@ -330,5 +333,7 @@ jobs:
             release/**/*.zip
             release/**/*.exe
             release/**/*.flatpak
+            release/**/*.yml
+            release/**/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

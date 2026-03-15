@@ -19,6 +19,10 @@ import { MediaLikedTrackService } from './media-liked-track.service';
 import { MediaPlaylistService } from './media-playlist.service';
 
 export class MediaCollectionService {
+  private static readonly tracksCacheTtlMs = 15000;
+  private static readonly tracksCache = new Map<string, { expiresAt: number; tracks: IMediaTrack[] }>();
+  private static readonly tracksInFlight = new Map<string, Promise<IMediaTrack[]>>();
+
   static async searchCollection(query: string): Promise<IMediaCollectionSearchResults> {
     return {
       tracks: await MediaTrackService.searchTracksByName(query),
@@ -29,19 +33,45 @@ export class MediaCollectionService {
   }
 
   static async getMediaCollectionTracks(mediaCollectionItem: IMediaCollectionItem): Promise<IMediaTrack[]> {
+    const cacheKey = `${mediaCollectionItem.type}:${mediaCollectionItem.id}`;
+    const now = Date.now();
+    const cachedEntry = this.tracksCache.get(cacheKey);
+    if (cachedEntry && cachedEntry.expiresAt > now) {
+      return cachedEntry.tracks;
+    }
+    const inFlight = this.tracksInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const requestPromise = this.resolveMediaCollectionTracks(mediaCollectionItem)
+      .then((tracks) => {
+        this.tracksCache.set(cacheKey, {
+          tracks,
+          expiresAt: Date.now() + this.tracksCacheTtlMs,
+        });
+        this.tracksInFlight.delete(cacheKey);
+        return tracks;
+      })
+      .catch((error) => {
+        this.tracksInFlight.delete(cacheKey);
+        throw error;
+      });
+
+    this.tracksInFlight.set(cacheKey, requestPromise);
+    return requestPromise;
+  }
+
+  private static async resolveMediaCollectionTracks(mediaCollectionItem: IMediaCollectionItem): Promise<IMediaTrack[]> {
     switch (mediaCollectionItem.type) {
-      case MediaCollectionItemType.Album: {
+      case MediaCollectionItemType.Album:
         return MediaTrackService.getMediaAlbumTracks(mediaCollectionItem.id);
-      }
-      case MediaCollectionItemType.Artist: {
+      case MediaCollectionItemType.Artist:
         return MediaTrackService.getMediaArtistTracks(mediaCollectionItem.id);
-      }
-      case MediaCollectionItemType.Playlist: {
+      case MediaCollectionItemType.Playlist:
         return MediaPlaylistService.resolveMediaPlaylistTracks(mediaCollectionItem.id);
-      }
-      case MediaCollectionItemType.LikedTracks: {
+      case MediaCollectionItemType.LikedTracks:
         return MediaLikedTrackService.resolveLikedTracks();
-      }
       default:
         throw new Error(`Unsupported media collection type - ${mediaCollectionItem.type}`);
     }

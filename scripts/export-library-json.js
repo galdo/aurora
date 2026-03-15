@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const readline = require('readline');
 
 const datastoreNames = [
   'media_providers',
@@ -40,41 +41,58 @@ function resolveDbDir(args) {
   return path.join(os.homedir(), 'Library', 'Application Support', appDataDirName, 'Databases');
 }
 
-function parseDatastoreFile(filePath) {
+async function parseDatastoreFile(filePath) {
   if (!fs.existsSync(filePath)) {
     return [];
   }
-  const content = fs.readFileSync(filePath, 'utf8');
-  const lines = content.split('\n').filter((line) => line.trim().length > 0);
   const docsByInternalId = new Map();
-  lines.forEach((line) => {
-    let doc;
-    try {
-      doc = JSON.parse(line);
-    } catch (_error) {
-      return;
-    }
-    if (!doc || typeof doc !== 'object') {
-      return;
-    }
-    const internalIdRaw = Reflect.get(doc, '_id') || doc.id;
-    if (doc.$$deleted && internalIdRaw) {
-      docsByInternalId.delete(String(internalIdRaw));
-      return;
-    }
-    if (Object.keys(doc).some((key) => key.startsWith('$$'))) {
-      return;
-    }
-    const internalId = String(internalIdRaw || '');
-    if (!internalId) {
-      return;
-    }
-    docsByInternalId.set(internalId, doc);
+  const readStream = fs.createReadStream(filePath, {
+    encoding: 'utf8',
+    highWaterMark: 1024 * 1024,
   });
+  const lineReader = readline.createInterface({
+    input: readStream,
+    crlfDelay: Infinity,
+  });
+
+  await new Promise((resolve, reject) => {
+    lineReader.on('line', (rawLine) => {
+      const line = String(rawLine || '');
+      if (!line.trim()) {
+        return;
+      }
+      let doc;
+      try {
+        doc = JSON.parse(line);
+      } catch (_error) {
+        return;
+      }
+      if (!doc || typeof doc !== 'object') {
+        return;
+      }
+      const internalIdRaw = Reflect.get(doc, '_id') || doc.id;
+      if (doc.$$deleted && internalIdRaw) {
+        docsByInternalId.delete(String(internalIdRaw));
+        return;
+      }
+      if (Object.keys(doc).some((key) => key.startsWith('$$'))) {
+        return;
+      }
+      const internalId = String(internalIdRaw || '');
+      if (!internalId) {
+        return;
+      }
+      docsByInternalId.set(internalId, doc);
+    });
+    lineReader.on('close', resolve);
+    lineReader.on('error', reject);
+    readStream.on('error', reject);
+  });
+
   return Array.from(docsByInternalId.values());
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const dbDir = resolveDbDir(args);
   if (!fs.existsSync(dbDir)) {
@@ -88,10 +106,11 @@ function main() {
     collections: {},
   };
 
-  datastoreNames.forEach((name) => {
+  const collectionEntries = await Promise.all(datastoreNames.map(async (name) => {
     const filePath = path.join(dbDir, `${name}.db`);
-    exportPayload.collections[name] = parseDatastoreFile(filePath);
-  });
+    return [name, await parseDatastoreFile(filePath)];
+  }));
+  exportPayload.collections = Object.fromEntries(collectionEntries);
 
   const defaultOutputFileName = `aurora-library-export-${Date.now()}.json`;
   const outputPath = path.resolve(args.output || defaultOutputFileName);
@@ -100,4 +119,7 @@ function main() {
   process.stdout.write(`Library export written to ${outputPath}\n`);
 }
 
-main();
+main().catch((error) => {
+  process.stderr.write(`${String(error && error.message ? error.message : error)}\n`);
+  process.exit(1);
+});

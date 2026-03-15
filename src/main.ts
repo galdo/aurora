@@ -58,7 +58,36 @@ const debug = require('debug')('aurora_pulse:main');
 const APP_DISPLAY_NAME = 'Aurora Pulse';
 const APP_DATA_DIR_NAME = 'Aurora_Pulse';
 const APP_LEGACY_DATA_DIR_NAMES = ['AI_Music_Player', 'Aurora'];
-type MediaHardwareControlAction = 'play_pause' | 'next_track' | 'previous_track' | 'stop';
+type MediaHardwareControlAction = 'play_pause' | 'next_track' | 'previous_track' | 'stop' | 'volume_up' | 'volume_down' | 'volume_mute';
+type AppUpdateStatus = 'idle' | 'checking' | 'available' | 'not_available' | 'downloading' | 'downloaded' | 'installing' | 'error';
+type UpdateDownloadMode = 'auto' | 'manual';
+
+type AppUpdateSettings = {
+  checkOnStartup: boolean;
+  downloadMode: UpdateDownloadMode;
+  autoInstallOnDownload: boolean;
+  betaChannelEnabled: boolean;
+};
+
+type AppUpdateState = {
+  status: AppUpdateStatus;
+  currentVersion: string;
+  availableVersion?: string;
+  downloadProgressPercent?: number;
+  releaseDate?: string;
+  releaseNotes?: string;
+  message?: string;
+  platform: string;
+  arch: string;
+  canDownload: boolean;
+  canInstall: boolean;
+};
+
+type AppWhatsNewPayload = {
+  version: string;
+  releaseDate?: string;
+  releaseNotes: string;
+};
 
 function createElectronLogger(name: string, filePath: string) {
   const logger = electronLog.create({ logId: name });
@@ -85,7 +114,6 @@ class App implements IAppMain {
   private readonly forceExtensionDownload: boolean;
   private readonly startMinimized?: boolean;
   private readonly resourcesPath: string;
-  private readonly enableAutoUpdater = false;
   private readonly htmlFilePath: string;
   private readonly builders: IAppBuilder[] = [];
   private readonly modules: IAppModule[] = [];
@@ -102,6 +130,27 @@ class App implements IAppMain {
   private mediaHardwareShortcutWarningShown = false;
   private mediaHardwareShortcutLastAttemptAt = 0;
   private mediaHardwareShortcutsRegistered = false;
+  private readonly updateSettingsFileName = 'update.settings.json';
+  private readonly whatsNewFileName = 'update.whats-new.json';
+  private updateSettings: AppUpdateSettings = {
+    checkOnStartup: true,
+    downloadMode: 'auto',
+    autoInstallOnDownload: true,
+    betaChannelEnabled: false,
+  };
+
+  private updateState: AppUpdateState = {
+    status: 'idle',
+    currentVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    canDownload: false,
+    canInstall: false,
+  };
+
+  private pendingWhatsNew?: AppWhatsNewPayload;
+  private autoUpdaterRegistered = false;
+  private latestUpdateInfo?: any;
 
   constructor() {
     this.env = process.env.NODE_ENV;
@@ -119,6 +168,8 @@ class App implements IAppMain {
     this.configureUserDataPath();
     this.migrateLegacyUserDataPath();
     this.configureLogger();
+    this.loadUpdateSettings();
+    this.loadPendingWhatsNew();
     this.configureApp();
     this.installSourceMapSupport();
     this.installDebugSupport();
@@ -424,25 +475,264 @@ class App implements IAppMain {
   }
 
   private registerAutoUpdater() {
-    if (!this.enableAutoUpdater) {
+    if (!app.isPackaged || this.autoUpdaterRegistered) {
       return;
     }
+    this.autoUpdaterRegistered = true;
 
     const { autoUpdater } = electronUpdater;
 
     autoUpdater.logger = electronLog;
-    autoUpdater
-      .checkForUpdatesAndNotify()
-      .then((updateCheckResult) => {
-        if (updateCheckResult) {
-          debug('autoUpdater.checkForUpdatesAndNotify returned results - %o', updateCheckResult);
-        } else {
-          debug('autoUpdater.checkForUpdatesAndNotify returned no results');
-        }
-      })
-      .catch((updateCheckError) => {
-        console.error('autoUpdater.encountered error at checkForUpdatesAndNotify - %s', updateCheckError);
+    autoUpdater.autoDownload = this.updateSettings.downloadMode === 'auto';
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.fullChangelog = true;
+    autoUpdater.allowPrerelease = this.updateSettings.betaChannelEnabled;
+
+    autoUpdater.on('checking-for-update', () => {
+      this.setUpdateState({
+        status: 'checking',
+        message: '',
       });
+    });
+    autoUpdater.on('update-not-available', () => {
+      this.latestUpdateInfo = undefined;
+      this.setUpdateState({
+        status: 'not_available',
+        availableVersion: undefined,
+        releaseDate: undefined,
+        releaseNotes: undefined,
+        downloadProgressPercent: undefined,
+        message: '',
+        canDownload: false,
+        canInstall: false,
+      });
+    });
+    autoUpdater.on('error', (error) => {
+      this.setUpdateState({
+        status: 'error',
+        message: String((error as any)?.message || error),
+      });
+    });
+    autoUpdater.on('update-available', (info) => {
+      if (!this.isUpdateInfoCompatible(info)) {
+        this.latestUpdateInfo = undefined;
+        this.setUpdateState({
+          status: 'error',
+          message: `Kein kompatibles Update für ${process.platform}/${process.arch} gefunden.`,
+          canDownload: false,
+          canInstall: false,
+        });
+        return;
+      }
+      this.latestUpdateInfo = info;
+      this.setUpdateState({
+        status: 'available',
+        availableVersion: String(info?.version || ''),
+        releaseDate: String(info?.releaseDate || ''),
+        releaseNotes: this.resolveReleaseNotesFromUpdateInfo(info),
+        canDownload: this.updateSettings.downloadMode === 'manual',
+        canInstall: false,
+        message: '',
+      });
+    });
+    autoUpdater.on('download-progress', (progress) => {
+      const progressPercent = Number(progress?.percent || 0);
+      this.setUpdateState({
+        status: 'downloading',
+        downloadProgressPercent: progressPercent,
+        canDownload: false,
+        canInstall: false,
+      });
+    });
+    autoUpdater.on('update-downloaded', (info) => {
+      this.latestUpdateInfo = info;
+      this.setUpdateState({
+        status: 'downloaded',
+        availableVersion: String(info?.version || ''),
+        releaseDate: String(info?.releaseDate || ''),
+        releaseNotes: this.resolveReleaseNotesFromUpdateInfo(info),
+        canDownload: false,
+        canInstall: true,
+      });
+      if (this.updateSettings.autoInstallOnDownload) {
+        setTimeout(() => {
+          this.installDownloadedUpdate();
+        }, 600);
+      }
+    });
+
+    if (this.updateSettings.checkOnStartup) {
+      this.checkForUpdates();
+    }
+  }
+
+  private setUpdateState(nextState: Partial<AppUpdateState>) {
+    this.updateState = {
+      ...this.updateState,
+      ...nextState,
+      currentVersion: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+    };
+    this.sendMessageToRenderer(IPCRendererCommChannel.UIAppUpdateStateChanged, this.updateState);
+  }
+
+  private getUpdateSettingsPath() {
+    return this.getDataPath(this.updateSettingsFileName);
+  }
+
+  private getWhatsNewPath() {
+    return this.getDataPath(this.whatsNewFileName);
+  }
+
+  private loadUpdateSettings() {
+    try {
+      const filePath = this.getUpdateSettingsPath();
+      if (!fs.existsSync(filePath)) {
+        return;
+      }
+      const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const checkOnStartup = Boolean(payload?.checkOnStartup);
+      const downloadMode = payload?.downloadMode === 'manual' ? 'manual' : 'auto';
+      const autoInstallOnDownload = payload?.autoInstallOnDownload !== false;
+      const betaChannelEnabled = Boolean(payload?.betaChannelEnabled);
+      this.updateSettings = {
+        checkOnStartup,
+        downloadMode,
+        autoInstallOnDownload,
+        betaChannelEnabled,
+      };
+    } catch (_error) {
+      this.updateSettings = {
+        checkOnStartup: true,
+        downloadMode: 'auto',
+        autoInstallOnDownload: true,
+        betaChannelEnabled: false,
+      };
+    }
+  }
+
+  private saveUpdateSettings(nextSettings: AppUpdateSettings) {
+    this.updateSettings = nextSettings;
+    fs.writeFileSync(this.getUpdateSettingsPath(), JSON.stringify(this.updateSettings));
+    if (app.isPackaged) {
+      electronUpdater.autoUpdater.autoDownload = this.updateSettings.downloadMode === 'auto';
+      electronUpdater.autoUpdater.allowPrerelease = this.updateSettings.betaChannelEnabled;
+    }
+    return this.updateSettings;
+  }
+
+  private loadPendingWhatsNew() {
+    try {
+      const filePath = this.getWhatsNewPath();
+      if (!fs.existsSync(filePath)) {
+        return;
+      }
+      const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      if (!payload?.releaseNotes || !payload?.version) {
+        return;
+      }
+      this.pendingWhatsNew = {
+        version: String(payload.version),
+        releaseDate: String(payload.releaseDate || ''),
+        releaseNotes: String(payload.releaseNotes || ''),
+      };
+    } catch (_error) {
+      this.pendingWhatsNew = undefined;
+    }
+  }
+
+  private clearPendingWhatsNew() {
+    this.pendingWhatsNew = undefined;
+    const filePath = this.getWhatsNewPath();
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+
+  private resolveReleaseNotesFromUpdateInfo(info: any) {
+    const releaseNotes = info?.releaseNotes;
+    if (Array.isArray(releaseNotes)) {
+      return releaseNotes
+        .map(note => String(note?.note || ''))
+        .join('\n\n');
+    }
+    return String(releaseNotes || '');
+  }
+
+  private isUpdateInfoCompatible(info: any) {
+    const files = Array.isArray(info?.files) ? info.files : [];
+    if (files.length === 0) {
+      return true;
+    }
+    let osTokens = ['linux'];
+    if (process.platform === PlatformOS.Darwin) {
+      osTokens = ['mac', 'darwin'];
+    } else if (process.platform === PlatformOS.Windows) {
+      osTokens = ['win', 'windows'];
+    }
+    return files.some((fileEntry: any) => {
+      const fileName = String(fileEntry?.url || fileEntry?.path || '').toLowerCase();
+      if (!fileName) {
+        return false;
+      }
+      const osMatches = osTokens.some(token => fileName.includes(token));
+      const archMatches = fileName.includes(`-${process.arch}-`) || fileName.includes(`_${process.arch}_`) || fileName.includes(process.arch);
+      return osMatches && archMatches;
+    });
+  }
+
+  private async checkForUpdates() {
+    if (!app.isPackaged) {
+      this.setUpdateState({
+        status: 'not_available',
+        message: 'Updateprüfung ist nur in Paket-Builds verfügbar.',
+      });
+      return undefined;
+    }
+    this.setUpdateState({
+      status: 'checking',
+      message: '',
+      canDownload: false,
+      canInstall: false,
+    });
+    return electronUpdater.autoUpdater.checkForUpdates();
+  }
+
+  private async downloadAvailableUpdate() {
+    if (!app.isPackaged) {
+      return;
+    }
+    this.setUpdateState({
+      status: 'downloading',
+      canDownload: false,
+      canInstall: false,
+    });
+    await electronUpdater.autoUpdater.downloadUpdate();
+  }
+
+  private persistWhatsNewFromLatestUpdateInfo() {
+    if (!this.latestUpdateInfo) {
+      return;
+    }
+    const payload: AppWhatsNewPayload = {
+      version: String(this.latestUpdateInfo?.version || ''),
+      releaseDate: String(this.latestUpdateInfo?.releaseDate || ''),
+      releaseNotes: this.resolveReleaseNotesFromUpdateInfo(this.latestUpdateInfo),
+    };
+    fs.writeFileSync(this.getWhatsNewPath(), JSON.stringify(payload));
+  }
+
+  private async installDownloadedUpdate() {
+    if (!app.isPackaged) {
+      return;
+    }
+    this.persistWhatsNewFromLatestUpdateInfo();
+    this.setUpdateState({
+      status: 'installing',
+      canInstall: false,
+    });
+    electronUpdater.autoUpdater.quitAndInstall(true, true);
   }
 
   private async createWindow(): Promise<BrowserWindow> {
@@ -747,6 +1037,24 @@ class App implements IAppMain {
     });
 
     IPCMain.addSyncMessageHandler(IPCCommChannel.AppReadDetails, () => this.getDetails());
+    IPCMain.addSyncMessageHandler(IPCCommChannel.AppReadUpdateSettings, () => this.updateSettings);
+    IPCMain.addSyncMessageHandler(IPCCommChannel.AppReadUpdateState, () => this.updateState);
+    IPCMain.addSyncMessageHandler(IPCCommChannel.AppReadWhatsNew, () => this.pendingWhatsNew || null);
+    IPCMain.addSyncMessageHandler(IPCCommChannel.AppDismissWhatsNew, () => {
+      this.clearPendingWhatsNew();
+    });
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.AppSaveUpdateSettings, async (nextSettings: AppUpdateSettings) => {
+      const safeSettings: AppUpdateSettings = {
+        checkOnStartup: Boolean(nextSettings?.checkOnStartup),
+        downloadMode: nextSettings?.downloadMode === 'manual' ? 'manual' : 'auto',
+        autoInstallOnDownload: Boolean(nextSettings?.autoInstallOnDownload),
+        betaChannelEnabled: Boolean(nextSettings?.betaChannelEnabled),
+      };
+      return Promise.resolve(this.saveUpdateSettings(safeSettings));
+    });
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.AppCheckForUpdates, () => this.checkForUpdates());
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.AppDownloadUpdate, () => this.downloadAvailableUpdate());
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.AppInstallUpdate, () => this.installDownloadedUpdate());
   }
 
   private registerMediaHardwareShortcuts() {
@@ -782,6 +1090,15 @@ class App implements IAppMain {
     }, {
       accelerator: 'MediaStop',
       action: 'stop',
+    }, {
+      accelerator: 'MediaVolumeUp',
+      action: 'volume_up',
+    }, {
+      accelerator: 'MediaVolumeDown',
+      action: 'volume_down',
+    }, {
+      accelerator: 'MediaVolumeMute',
+      action: 'volume_mute',
     }];
 
     let failedRegistrationCount = 0;
@@ -827,6 +1144,7 @@ class App implements IAppMain {
       version: this.version,
       build: this.build,
       platform: this.platform,
+      arch: process.arch,
       logs_path: this.getLogsPath(this.logsRendererFile),
       media_hardware_shortcuts_registered: this.mediaHardwareShortcutsRegistered,
       media_hardware_shortcuts_accessibility_trusted: accessibilityTrusted,

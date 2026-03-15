@@ -37,7 +37,7 @@ import { StringUtils } from '../../utils';
 import styles from './browser.component.css';
 
 const cx = classNames.bind(styles);
-const TopBarSearchMinQueryLength = 5;
+const TopBarSearchMinQueryLength = 3;
 const TopBarSearchResultLimit = 8;
 const TopBarSearchDebounceMs = 150;
 const TopBarSearchStateKey = 'aurora:topbar-search-query';
@@ -60,6 +60,17 @@ function getWindowsControlsSafeWidth() {
   }
 
   return 152;
+}
+
+function getWindowsControlsSafeHeight() {
+  const scaleFactor = Number(window.devicePixelRatio || 1);
+  if (scaleFactor >= 1.75) {
+    return 70;
+  }
+  if (scaleFactor >= 1.5) {
+    return 66;
+  }
+  return 62;
 }
 
 function BrowserLinks() {
@@ -230,6 +241,7 @@ function BrowserSearch() {
 function BrowserHeader() {
   const [isSyncRunning, setIsSyncRunning] = useState(false);
   const [windowsControlsSafeWidth, setWindowsControlsSafeWidth] = useState(getWindowsControlsSafeWidth());
+  const [windowsControlsSafeHeight, setWindowsControlsSafeHeight] = useState(getWindowsControlsSafeHeight());
   const history = useHistory();
   const location = useLocation();
   const { showModal } = useModal();
@@ -245,6 +257,7 @@ function BrowserHeader() {
 
     const updateWindowsControlsSafeWidth = () => {
       setWindowsControlsSafeWidth(getWindowsControlsSafeWidth());
+      setWindowsControlsSafeHeight(getWindowsControlsSafeHeight());
     };
 
     updateWindowsControlsSafeWidth();
@@ -263,6 +276,7 @@ function BrowserHeader() {
       style={isWindows
         ? {
           '--windows-controls-safe-width': `${windowsControlsSafeWidth}px`,
+          '--windows-controls-safe-height': `${windowsControlsSafeHeight}px`,
         } as React.CSSProperties
         : undefined}
     >

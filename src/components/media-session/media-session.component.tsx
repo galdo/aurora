@@ -56,9 +56,34 @@ export function MediaSession() {
   }, []);
 
   useEffect(() => {
-    const messageListener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.MediaHardwareControl, (action: 'play_pause' | 'next_track' | 'previous_track' | 'stop') => {
+    const messageListener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.MediaHardwareControl, (
+      action: 'play_pause' | 'next_track' | 'previous_track' | 'stop' | 'volume_up' | 'volume_down' | 'volume_mute',
+    ) => {
       const currentPodcastPlaybackSnapshot = PodcastService.getPlaybackSnapshot();
       const isPodcastMode = currentPodcastPlaybackSnapshot.isActive && !mediaPlayer.mediaPlaybackCurrentMediaTrack;
+      const volumeStep = 5;
+
+      if (action === 'volume_up' || action === 'volume_down') {
+        const direction = action === 'volume_up' ? 1 : -1;
+        const nextVolume = Math.max(
+          0,
+          Math.min(
+            mediaPlayer.mediaPlaybackVolumeMaxLimit,
+            mediaPlayer.mediaPlaybackVolumeCurrent + (direction * volumeStep),
+          ),
+        );
+        MediaPlayerService.changeMediaPlayerVolume(nextVolume);
+        return;
+      }
+
+      if (action === 'volume_mute') {
+        if (mediaPlayer.mediaPlaybackVolumeMuted) {
+          MediaPlayerService.unmuteMediaPlayerVolume();
+        } else {
+          MediaPlayerService.muteMediaPlayerVolume();
+        }
+        return;
+      }
 
       if (action === 'play_pause') {
         if (isPodcastMode) {
@@ -106,6 +131,9 @@ export function MediaSession() {
   }, [
     mediaSession,
     mediaPlayer.mediaPlaybackCurrentMediaTrack,
+    mediaPlayer.mediaPlaybackVolumeCurrent,
+    mediaPlayer.mediaPlaybackVolumeMaxLimit,
+    mediaPlayer.mediaPlaybackVolumeMuted,
   ]);
 
   useEffect(() => {
