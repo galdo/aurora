@@ -22,6 +22,8 @@ import { BitPerfectService } from '../../services/bit-perfect.service';
 const debug = require('debug')('aurora:provider:media_local:media_playback');
 
 export class MediaLocalPlayback implements IMediaPlayback {
+  private static engineWarmedUp = false;
+
   private readonly mediaTrack: IMediaLocalTrack;
   private readonly mediaPlaybackOptions: IMediaPlaybackOptions;
   private mediaPlaybackLocalAudio?: Howl;
@@ -39,6 +41,30 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
     this.mediaTrack = mediaTrack;
     this.mediaPlaybackOptions = mediaPlaybackOptions;
+  }
+
+  static warmupEngine(): void {
+    if (this.engineWarmedUp) {
+      return;
+    }
+    this.engineWarmedUp = true;
+    try {
+      const warmupAudio = new Howl({
+        src: ['data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='],
+        volume: 0,
+        autoplay: false,
+        html5: false,
+      });
+      warmupAudio.once('load', () => {
+        warmupAudio.unload();
+      });
+      warmupAudio.once('loaderror', () => {
+        warmupAudio.unload();
+      });
+      warmupAudio.load();
+    } catch (_error) {
+      this.engineWarmedUp = false;
+    }
   }
 
   setPreparationStatusListener(listener?: (status?: IMediaPlaybackPreparationStatus) => void): void {
@@ -230,8 +256,11 @@ export class MediaLocalPlayback implements IMediaPlayback {
       return Promise.resolve(false);
     }
 
+    const applyBitPerfectVolume = BitPerfectService.isEnabled()
+      ? BitPerfectService.setVolume(mediaPlaybackVolume, mediaPlaybackMaxVolume)
+      : Promise.resolve(true);
     const playbackAudio = this.mediaPlaybackLocalAudio;
-    return new Promise((resolve) => {
+    return applyBitPerfectVolume.then(() => new Promise((resolve) => {
       playbackAudio.once('volume', (mediaPlaybackAudioId: number) => {
         debug('audio event %s - playback id - %d', 'volume', mediaPlaybackAudioId);
         resolve(true);
@@ -239,7 +268,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
       debug('changing volume track id - %s, playback id - %d, volume - %d', this.mediaTrack.id, this.mediaPlaybackId, mediaPlaybackVolume);
       playbackAudio.volume(MediaLocalPlayback.getVolumeForLocalAudioPlayer(mediaPlaybackVolume, mediaPlaybackMaxVolume));
-    });
+    }));
   }
 
   mutePlaybackVolume(): Promise<boolean> {
@@ -247,8 +276,11 @@ export class MediaLocalPlayback implements IMediaPlayback {
       return Promise.resolve(false);
     }
 
+    const applyBitPerfectMute = BitPerfectService.isEnabled()
+      ? BitPerfectService.muteVolume()
+      : Promise.resolve(true);
     const playbackAudio = this.mediaPlaybackLocalAudio;
-    return new Promise((resolve) => {
+    return applyBitPerfectMute.then(() => new Promise((resolve) => {
       playbackAudio.once('mute', (mediaPlaybackAudioId: number) => {
         debug('audio event %s - playback id - %d', 'mute', mediaPlaybackAudioId);
         resolve(true);
@@ -256,19 +288,19 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
       debug('muting volume track id - %s, playback id - %d', this.mediaTrack.id, this.mediaPlaybackId);
       playbackAudio.mute(true);
-    });
+    }));
   }
 
   unmutePlaybackVolume(): Promise<boolean> {
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }
-    if (BitPerfectService.isEnabled()) {
-      return Promise.resolve(true);
-    }
 
+    const applyBitPerfectUnmute = BitPerfectService.isEnabled()
+      ? BitPerfectService.unmuteVolume()
+      : Promise.resolve(true);
     const playbackAudio = this.mediaPlaybackLocalAudio;
-    return new Promise((resolve) => {
+    return applyBitPerfectUnmute.then(() => new Promise((resolve) => {
       playbackAudio.once('mute', (mediaPlaybackAudioId: number) => {
         debug('audio event %s - playback id - %d', 'mute', mediaPlaybackAudioId);
         resolve(true);
@@ -276,7 +308,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
       debug('un-muting volume track id - %s, playback id - %d', this.mediaTrack.id, this.mediaPlaybackId);
       playbackAudio.mute(false);
-    });
+    }));
   }
 
   private static getVolumeForLocalAudioPlayer(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): number {
@@ -395,7 +427,10 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
       if (isPlaying && this.playbackSourcePath) {
         if (!bitPerfectState.active || bitPerfectState.currentFilePath !== this.playbackSourcePath) {
-          BitPerfectService.playTrack(this.playbackSourcePath, this.getPlaybackProgress());
+          BitPerfectService.playTrack(this.playbackSourcePath, this.getPlaybackProgress(), {
+            volumePercent: this.mediaPlaybackOptions.mediaPlaybackVolume,
+            muted: this.mediaPlaybackOptions.mediaPlaybackVolumeMuted,
+          });
         }
       }
       return;

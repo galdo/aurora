@@ -203,6 +203,14 @@ export class MediaLibraryService {
   }
 
   static async checkAndInsertMediaTrack(mediaTrackInputData: DataStoreInputData<IMediaTrackData>): Promise<IMediaTrack> {
+    const { mediaTrack } = await this.checkAndInsertMediaTrackWithStatus(mediaTrackInputData);
+    return mediaTrack;
+  }
+
+  static async checkAndInsertMediaTrackWithStatus(mediaTrackInputData: DataStoreInputData<IMediaTrackData>): Promise<{
+    mediaTrack: IMediaTrack;
+    isNew: boolean;
+  }> {
     if (_.isNil(mediaTrackInputData.provider_id)) {
       throw new Error('Provider id is required for checkAndInsertMediaTrack');
     }
@@ -229,7 +237,10 @@ export class MediaLibraryService {
       extra: mediaTrackInputData.extra,
     });
 
-    return MediaTrackService.buildMediaTrack(mediaTrackData, true);
+    return {
+      mediaTrack: await MediaTrackService.buildMediaTrack(mediaTrackData, true),
+      isNew: !existingMediaTrackData,
+    };
   }
 
   static async startMediaTrackSync(mediaProviderIdentifier: string): Promise<void> {

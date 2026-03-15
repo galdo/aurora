@@ -4,6 +4,14 @@ export enum IPCCommChannel {
   AppResetSettings = 'app:reset_settings',
   AppReadDetails = 'app:read_details',
   AppOpenMenu = 'app:open_menu',
+  AppReadUpdateSettings = 'app:read_update_settings',
+  AppSaveUpdateSettings = 'app:save_update_settings',
+  AppReadUpdateState = 'app:read_update_state',
+  AppCheckForUpdates = 'app:check_for_updates',
+  AppDownloadUpdate = 'app:download_update',
+  AppInstallUpdate = 'app:install_update',
+  AppReadWhatsNew = 'app:read_whats_new',
+  AppDismissWhatsNew = 'app:dismiss_whats_new',
   // file system (fs)
   FSReadAsset = 'fs:read_asset',
   FSSelectDirectory = 'fs:select_directory',
@@ -40,6 +48,7 @@ export enum IPCRendererCommChannel {
   StateRemovePersisted = 'state:remove_persisted',
   // ui
   UIOpenSettings = 'ui:open_settings',
+  UIAppUpdateStateChanged = 'ui:app_update_state_changed',
   // media
   MediaHardwareControl = 'media:hardware_control',
   // device

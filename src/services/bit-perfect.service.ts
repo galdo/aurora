@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import net from 'net';
 import { ChildProcess, spawn, spawnSync } from 'child_process';
 
 type BitPerfectBackend = 'none' | 'mpv';
@@ -25,8 +27,11 @@ export class BitPerfectService {
   private static backend: BitPerfectBackend = 'none';
   private static binaryPath?: string;
   private static currentProcess?: ChildProcess;
+  private static currentIpcPath?: string;
   private static currentFilePath?: string;
   private static lastError?: string;
+  private static currentVolumePercent = 100;
+  private static muted = false;
   private static initialized = false;
 
   static initialize() {
@@ -81,7 +86,14 @@ export class BitPerfectService {
     return this.enabled;
   }
 
-  static playTrack(filePath: string, startSeconds = 0) {
+  static playTrack(
+    filePath: string,
+    startSeconds = 0,
+    options?: {
+      volumePercent?: number;
+      muted?: boolean;
+    },
+  ) {
     if (!this.enabled) {
       return;
     }
@@ -100,6 +112,14 @@ export class BitPerfectService {
 
     this.stopPlayback();
     this.currentFilePath = filePath;
+    this.currentIpcPath = this.getIpcPath();
+    const requestedVolume = Number(options?.volumePercent);
+    if (Number.isFinite(requestedVolume)) {
+      this.currentVolumePercent = this.normalizeVolume(requestedVolume);
+    }
+    if (typeof options?.muted === 'boolean') {
+      this.muted = options.muted;
+    }
     this.lastError = undefined;
 
     try {
@@ -111,6 +131,9 @@ export class BitPerfectService {
         '--audio-display=no',
         '--osc=no',
         '--idle=no',
+        `--input-ipc-server=${this.currentIpcPath}`,
+        `--volume=${this.currentVolumePercent}`,
+        `--mute=${this.muted ? 'yes' : 'no'}`,
         '--audio-exclusive=yes',
         '--cache=no',
         `--audio-buffer=${(this.suggestedBufferMs / 1000).toFixed(2)}`,
@@ -128,10 +151,12 @@ export class BitPerfectService {
       childProcess.once('error', (error) => {
         this.lastError = String(error?.message || error);
         this.currentProcess = undefined;
+        this.currentIpcPath = undefined;
         this.emitState();
       });
       childProcess.once('close', () => {
         this.currentProcess = undefined;
+        this.cleanupIpcSocketPath();
         this.emitState();
       });
     } catch (error: any) {
@@ -145,7 +170,35 @@ export class BitPerfectService {
     if (!this.enabled) {
       return;
     }
-    this.playTrack(filePath, startSeconds);
+    this.playTrack(filePath, startSeconds, {
+      volumePercent: this.currentVolumePercent,
+      muted: this.muted,
+    });
+  }
+
+  static async setVolume(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): Promise<boolean> {
+    const normalizedVolume = this.normalizeVolume((mediaPlaybackVolume / Math.max(mediaPlaybackMaxVolume, 1)) * 100);
+    this.currentVolumePercent = normalizedVolume;
+    if (!this.currentProcess) {
+      return true;
+    }
+    return this.sendIpcCommand(['set_property', 'volume', normalizedVolume]);
+  }
+
+  static async muteVolume(): Promise<boolean> {
+    this.muted = true;
+    if (!this.currentProcess) {
+      return true;
+    }
+    return this.sendIpcCommand(['set_property', 'mute', true]);
+  }
+
+  static async unmuteVolume(): Promise<boolean> {
+    this.muted = false;
+    if (!this.currentProcess) {
+      return true;
+    }
+    return this.sendIpcCommand(['set_property', 'mute', false]);
   }
 
   static stopPlayback() {
@@ -158,7 +211,70 @@ export class BitPerfectService {
       debug('stopPlayback kill failed - %o', error);
     }
     this.currentProcess = undefined;
+    this.cleanupIpcSocketPath();
     this.emitState();
+  }
+
+  private static normalizeVolume(volumePercent: number) {
+    return Math.max(0, Math.min(100, Number(volumePercent || 0)));
+  }
+
+  private static getIpcPath() {
+    const uniqueSegment = `${process.pid}-${Date.now()}`;
+    if (process.platform === 'win32') {
+      return `\\\\.\\pipe\\aurora-bit-perfect-${uniqueSegment}`;
+    }
+    return path.join(os.tmpdir(), `aurora-bit-perfect-${uniqueSegment}.sock`);
+  }
+
+  private static cleanupIpcSocketPath() {
+    if (!this.currentIpcPath) {
+      return;
+    }
+    if (process.platform !== 'win32' && fs.existsSync(this.currentIpcPath)) {
+      try {
+        fs.unlinkSync(this.currentIpcPath);
+      } catch (_error) {
+        debug('cleanupIpcSocketPath unlink failed');
+      }
+    }
+    this.currentIpcPath = undefined;
+  }
+
+  private static async sendIpcCommand(command: any[]) {
+    const ipcPath = this.currentIpcPath;
+    if (!ipcPath) {
+      return false;
+    }
+    const commandPayload = `${JSON.stringify({ command })}\n`;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (success: boolean) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(success);
+      };
+      const socket = net.createConnection(ipcPath);
+      socket.setTimeout(1200);
+      socket.once('connect', () => {
+        socket.write(commandPayload, () => {
+          socket.end();
+          finish(true);
+        });
+      });
+      socket.once('error', () => {
+        finish(false);
+      });
+      socket.once('timeout', () => {
+        socket.destroy();
+        finish(false);
+      });
+      socket.once('close', () => {
+        finish(true);
+      });
+    });
   }
 
   private static emitState() {

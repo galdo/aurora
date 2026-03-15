@@ -265,6 +265,12 @@
   line-height: 1.45;
 }
 
+.settings-whats-new-content {
+  white-space: pre-wrap;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
 .settings-action-row {
   display: flex;
   justify-content: flex-end;

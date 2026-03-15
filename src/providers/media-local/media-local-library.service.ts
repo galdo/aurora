@@ -294,11 +294,6 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
     // generate local id - we are using location of the file to uniquely identify the track
     const mediaTrackId = MediaLocalLibraryService.getMediaId(file.path);
-    // determine if this is a new track before any upsert work (used for stats only)
-    const preExistingTrack = await MediaTrackDatastore.findMediaTrack({
-      provider: MediaLocalConstants.Provider,
-      provider_id: mediaTrackId,
-    });
 
     // first check if we can simply mark it as seen; required both mtime and size for this to work
     if (!forceRescan && isNumber(file.stats?.mtime) && isNumber(file.stats?.size)) {
@@ -523,7 +518,10 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     });
 
     // #3: add media track
-    const mediaTrack = await MediaLibraryService.checkAndInsertMediaTrack({
+    const {
+      mediaTrack,
+      isNew,
+    } = await MediaLibraryService.checkAndInsertMediaTrackWithStatus({
       provider: MediaLocalConstants.Provider,
       provider_id: mediaTrackId,
       // fallback to file name if title could not be found in metadata
@@ -554,7 +552,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     });
 
     // update stats only if track did not exist before this run
-    if (!preExistingTrack) {
+    if (isNew) {
       mediaLocalStore.dispatch({
         type: MediaLocalStateActionType.IncrementDirectorySyncFilesAdded,
         data: {

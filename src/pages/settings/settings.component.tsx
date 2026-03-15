@@ -21,6 +21,7 @@ import {
   DlnaService,
   I18nService,
   MediaLibraryService,
+  UpdateService,
 } from '../../services';
 import { IDapSyncProgressSnapshot } from '../../services/media-library.service';
 import { AppLocale } from '../../services/i18n.service';
@@ -29,6 +30,7 @@ import { IPCCommChannel, IPCRenderer } from '../../modules/ipc';
 import { mediaLocalStore, MediaLocalStateActionType } from '../../providers/media-local/media-local.store';
 import { DlnaState } from '../../services/dlna.service';
 import { BitPerfectState } from '../../services/bit-perfect.service';
+import { UpdateSettings, UpdateState, WhatsNewPayload } from '../../services/update.service';
 
 import styles from './settings.component.css';
 
@@ -83,6 +85,9 @@ export function SettingsPage() {
   const [dapSyncProgress, setDapSyncProgress] = React.useState<IDapSyncProgressSnapshot>(MediaLibraryService.getDapSyncProgressSnapshot());
   const [dlnaState, setDlnaState] = React.useState<DlnaState>(DlnaService.getState());
   const [bitPerfectState, setBitPerfectState] = React.useState<BitPerfectState>(BitPerfectService.getState());
+  const [updateSettings, setUpdateSettings] = React.useState<UpdateSettings>(UpdateService.getSettings());
+  const [updateState, setUpdateState] = React.useState<UpdateState>(UpdateService.getState());
+  const [whatsNewPayload, setWhatsNewPayload] = React.useState<WhatsNewPayload | undefined>(() => UpdateService.getWhatsNew());
   const mediaLocalState = React.useSyncExternalStore(
     mediaLocalStore.subscribe,
     mediaLocalStore.getState,
@@ -119,8 +124,12 @@ export function SettingsPage() {
   React.useEffect(() => {
     DlnaService.initialize();
     BitPerfectService.initialize();
+    UpdateService.initialize();
     setDlnaState(DlnaService.getState());
     setBitPerfectState(BitPerfectService.getState());
+    setUpdateSettings(UpdateService.getSettings());
+    setUpdateState(UpdateService.getState());
+    setWhatsNewPayload(UpdateService.getWhatsNew());
 
     const unsubscribeDlna = DlnaService.subscribe((state) => {
       setDlnaState(state);
@@ -128,9 +137,13 @@ export function SettingsPage() {
     const unsubscribeBitPerfect = BitPerfectService.subscribe((state) => {
       setBitPerfectState(state);
     });
+    const unsubscribeUpdate = UpdateService.subscribe((state) => {
+      setUpdateState(state);
+    });
     return () => {
       unsubscribeDlna();
       unsubscribeBitPerfect();
+      unsubscribeUpdate();
     };
   }, []);
 
@@ -230,6 +243,34 @@ export function SettingsPage() {
       label: I18nService.getString('settings_info_ai_source_gemini_pro'),
     },
   ];
+  const whatsNewTitleByLocale: Record<string, string> = {
+    de: 'Was ist neu',
+    en: "What's new",
+    fr: 'Nouveautés',
+    it: 'Novità',
+    es: 'Novedades',
+    pt: 'Novidades',
+    zh: '更新内容',
+    ja: '新機能',
+    pl: 'Co nowego',
+    tr: 'Yenilikler',
+    ru: 'Что нового',
+    hi: 'नया क्या है',
+  };
+  const whatsNewTitle = whatsNewTitleByLocale[locale] || "What's new";
+  const updateStateLabelMap: Record<UpdateState['status'], string> = {
+    idle: 'Idle',
+    checking: 'Suche nach Updates...',
+    available: 'Update verfügbar',
+    not_available: 'Keine Updates verfügbar',
+    downloading: 'Update wird heruntergeladen...',
+    downloaded: 'Update bereit zur Installation',
+    installing: 'Update wird installiert...',
+    error: 'Update-Fehler',
+  };
+  const autoUpdateEnabled = updateSettings.checkOnStartup
+    && updateSettings.downloadMode === 'auto'
+    && updateSettings.autoInstallOnDownload;
   const groupCompilationsByFolder = mediaLocalState.settings?.library?.group_compilations_by_folder || false;
   const appDetails = AppService.details;
   const mediaKeysRegistered = !!appDetails.media_hardware_shortcuts_registered;
@@ -644,6 +685,128 @@ export function SettingsPage() {
 
           <div className={cx('settings-section', 'settings-card')}>
             <div className={cx('settings-heading')}>
+              Updates
+            </div>
+            <div className={cx('settings-content')}>
+              <div className={cx('settings-row')}>
+                <div>
+                  <div className={cx('settings-subheading')}>Auto-Update</div>
+                  <div className={cx('settings-description')}>
+                    Aktiv: automatische Suche, Download, Installation und Neustart. Deaktiviert: manuelle Suche und Installation.
+                  </div>
+                </div>
+                <div className={cx('theme-switch')}>
+                  <button
+                    type="button"
+                    className={cx('theme-switch-item', { active: autoUpdateEnabled })}
+                    onClick={() => {
+                      if (autoUpdateEnabled) {
+                        UpdateService.setSettings({
+                          checkOnStartup: false,
+                          downloadMode: 'manual',
+                          autoInstallOnDownload: false,
+                          betaChannelEnabled: updateSettings.betaChannelEnabled,
+                        }).then(setUpdateSettings).catch(console.error);
+                      } else {
+                        UpdateService.setSettings({
+                          checkOnStartup: true,
+                          downloadMode: 'auto',
+                          autoInstallOnDownload: true,
+                          betaChannelEnabled: updateSettings.betaChannelEnabled,
+                        }).then(setUpdateSettings).catch(console.error);
+                      }
+                    }}
+                  >
+                    {autoUpdateEnabled
+                      ? I18nService.getString('label_toggle_on')
+                      : I18nService.getString('label_toggle_off')}
+                  </button>
+                </div>
+              </div>
+              <div className={cx('settings-row')}>
+                <div>
+                  <div className={cx('settings-subheading')}>Beta-Channel</div>
+                  <div className={cx('settings-description')}>
+                    Aktiv: Stable-Versionen erhalten auch neuere Beta-Releases.
+                  </div>
+                </div>
+                <div className={cx('theme-switch')}>
+                  <button
+                    type="button"
+                    className={cx('theme-switch-item', { active: updateSettings.betaChannelEnabled })}
+                    onClick={() => {
+                      UpdateService.setSettings({
+                        ...updateSettings,
+                        betaChannelEnabled: !updateSettings.betaChannelEnabled,
+                      }).then(setUpdateSettings).catch(console.error);
+                    }}
+                  >
+                    {updateSettings.betaChannelEnabled
+                      ? I18nService.getString('label_toggle_on')
+                      : I18nService.getString('label_toggle_off')}
+                  </button>
+                </div>
+              </div>
+              <div className={cx('settings-compact-meta')}>
+                <span className={cx('settings-compact-label')}>Status</span>
+                <strong>{updateStateLabelMap[updateState.status]}</strong>
+                {updateState.availableVersion && (
+                  <>
+                    <span className={cx('settings-compact-separator')}>•</span>
+                    <span className={cx('settings-compact-label')}>Version</span>
+                    <strong>{updateState.availableVersion}</strong>
+                  </>
+                )}
+                {Number.isFinite(updateState.downloadProgressPercent) && (
+                  <>
+                    <span className={cx('settings-compact-separator')}>•</span>
+                    <span className={cx('settings-compact-label')}>Download</span>
+                    <strong>{`${Math.round(Number(updateState.downloadProgressPercent || 0))}%`}</strong>
+                  </>
+                )}
+              </div>
+              {!!updateState.message && (
+                <div className={cx('settings-inline-error')}>
+                  {updateState.message}
+                </div>
+              )}
+              {!autoUpdateEnabled && (
+                <div className={cx('settings-action-row')}>
+                  <Button
+                    variant={['secondary']}
+                    onButtonSubmit={() => {
+                      UpdateService.checkForUpdates().catch(console.error);
+                    }}
+                  >
+                    Nach Updates suchen
+                  </Button>
+                  {updateState.canDownload && (
+                    <Button
+                      variant={['secondary']}
+                      onButtonSubmit={() => {
+                        UpdateService.downloadUpdate().catch(console.error);
+                      }}
+                    >
+                      Update herunterladen
+                    </Button>
+                  )}
+                  {updateState.canInstall && (
+                    <Button
+                      variant={['secondary']}
+                      onButtonSubmit={() => {
+                        UpdateService.installUpdate().catch(console.error);
+                      }}
+                    >
+                      Jetzt installieren
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={cx('settings-section', 'settings-card')}>
+            <div className={cx('settings-heading')}>
               {I18nService.getString('label_settings_maintenance')}
             </div>
             <div className={cx('settings-content')}>
@@ -724,6 +887,30 @@ export function SettingsPage() {
                 </Link>
               </div>
             </div>
+            {whatsNewPayload && (
+              <div className={cx('settings-info-item')}>
+                <Icon name={Icons.Refresh}/>
+                <div>
+                  <div className={cx('settings-info-title')}>
+                    {`${whatsNewTitle} (${whatsNewPayload.version})`}
+                  </div>
+                  <div className={cx('settings-description', 'settings-whats-new-content')}>
+                    {whatsNewPayload.releaseNotes}
+                  </div>
+                  <div className={cx('settings-action-row')}>
+                    <Button
+                      variant={['secondary']}
+                      onButtonSubmit={() => {
+                        UpdateService.dismissWhatsNew();
+                        setWhatsNewPayload(undefined);
+                      }}
+                    >
+                      Gelesen
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className={cx('settings-info-logo')}>
             <img src={AppLogo} alt="Aurora Pulse Logo" className={cx('settings-info-logo-image')}/>

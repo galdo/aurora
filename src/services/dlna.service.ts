@@ -7,15 +7,16 @@ import dgram from 'dgram';
 import {
   IMediaAlbum,
   IMediaArtist,
+  IMediaTrackData,
   IPodcastEpisode,
   IMediaTrack,
   IPodcastSubscription,
 } from '../interfaces';
+import { MediaAlbumDatastore, MediaArtistDatastore, MediaTrackDatastore } from '../datastores';
 import { MediaAlbumService } from './media-album.service';
-import { MediaArtistService } from './media-artist.service';
+import { ArtistViewMode, MediaArtistService } from './media-artist.service';
 import { MediaLikedTrackService } from './media-liked-track.service';
 import { MediaPlaylistService } from './media-playlist.service';
-import { MediaTrackService } from './media-track.service';
 import { PodcastService } from './podcast.service';
 
 type DlnaTrack = {
@@ -34,6 +35,7 @@ type DlnaTrack = {
 
 type DlnaBrowseLibrary = {
   tracks: DlnaTrack[];
+  trackById: Map<string, DlnaTrack>;
   albums: IMediaAlbum[];
   artists: IMediaArtist[];
   playlists: Array<{
@@ -42,6 +44,7 @@ type DlnaBrowseLibrary = {
     trackProviderIds: string[];
   }>;
   podcasts: IPodcastSubscription[];
+  artistViewMode: ArtistViewMode;
   updatedAt: number;
 };
 
@@ -69,6 +72,8 @@ const debug = require('debug')('aurora:service:dlna');
 
 export class DlnaService {
   private static readonly storageKey = 'aurora:dlna-settings';
+  private static readonly uiSettingsStorageKey = 'aurora:ui-settings';
+  private static readonly uiSettingsChangedEventName = 'aurora:settings-changed';
   private static readonly eventName = 'aurora:dlna-state-changed';
   private static readonly multicastIp = '239.255.255.250';
   private static readonly multicastPort = 1900;
@@ -98,7 +103,8 @@ export class DlnaService {
   private static initialized = false;
   private static browseLibraryCache?: DlnaBrowseLibrary;
   private static browseLibraryLoadingPromise?: Promise<DlnaBrowseLibrary>;
-  private static readonly browseLibraryCacheTtlMs = 12000;
+  private static readonly browseLibraryCacheTtlMs = 120000;
+  private static uiSettingsListenerRegistered = false;
 
   static initialize() {
     if (this.initialized) {
@@ -106,6 +112,7 @@ export class DlnaService {
     }
     this.initialized = true;
     this.loadSettings();
+    this.registerUiSettingsListener();
     if (this.enabled) {
       this.startServer();
     } else {
@@ -220,6 +227,21 @@ export class DlnaService {
       enabled: this.enabled,
       port: this.port,
     }));
+  }
+
+  private static registerUiSettingsListener() {
+    if (this.uiSettingsListenerRegistered) {
+      return;
+    }
+    this.uiSettingsListenerRegistered = true;
+    window.addEventListener(this.uiSettingsChangedEventName, () => {
+      this.invalidateBrowseLibrary();
+      if (this.enabled) {
+        this.refreshBrowseLibrary().catch((error) => {
+          debug('refreshBrowseLibrary after UI setting change failed - %o', error);
+        });
+      }
+    });
   }
 
   private static async startServer() {
@@ -901,7 +923,14 @@ ${actionBody}
   ) {
     const id = this.normalizeBrowseObjectId(objectId);
     const directChildren = browseFlag === 'BrowseDirectChildren';
+    const hasArtistsContainer = browseLibrary.artistViewMode !== 'off';
     if (id === '0' && directChildren) {
+      const artistsContainerXml = hasArtistsContainer
+        ? `<container id="artists" parentID="0" restricted="1" searchable="0">
+<dc:title>Artists</dc:title>
+<upnp:class>object.container.person.musicArtist</upnp:class>
+</container>`
+        : '';
       const xml = `<?xml version="1.0" encoding="utf-8"?>
 <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
 <container id="tracks" parentID="0" restricted="1" searchable="0">
@@ -912,10 +941,7 @@ ${actionBody}
 <dc:title>Albums</dc:title>
 <upnp:class>object.container.album.musicAlbum</upnp:class>
 </container>
-<container id="artists" parentID="0" restricted="1" searchable="0">
-<dc:title>Artists</dc:title>
-<upnp:class>object.container.person.musicArtist</upnp:class>
-</container>
+${artistsContainerXml}
 <container id="playlists" parentID="0" restricted="1" searchable="0">
 <dc:title>Playlists</dc:title>
 <upnp:class>object.container.playlistContainer</upnp:class>
@@ -927,8 +953,8 @@ ${actionBody}
 </DIDL-Lite>`;
       return {
         resultXml: xml,
-        numberReturned: 5,
-        totalMatches: 5,
+        numberReturned: hasArtistsContainer ? 5 : 4,
+        totalMatches: hasArtistsContainer ? 5 : 4,
       };
     }
 
@@ -965,6 +991,9 @@ ${itemsXml}
     }
 
     if (id === 'artists' && directChildren) {
+      if (!hasArtistsContainer) {
+        return this.buildDidlResult('', 0, 0);
+      }
       const allArtists = browseLibrary.artists;
       const pagedArtists = this.slicePagedEntries(allArtists, startingIndex, requestedCount);
       const itemsXml = pagedArtists.map(artist => this.buildArtistDidlContainer(artist)).join('');
@@ -1148,17 +1177,34 @@ ${itemsXml}
   }
 
   private static async refreshBrowseLibrary(): Promise<DlnaBrowseLibrary> {
-    const [tracksRaw, albumsRaw, artistsRaw, playlistsRaw, likedTracks] = await Promise.all([
-      MediaTrackService.searchTracksByName(''),
+    const artistViewMode = this.getArtistViewMode();
+    const [trackDataList, albumsRaw, artistsRaw, playlistsRaw, likedTracks] = await Promise.all([
+      MediaTrackDatastore.findMediaTracks(),
       MediaAlbumService.searchAlbumsByName(''),
-      MediaArtistService.getMediaArtists('album_artists'),
+      artistViewMode === 'off' ? Promise.resolve([]) : MediaArtistService.getMediaArtists(artistViewMode),
       MediaPlaylistService.getMediaPlaylists(),
       MediaLikedTrackService.resolveLikedTracks(),
     ]);
 
-    const tracks = tracksRaw
-      .map(track => this.createDlnaTrackFromMediaTrack(track))
+    const albumById = new Map<string, string>(
+      albumsRaw.map(album => [String(album.id), String(album.album_name || '')]),
+    );
+    const albumArtistByAlbumId = new Map<string, string>(
+      albumsRaw.map(album => [String(album.id), String(album.album_artist_id || '')]),
+    );
+    const artistById = new Map<string, string>(
+      artistsRaw.map(artist => [String(artist.id), String(artist.artist_name || '')]),
+    );
+    const tracks = trackDataList
+      .map(trackData => this.createDlnaTrackFromMediaTrackData(
+        trackData,
+        albumById,
+        artistById,
+        artistViewMode,
+        albumArtistByAlbumId,
+      ))
       .filter(Boolean) as DlnaTrack[];
+    const trackById = new Map<string, DlnaTrack>(tracks.map(track => [track.id, track]));
     const likedTrackProviderIds = likedTracks.map(track => String(track.provider_id || '')).filter(Boolean);
     const playlists = playlistsRaw
       .filter(playlist => !playlist.is_hidden_album)
@@ -1177,34 +1223,51 @@ ${itemsXml}
 
     const library: DlnaBrowseLibrary = {
       tracks,
+      trackById,
       albums: albumsRaw.filter(album => !album.hidden),
       artists: artistsRaw,
       playlists,
       podcasts: PodcastService.getSubscriptions(),
+      artistViewMode,
       updatedAt: Date.now(),
     };
     this.browseLibraryCache = library;
     return library;
   }
 
-  private static createDlnaTrackFromMediaTrack(track: IMediaTrack): DlnaTrack | undefined {
+  private static createDlnaTrackFromMediaTrackData(
+    track: IMediaTrackData,
+    albumById: Map<string, string>,
+    artistById: Map<string, string>,
+    artistViewMode: ArtistViewMode,
+    albumArtistByAlbumId: Map<string, string>,
+  ): DlnaTrack | undefined {
     const filePath = String((track.extra as any)?.file_path || '').trim();
-    if (!filePath || !fs.existsSync(filePath)) {
+    if (!filePath) {
       return undefined;
     }
-    const fileStats = fs.statSync(filePath);
+    const fileSizeFromExtra = Number((track.extra as any)?.file_size);
+    const fileSize = Number.isFinite(fileSizeFromExtra) && fileSizeFromExtra > 0
+      ? fileSizeFromExtra
+      : 0;
+    const artistIds = this.resolveTrackArtistIds(track, artistViewMode, albumArtistByAlbumId);
+    const artistNames = artistIds
+      .map(artistId => artistById.get(artistId))
+      .filter(Boolean) as string[];
+    const albumId = String(track.track_album_id || '');
+    const albumName = String(albumById.get(albumId) || '');
     return {
       id: String(track.id || track.provider_id || filePath),
       providerId: String(track.provider_id || ''),
       title: String(track.track_name || path.basename(filePath)),
-      artist: String(track.track_artists?.map(artist => artist.artist_name).join(', ') || ''),
-      artistIds: (track.track_artist_ids || []).map(artistId => String(artistId || '')).filter(Boolean),
-      album: String(track.track_album?.album_name || ''),
-      albumId: String(track.track_album_id || ''),
+      artist: String(artistNames.join(', ') || ''),
+      artistIds,
+      album: albumName,
+      albumId,
       duration: Number(track.track_duration || 0),
       filePath,
       mimeType: this.getMimeType(filePath),
-      fileSize: Number(fileStats.size || 0),
+      fileSize,
     };
   }
 
@@ -1214,7 +1277,77 @@ ${itemsXml}
       return liveTrack;
     }
     const browseLibrary = await this.getBrowseLibrary();
-    return browseLibrary.tracks.find(track => track.id === trackId);
+    const track = browseLibrary.trackById.get(trackId);
+    if (track) {
+      return track;
+    }
+    const mediaTrackData = await MediaTrackDatastore.findMediaTrack({
+      id: trackId,
+    });
+    if (!mediaTrackData) {
+      return undefined;
+    }
+    const albumData = mediaTrackData.track_album_id
+      ? await MediaAlbumDatastore.findMediaAlbumById(mediaTrackData.track_album_id)
+      : undefined;
+    const artistDataList = mediaTrackData.track_artist_ids && mediaTrackData.track_artist_ids.length > 0
+      ? await MediaArtistDatastore.findMediaArtists({
+        id: {
+          $in: mediaTrackData.track_artist_ids,
+        },
+      } as any)
+      : [];
+    const albumById = new Map<string, string>(albumData ? [[String(albumData.id), String(albumData.album_name || '')]] : []);
+    const albumArtistByAlbumId = new Map<string, string>(
+      albumData ? [[String(albumData.id), String(albumData.album_artist_id || '')]] : [],
+    );
+    const artistById = new Map<string, string>(artistDataList.map(artist => [String(artist.id), String(artist.artist_name || '')]));
+    return this.createDlnaTrackFromMediaTrackData(
+      mediaTrackData,
+      albumById,
+      artistById,
+      this.getArtistViewMode(),
+      albumArtistByAlbumId,
+    );
+  }
+
+  private static getArtistViewMode(): ArtistViewMode {
+    try {
+      const rawSettings = localStorage.getItem(this.uiSettingsStorageKey);
+      if (!rawSettings) {
+        return 'artists';
+      }
+      const parsedSettings = JSON.parse(rawSettings);
+      const parsedMode = String(parsedSettings?.artistViewMode || '').trim();
+      if (parsedMode === 'off' || parsedMode === 'artists' || parsedMode === 'album_artists') {
+        return parsedMode;
+      }
+      return parsedSettings?.hideArtist ? 'off' : 'artists';
+    } catch (_error) {
+      return 'artists';
+    }
+  }
+
+  private static resolveTrackArtistIds(
+    track: IMediaTrackData,
+    artistViewMode: ArtistViewMode,
+    albumArtistByAlbumId: Map<string, string>,
+  ) {
+    if (artistViewMode === 'off') {
+      return [];
+    }
+    if (artistViewMode === 'album_artists') {
+      const albumArtistId = String(albumArtistByAlbumId.get(String(track.track_album_id || '')) || '');
+      return albumArtistId ? [albumArtistId] : [];
+    }
+    return (track.track_artist_ids || []).map(artistId => String(artistId || '')).filter(Boolean);
+  }
+
+  private static invalidateBrowseLibrary() {
+    this.browseLibraryCache = undefined;
+    this.browseLibraryLoadingPromise = undefined;
+    this.systemUpdateId += 1;
+    this.emitState();
   }
 
   private static getBestServingIpForClient(clientAddress: string) {
