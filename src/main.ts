@@ -1081,37 +1081,57 @@ class App implements IAppMain {
       }
     }
 
-    const shortcuts: { accelerator: string; action: MediaHardwareControlAction }[] = [{
-      accelerator: 'MediaPlayPause',
+    const shortcuts: { accelerators: string[]; action: MediaHardwareControlAction; required: boolean }[] = [{
+      accelerators: ['MediaPlayPause'],
       action: 'play_pause',
+      required: true,
     }, {
-      accelerator: 'MediaNextTrack',
+      accelerators: ['MediaNextTrack'],
       action: 'next_track',
+      required: true,
     }, {
-      accelerator: 'MediaPreviousTrack',
+      accelerators: ['MediaPreviousTrack'],
       action: 'previous_track',
+      required: true,
     }, {
-      accelerator: 'MediaStop',
+      accelerators: ['MediaStop'],
       action: 'stop',
+      required: true,
     }, {
-      accelerator: 'MediaVolumeUp',
+      accelerators: ['VolumeUp', 'MediaVolumeUp'],
       action: 'volume_up',
+      required: false,
     }, {
-      accelerator: 'MediaVolumeDown',
+      accelerators: ['VolumeDown', 'MediaVolumeDown'],
       action: 'volume_down',
+      required: false,
     }, {
-      accelerator: 'MediaVolumeMute',
+      accelerators: ['VolumeMute', 'MediaVolumeMute'],
       action: 'volume_mute',
+      required: false,
     }];
 
     let failedRegistrationCount = 0;
-    shortcuts.forEach(({ accelerator, action }) => {
-      globalShortcut.unregister(accelerator);
-      const isRegistered = globalShortcut.register(accelerator, () => {
-        this.sendMessageToRenderer(IPCRendererCommChannel.MediaHardwareControl, action);
+    shortcuts.forEach(({ accelerators, action, required }) => {
+      let isRegisteredForAction = false;
+      accelerators.forEach((accelerator) => {
+        if (isRegisteredForAction) {
+          return;
+        }
+        try {
+          globalShortcut.unregister(accelerator);
+          const isRegistered = globalShortcut.register(accelerator, () => {
+            this.sendMessageToRenderer(IPCRendererCommChannel.MediaHardwareControl, action);
+          });
+          if (isRegistered) {
+            isRegisteredForAction = true;
+          }
+        } catch (error) {
+          debug('global shortcut register failed - %s - %o', accelerator, error);
+        }
       });
 
-      if (!isRegistered) {
+      if (required && !isRegisteredForAction) {
         failedRegistrationCount += 1;
       }
     });
