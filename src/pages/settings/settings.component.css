@@ -219,6 +219,16 @@
   /* box-shadow: 0 0 0 2px var(--selectable-focus-ring-color); */
 }
 
+.theme-switch-item-toggle {
+  min-width: 86px;
+  width: 86px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .settings-row {
   display: flex;
   align-items: flex-start;

@@ -12,11 +12,15 @@ import {
   IMediaTrack,
   IPodcastSubscription,
 } from '../interfaces';
-import { MediaAlbumDatastore, MediaArtistDatastore, MediaTrackDatastore } from '../datastores';
+import {
+  MediaAlbumDatastore,
+  MediaArtistDatastore,
+  MediaPlaylistDatastore,
+  MediaTrackDatastore,
+} from '../datastores';
 import { MediaAlbumService } from './media-album.service';
 import { ArtistViewMode, MediaArtistService } from './media-artist.service';
 import { MediaLikedTrackService } from './media-liked-track.service';
-import { MediaPlaylistService } from './media-playlist.service';
 import { PodcastService } from './podcast.service';
 
 type DlnaTrack = {
@@ -31,6 +35,18 @@ type DlnaTrack = {
   filePath: string;
   mimeType: string;
   fileSize: number;
+};
+
+type DlnaRendererDevice = {
+  id: string;
+  location: string;
+  friendlyName: string;
+  modelName: string;
+  avTransportControlUrl: string;
+  avTransportServiceType: string;
+  renderingControlUrl: string;
+  renderingControlServiceType: string;
+  lastSeenAt: number;
 };
 
 type DlnaBrowseLibrary = {
@@ -66,6 +82,14 @@ export type DlnaState = {
   tracksShared: number;
   currentTrackTitle?: string;
   lastError?: string;
+  outputMode: 'local' | 'remote';
+  selectedRendererId?: string;
+  selectedRendererName?: string;
+  rendererDevices: Array<{
+    id: string;
+    name: string;
+    modelName: string;
+  }>;
 };
 
 const debug = require('debug')('aurora:service:dlna');
@@ -89,6 +113,11 @@ export class DlnaService {
   private static readonly notifyIntervalMs = 20000;
   private static readonly trackLimit = 200;
   private static readonly ssdpMaxAgeSeconds = 1800;
+  private static readonly controlSettingsStorageKey = 'aurora:dlna-control-settings';
+  private static readonly rendererDiscoveryIntervalMs = 30000;
+  private static readonly rendererMaxAgeMs = 120000;
+  private static readonly avTransportServiceType = 'urn:schemas-upnp-org:service:AVTransport:1';
+  private static readonly renderingControlServiceType = 'urn:schemas-upnp-org:service:RenderingControl:1';
 
   private static enabled = false;
   private static port = this.defaultPort;
@@ -105,6 +134,11 @@ export class DlnaService {
   private static browseLibraryLoadingPromise?: Promise<DlnaBrowseLibrary>;
   private static readonly browseLibraryCacheTtlMs = 120000;
   private static uiSettingsListenerRegistered = false;
+  private static outputMode: 'local' | 'remote' = 'local';
+  private static selectedRendererId?: string;
+  private static rendererDevices: Map<string, DlnaRendererDevice> = new Map();
+  private static rendererDiscoverySocket?: dgram.Socket;
+  private static rendererDiscoveryInterval?: ReturnType<typeof setInterval>;
 
   static initialize() {
     if (this.initialized) {
@@ -112,7 +146,9 @@ export class DlnaService {
     }
     this.initialized = true;
     this.loadSettings();
+    this.loadControlSettings();
     this.registerUiSettingsListener();
+    this.startRendererDiscovery();
     if (this.enabled) {
       this.startServer();
     } else {
@@ -134,6 +170,9 @@ export class DlnaService {
     const primaryIp = ipAddresses[0] || '127.0.0.1';
     const baseUrl = `http://${primaryIp}:${this.port}`;
     const currentTrack = this.currentTrackId ? this.trackMap.get(this.currentTrackId) : undefined;
+    const selectedRenderer = this.selectedRendererId
+      ? this.rendererDevices.get(this.selectedRendererId)
+      : undefined;
     return {
       enabled: this.enabled,
       running: !!this.httpServer,
@@ -152,6 +191,16 @@ export class DlnaService {
       tracksShared: this.trackOrder.length,
       currentTrackTitle: currentTrack?.title,
       lastError: this.lastError,
+      outputMode: this.outputMode,
+      selectedRendererId: this.selectedRendererId,
+      selectedRendererName: selectedRenderer?.friendlyName,
+      rendererDevices: Array.from(this.rendererDevices.values())
+        .sort((left, right) => left.friendlyName.localeCompare(right.friendlyName))
+        .map(renderer => ({
+          id: renderer.id,
+          name: renderer.friendlyName,
+          modelName: renderer.modelName,
+        })),
     };
   }
 
@@ -165,6 +214,228 @@ export class DlnaService {
     }
     await this.stopServer();
     this.emitState();
+  }
+
+  static isRemoteOutputSelected(): boolean {
+    return this.outputMode === 'remote'
+      && !!this.selectedRendererId
+      && this.rendererDevices.has(this.selectedRendererId);
+  }
+
+  static async setOutputDevice(outputDeviceId: string): Promise<void> {
+    const normalizedOutputDeviceId = String(outputDeviceId || '').trim();
+    if (!normalizedOutputDeviceId || normalizedOutputDeviceId === 'local') {
+      this.outputMode = 'local';
+      this.selectedRendererId = undefined;
+      this.persistControlSettings();
+      this.emitState();
+      return;
+    }
+
+    const renderer = this.rendererDevices.get(normalizedOutputDeviceId);
+    if (!renderer) {
+      throw new Error(`DLNA renderer not found: ${normalizedOutputDeviceId}`);
+    }
+
+    await this.startServer();
+    this.outputMode = 'remote';
+    this.selectedRendererId = renderer.id;
+    this.persistControlSettings();
+    this.emitState();
+  }
+
+  static async playMediaTrackOnSelectedRenderer(
+    mediaTrack: IMediaTrack,
+    seekPositionSeconds = 0,
+    options?: {
+      mediaPlaybackVolume?: number;
+      mediaPlaybackMaxVolume?: number;
+      muted?: boolean;
+    },
+  ): Promise<boolean> {
+    if (!this.isRemoteOutputSelected()) {
+      return false;
+    }
+
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+
+    await this.startServer();
+    const filePath = String((mediaTrack.extra as any)?.file_path || '').trim();
+    if (filePath && fs.existsSync(filePath)) {
+      this.registerTrackFromMediaTrack(mediaTrack, filePath);
+    }
+
+    const mediaTrackId = String(mediaTrack.id || mediaTrack.provider_id || '');
+    if (!mediaTrackId) {
+      return false;
+    }
+
+    const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
+    const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl);
+
+    await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'SetAVTransportURI',
+      {
+        InstanceID: '0',
+        CurrentURI: streamUrl,
+        CurrentURIMetaData: metadata,
+      },
+    );
+
+    if (seekPositionSeconds > 0) {
+      await this.seekSelectedRenderer(seekPositionSeconds);
+    }
+
+    if (options && Number.isFinite(options.mediaPlaybackVolume)) {
+      await this.setSelectedRendererVolume(Number(options.mediaPlaybackVolume), Number(options.mediaPlaybackMaxVolume || 100));
+    }
+
+    if (options?.muted) {
+      await this.muteSelectedRenderer();
+    } else {
+      await this.unmuteSelectedRenderer();
+    }
+
+    await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'Play',
+      {
+        InstanceID: '0',
+        Speed: '1',
+      },
+    );
+    return true;
+  }
+
+  static async pauseSelectedRenderer(): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'Pause',
+      {
+        InstanceID: '0',
+      },
+    );
+    return true;
+  }
+
+  static async resumeSelectedRenderer(): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'Play',
+      {
+        InstanceID: '0',
+        Speed: '1',
+      },
+    );
+    return true;
+  }
+
+  static async stopSelectedRenderer(): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'Stop',
+      {
+        InstanceID: '0',
+      },
+    );
+    return true;
+  }
+
+  static async seekSelectedRenderer(seekPositionSeconds: number): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    const clampedSeconds = Math.max(0, Math.floor(Number(seekPositionSeconds || 0)));
+    const seekTarget = this.formatSecondsAsDlnaTime(clampedSeconds);
+    await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'Seek',
+      {
+        InstanceID: '0',
+        Unit: 'REL_TIME',
+        Target: seekTarget,
+      },
+    );
+    return true;
+  }
+
+  static async setSelectedRendererVolume(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    const maxVolume = Math.max(1, Number(mediaPlaybackMaxVolume || 100));
+    const volume = Math.max(0, Math.min(100, Math.round((Number(mediaPlaybackVolume || 0) / maxVolume) * 100)));
+    await this.sendSoapRequest(
+      renderer.renderingControlUrl,
+      renderer.renderingControlServiceType,
+      'SetVolume',
+      {
+        InstanceID: '0',
+        Channel: 'Master',
+        DesiredVolume: String(volume),
+      },
+    );
+    return true;
+  }
+
+  static async muteSelectedRenderer(): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    await this.sendSoapRequest(
+      renderer.renderingControlUrl,
+      renderer.renderingControlServiceType,
+      'SetMute',
+      {
+        InstanceID: '0',
+        Channel: 'Master',
+        DesiredMute: '1',
+      },
+    );
+    return true;
+  }
+
+  static async unmuteSelectedRenderer(): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    await this.sendSoapRequest(
+      renderer.renderingControlUrl,
+      renderer.renderingControlServiceType,
+      'SetMute',
+      {
+        InstanceID: '0',
+        Channel: 'Master',
+        DesiredMute: '0',
+      },
+    );
+    return true;
   }
 
   static registerTrackFromMediaTrack(mediaTrack: IMediaTrack, filePath: string) {
@@ -227,6 +498,238 @@ export class DlnaService {
       enabled: this.enabled,
       port: this.port,
     }));
+  }
+
+  private static loadControlSettings() {
+    try {
+      const rawSettings = localStorage.getItem(this.controlSettingsStorageKey);
+      if (!rawSettings) {
+        return;
+      }
+      const parsedSettings = JSON.parse(rawSettings);
+      const parsedOutputMode = String(parsedSettings?.outputMode || '').trim();
+      if (parsedOutputMode === 'remote') {
+        this.outputMode = 'remote';
+      } else {
+        this.outputMode = 'local';
+      }
+      const parsedRendererId = String(parsedSettings?.selectedRendererId || '').trim();
+      this.selectedRendererId = parsedRendererId || undefined;
+    } catch (_error) {
+      this.outputMode = 'local';
+      this.selectedRendererId = undefined;
+    }
+  }
+
+  private static persistControlSettings() {
+    localStorage.setItem(this.controlSettingsStorageKey, JSON.stringify({
+      outputMode: this.outputMode,
+      selectedRendererId: this.selectedRendererId,
+    }));
+  }
+
+  private static getSelectedRenderer(): DlnaRendererDevice | undefined {
+    if (!this.selectedRendererId) {
+      return undefined;
+    }
+    return this.rendererDevices.get(this.selectedRendererId);
+  }
+
+  private static async startRendererDiscovery() {
+    if (this.rendererDiscoverySocket && this.rendererDiscoveryInterval) {
+      return;
+    }
+    this.rendererDiscoverySocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    this.rendererDiscoverySocket.on('message', (messageBuffer) => {
+      const message = messageBuffer.toString('utf8');
+      this.handleRendererDiscoveryMessage(message);
+    });
+    this.rendererDiscoverySocket.on('error', (error) => {
+      debug('renderer discovery socket error - %o', error);
+    });
+    await new Promise<void>((resolve) => {
+      this.rendererDiscoverySocket?.bind(0, () => resolve());
+    });
+    this.sendRendererDiscoveryProbe();
+    this.rendererDiscoveryInterval = setInterval(() => {
+      this.sendRendererDiscoveryProbe();
+      this.pruneInactiveRenderers();
+    }, this.rendererDiscoveryIntervalMs);
+  }
+
+  private static sendRendererDiscoveryProbe() {
+    if (!this.rendererDiscoverySocket) {
+      return;
+    }
+    const payload = [
+      'M-SEARCH * HTTP/1.1',
+      `HOST: ${this.multicastIp}:${this.multicastPort}`,
+      'MAN: "ssdp:discover"',
+      'MX: 2',
+      'ST: urn:schemas-upnp-org:device:MediaRenderer:1',
+      '',
+      '',
+    ].join('\r\n');
+    this.rendererDiscoverySocket.send(payload, this.multicastPort, this.multicastIp);
+  }
+
+  private static handleRendererDiscoveryMessage(message: string) {
+    const isSearchResponse = message.toUpperCase().startsWith('HTTP/1.1 200');
+    if (!isSearchResponse) {
+      return;
+    }
+    const location = this.extractSsdpHeaderValue(message, 'LOCATION');
+    const searchTarget = String(this.extractSsdpHeaderValue(message, 'ST') || this.extractSsdpHeaderValue(message, 'NT')).toLowerCase();
+    if (!location || !searchTarget.includes('mediarenderer')) {
+      return;
+    }
+    this.fetchAndStoreRendererDescription(location).catch((error) => {
+      debug('fetchAndStoreRendererDescription failed - %o', error);
+    });
+  }
+
+  private static async fetchAndStoreRendererDescription(location: string) {
+    const response = await fetch(location);
+    if (!response.ok) {
+      throw new Error(`Renderer description fetch failed with status ${response.status}`);
+    }
+    const xml = await response.text();
+    const deviceType = String(this.extractXmlTagValue(xml, 'deviceType') || '');
+    if (!deviceType.toLowerCase().includes('mediarenderer')) {
+      return;
+    }
+
+    const udn = String(this.extractXmlTagValue(xml, 'UDN') || location).trim();
+    const friendlyName = String(this.extractXmlTagValue(xml, 'friendlyName') || udn).trim();
+    const modelName = String(this.extractXmlTagValue(xml, 'modelName') || '').trim();
+    const serviceBlocks = this.extractXmlServiceBlocks(xml);
+    const avTransportService = serviceBlocks.find(serviceBlock => serviceBlock.serviceType === this.avTransportServiceType);
+    const renderingControlService = serviceBlocks.find(serviceBlock => serviceBlock.serviceType === this.renderingControlServiceType);
+
+    if (!avTransportService || !renderingControlService) {
+      return;
+    }
+
+    const rendererId = udn.replace(/^uuid:/i, '') || location;
+    const renderer: DlnaRendererDevice = {
+      id: rendererId,
+      location,
+      friendlyName,
+      modelName,
+      avTransportControlUrl: this.resolveServiceUrl(location, avTransportService.controlURL),
+      avTransportServiceType: avTransportService.serviceType,
+      renderingControlUrl: this.resolveServiceUrl(location, renderingControlService.controlURL),
+      renderingControlServiceType: renderingControlService.serviceType,
+      lastSeenAt: Date.now(),
+    };
+    this.rendererDevices.set(renderer.id, renderer);
+    if (this.outputMode === 'remote' && this.selectedRendererId && !this.rendererDevices.has(this.selectedRendererId)) {
+      this.outputMode = 'local';
+      this.selectedRendererId = undefined;
+      this.persistControlSettings();
+    }
+    this.emitState();
+  }
+
+  private static pruneInactiveRenderers() {
+    const now = Date.now();
+    const activeRenderers = Array.from(this.rendererDevices.entries()).filter(([, renderer]) => (now - renderer.lastSeenAt) < this.rendererMaxAgeMs);
+    this.rendererDevices = new Map(activeRenderers);
+    if (this.outputMode === 'remote' && this.selectedRendererId && !this.rendererDevices.has(this.selectedRendererId)) {
+      this.outputMode = 'local';
+      this.selectedRendererId = undefined;
+      this.persistControlSettings();
+    }
+    this.emitState();
+  }
+
+  private static extractXmlServiceBlocks(xml: string): Array<{ serviceType: string; controlURL: string }> {
+    const services: Array<{ serviceType: string; controlURL: string }> = [];
+    const serviceRegex = /<service>([\s\S]*?)<\/service>/gi;
+    let serviceMatch = serviceRegex.exec(xml);
+    while (serviceMatch) {
+      const block = String(serviceMatch[1] || '');
+      const serviceType = String(this.extractXmlTagValue(block, 'serviceType') || '').trim();
+      const controlURL = String(this.extractXmlTagValue(block, 'controlURL') || '').trim();
+      if (serviceType && controlURL) {
+        services.push({ serviceType, controlURL });
+      }
+      serviceMatch = serviceRegex.exec(xml);
+    }
+    return services;
+  }
+
+  private static resolveServiceUrl(location: string, controlUrl: string): string {
+    try {
+      const baseUrl = new URL(location);
+      return new URL(controlUrl, `${baseUrl.protocol}//${baseUrl.host}`).toString();
+    } catch (_error) {
+      return controlUrl;
+    }
+  }
+
+  private static getTrackStreamUrlForRenderer(renderer: DlnaRendererDevice, mediaTrackId: string): string {
+    const rendererUrl = new URL(renderer.location);
+    const rendererAddress = String(rendererUrl.hostname || '').replace(/^::ffff:/, '');
+    const servingIp = this.getBestServingIpForClient(rendererAddress);
+    return `http://${servingIp}:${this.port}/stream/${encodeURIComponent(mediaTrackId)}`;
+  }
+
+  private static buildRendererTrackMetadata(mediaTrack: IMediaTrack, streamUrl: string): string {
+    const title = this.escapeXml(String(mediaTrack.track_name || 'Track'));
+    const artist = this.escapeXml(String(mediaTrack.track_artists?.map(trackArtist => trackArtist.artist_name).join(', ') || ''));
+    const album = this.escapeXml(String(mediaTrack.track_album?.album_name || ''));
+    const mimeType = this.getMimeType(String((mediaTrack.extra as any)?.file_path || ''));
+    const duration = this.formatSecondsAsDlnaTime(Number(mediaTrack.track_duration || 0));
+    return `<?xml version="1.0" encoding="utf-8"?>
+<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+<item id="${this.escapeXml(String(mediaTrack.id || mediaTrack.provider_id || 'track'))}" parentID="0" restricted="1">
+<dc:title>${title}</dc:title>
+<upnp:artist>${artist}</upnp:artist>
+<upnp:album>${album}</upnp:album>
+<upnp:class>object.item.audioItem.musicTrack</upnp:class>
+<res protocolInfo="http-get:*:${mimeType}:*" duration="${duration}">${this.escapeXml(streamUrl)}</res>
+</item>
+</DIDL-Lite>`;
+  }
+
+  private static formatSecondsAsDlnaTime(seconds: number): string {
+    const totalSeconds = Math.max(0, Math.floor(Number(seconds || 0)));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const remainingSeconds = totalSeconds % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+  }
+
+  private static async sendSoapRequest(
+    controlUrl: string,
+    serviceType: string,
+    actionName: string,
+    params: Record<string, string>,
+  ) {
+    const actionBody = Object.entries(params)
+      .map(([key, value]) => `<${key}>${this.escapeXml(String(value || ''))}</${key}>`)
+      .join('');
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+<s:Body>
+<u:${actionName} xmlns:u="${serviceType}">
+${actionBody}
+</u:${actionName}>
+</s:Body>
+</s:Envelope>`;
+
+    const response = await fetch(controlUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml; charset="utf-8"',
+        SOAPACTION: `"${serviceType}#${actionName}"`,
+      },
+      body,
+    });
+    if (!response.ok) {
+      throw new Error(`SOAP request failed: ${actionName} (${response.status})`);
+    }
   }
 
   private static registerUiSettingsListener() {
@@ -1182,7 +1685,7 @@ ${itemsXml}
       MediaTrackDatastore.findMediaTracks(),
       MediaAlbumService.searchAlbumsByName(''),
       artistViewMode === 'off' ? Promise.resolve([]) : MediaArtistService.getMediaArtists(artistViewMode),
-      MediaPlaylistService.getMediaPlaylists(),
+      MediaPlaylistDatastore.findMediaPlaylists(),
       MediaLikedTrackService.resolveLikedTracks(),
     ]);
 

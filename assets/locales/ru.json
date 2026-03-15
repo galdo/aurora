@@ -322,5 +322,8 @@
   "button_settings_install_update": "Установить сейчас",
   "button_settings_mark_read": "Отметить как прочитано",
   "label_settings_whats_new": "Что нового",
-  "label_settings_audio_cd_import_heading": "Импорт Audio-CD"
+  "label_settings_audio_cd_import_heading": "Импорт Audio-CD",
+  "label_settings_sync_progress_x_of_y": "Сканировано {processed} из {found} треков",
+  "label_player_output_local": "Локальный аудиовыход",
+  "label_player_output_device_none": "Удалённые DLNA-устройства не найдены"
 }

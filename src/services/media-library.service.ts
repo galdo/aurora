@@ -117,6 +117,7 @@ export class MediaLibraryService {
       provider_id: mediaArtistInputData.provider_id,
       sync_timestamp: mediaArtistInputData.sync_timestamp,
       artist_name: mediaArtistInputData.artist_name,
+      artist_name_normalized: this.normalizeSearchValue(mediaArtistInputData.artist_name),
       artist_feature_picture: await this.processPicture(mediaArtistInputData.artist_feature_picture),
       extra: mediaArtistInputData.extra,
     });
@@ -182,6 +183,7 @@ export class MediaLibraryService {
       provider: mediaAlbumInputData.provider,
       provider_id: effectiveProviderId,
       sync_timestamp: mediaAlbumInputData.sync_timestamp,
+      album_name_normalized: this.normalizeSearchValue(mediaAlbumInputData.album_name),
       album_cover_picture: processedAlbumCoverPicture || existingMediaAlbumData?.album_cover_picture,
       album_genre: mediaAlbumInputData.album_genre,
       album_year: mediaAlbumInputData.album_year,
@@ -229,6 +231,7 @@ export class MediaLibraryService {
       provider_id: mediaTrackInputData.provider_id,
       sync_timestamp: mediaTrackInputData.sync_timestamp,
       track_name: mediaTrackInputData.track_name,
+      track_name_normalized: this.normalizeSearchValue(mediaTrackInputData.track_name),
       track_number: mediaTrackInputData.track_number,
       track_duration: mediaTrackInputData.track_duration,
       track_cover_picture: processedTrackCoverPicture || existingMediaTrackData?.track_cover_picture,
@@ -326,6 +329,17 @@ export class MediaLibraryService {
 
     // image data type does not need any processing, return as is
     return mediaPicture;
+  }
+
+  private static normalizeSearchValue(value: string): string {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[\u2018\u2019]/g, '\'')
+      .replace(/[\u201C\u201D]/g, '"')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 
   static getDapSyncSettings(): {

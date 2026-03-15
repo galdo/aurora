@@ -1,3 +1,5 @@
+import _ from 'lodash';
+
 import { MediaAlbumDatastore, MediaArtistDatastore, MediaTrackDatastore } from '../datastores';
 import { MediaLibraryActions } from '../enums';
 import { IMediaArtist, IMediaArtistData } from '../interfaces';
@@ -9,13 +11,60 @@ export type ArtistViewMode = 'off' | 'artists' | 'album_artists';
 
 export class MediaArtistService {
   static async searchArtistsByName(query: string): Promise<IMediaArtist[]> {
-    const artists = await MediaArtistDatastore.findMediaArtists({
-      artist_name: {
-        $regex: new RegExp(query, 'i'),
+    const normalizedQuery = this.normalizeSearchValue(query);
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    const escapedNormalizedQuery = _.escapeRegExp(normalizedQuery);
+    const escapedRawQuery = _.escapeRegExp(query);
+    const prefixRegex = new RegExp(`^${escapedNormalizedQuery}`);
+    const containsRegex = new RegExp(escapedNormalizedQuery);
+    const containsRawRegex = new RegExp(escapedRawQuery, 'i');
+    const limit = 120;
+
+    const artistsPrefix = await MediaArtistDatastore.findMediaArtists({
+      artist_name_normalized: {
+        $regex: prefixRegex,
       },
+    } as any);
+
+    const artistsContains = artistsPrefix.length < limit
+      ? await MediaArtistDatastore.findMediaArtists({
+        artist_name_normalized: {
+          $regex: containsRegex,
+        },
+      } as any)
+      : [];
+
+    const artistsFallback = artistsPrefix.length === 0 && artistsContains.length === 0
+      ? await MediaArtistDatastore.findMediaArtists({
+        artist_name: {
+          $regex: containsRawRegex,
+        },
+      })
+      : [];
+
+    const artistsById = new Map<string, IMediaArtistData>();
+    [...artistsPrefix, ...artistsContains, ...artistsFallback].forEach((artist) => {
+      artistsById.set(artist.id, artist);
     });
 
-    return this.buildMediaArtists(artists);
+    const mediaArtists = await this.buildMediaArtists(Array.from(artistsById.values()));
+    return _.orderBy(
+      mediaArtists,
+      [artist => this.normalizeSearchValue(artist.artist_name)],
+      ['asc'],
+    ).slice(0, limit);
+  }
+
+  private static normalizeSearchValue(value: string): string {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 
   static async getMediaArtist(artistId: string): Promise<IMediaArtist | undefined> {
@@ -67,7 +116,12 @@ export class MediaArtistService {
   }
 
   static async updateMediaArtists(mediaArtistFilterData: DataStoreFilterData<IMediaArtistData>, mediaArtistUpdateData: DataStoreUpdateData<IMediaArtistData>): Promise<IMediaArtist[] | undefined> {
-    const mediaAlbumDataList = await MediaArtistDatastore.updateArtists(mediaArtistFilterData, mediaArtistUpdateData);
+    const mediaAlbumDataList = await MediaArtistDatastore.updateArtists(mediaArtistFilterData, {
+      ...mediaArtistUpdateData,
+      ...(mediaArtistUpdateData.artist_name ? {
+        artist_name_normalized: this.normalizeSearchValue(mediaArtistUpdateData.artist_name),
+      } : {}),
+    });
     return this.buildMediaArtists(mediaAlbumDataList, true);
   }
 

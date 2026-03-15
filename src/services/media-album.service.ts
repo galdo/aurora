@@ -14,13 +14,60 @@ import { IPCRenderer, IPCCommChannel } from '../modules/ipc';
 
 export class MediaAlbumService {
   static async searchAlbumsByName(query: string): Promise<IMediaAlbum[]> {
-    const albums = await MediaAlbumDatastore.findMediaAlbums({
-      album_name: {
-        $regex: new RegExp(query, 'i'),
+    const normalizedQuery = this.normalizeSearchValue(query);
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    const escapedNormalizedQuery = _.escapeRegExp(normalizedQuery);
+    const escapedRawQuery = _.escapeRegExp(query);
+    const prefixRegex = new RegExp(`^${escapedNormalizedQuery}`);
+    const containsRegex = new RegExp(escapedNormalizedQuery);
+    const containsRawRegex = new RegExp(escapedRawQuery, 'i');
+    const limit = 120;
+
+    const albumsPrefix = await MediaAlbumDatastore.findMediaAlbums({
+      album_name_normalized: {
+        $regex: prefixRegex,
       },
+    } as any);
+
+    const albumsContains = albumsPrefix.length < limit
+      ? await MediaAlbumDatastore.findMediaAlbums({
+        album_name_normalized: {
+          $regex: containsRegex,
+        },
+      } as any)
+      : [];
+
+    const albumsFallback = albumsPrefix.length === 0 && albumsContains.length === 0
+      ? await MediaAlbumDatastore.findMediaAlbums({
+        album_name: {
+          $regex: containsRawRegex,
+        },
+      })
+      : [];
+
+    const albumsById = new Map<string, IMediaAlbumData>();
+    [...albumsPrefix, ...albumsContains, ...albumsFallback].forEach((album) => {
+      albumsById.set(album.id, album);
     });
 
-    return this.buildMediaAlbums(albums);
+    const mediaAlbums = await this.buildMediaAlbums(Array.from(albumsById.values()));
+    return _.orderBy(
+      mediaAlbums,
+      [album => this.normalizeSearchValue(album.album_name)],
+      ['asc'],
+    ).slice(0, limit);
+  }
+
+  private static normalizeSearchValue(value: string): string {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 
   static async getMediaAlbum(albumId: string): Promise<IMediaAlbum | undefined> {
@@ -45,7 +92,12 @@ export class MediaAlbumService {
   }
 
   static async updateMediaAlbum(mediaAlbumFilterData: DataStoreFilterData<IMediaAlbumData>, mediaAlbumUpdateData: DataStoreUpdateData<IMediaAlbumData>): Promise<IMediaAlbum | undefined> {
-    const mediaAlbumData = await MediaAlbumDatastore.updateMediaAlbum(mediaAlbumFilterData, mediaAlbumUpdateData);
+    const mediaAlbumData = await MediaAlbumDatastore.updateMediaAlbum(mediaAlbumFilterData, {
+      ...mediaAlbumUpdateData,
+      ...(mediaAlbumUpdateData.album_name ? {
+        album_name_normalized: this.normalizeSearchValue(mediaAlbumUpdateData.album_name),
+      } : {}),
+    });
     if (!mediaAlbumData) {
       return undefined;
     }

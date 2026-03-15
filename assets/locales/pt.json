@@ -322,5 +322,8 @@
   "button_settings_install_update": "Instalar agora",
   "button_settings_mark_read": "Marcar como lido",
   "label_settings_whats_new": "Novidades",
-  "label_settings_audio_cd_import_heading": "Importação de Audio-CD"
+  "label_settings_audio_cd_import_heading": "Importação de Audio-CD",
+  "label_settings_sync_progress_x_of_y": "{processed} de {found} faixas escaneadas",
+  "label_player_output_local": "Saída de áudio local",
+  "label_player_output_device_none": "Nenhum dispositivo DLNA remoto encontrado"
 }

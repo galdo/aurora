@@ -11,6 +11,7 @@ export interface IMediaTrackData {
   provider_id: string;
   sync_timestamp: number;
   track_name: string;
+  track_name_normalized?: string;
   track_number: number;
   track_duration: number;
   track_cover_picture?: IMediaPicture;
@@ -25,6 +26,7 @@ export interface IMediaAlbumData {
   provider_id: string;
   sync_timestamp: number;
   album_name: string;
+  album_name_normalized?: string;
   album_artist_id: string;
   album_cover_picture?: IMediaPicture;
   album_genre?: string;
@@ -39,6 +41,7 @@ export interface IMediaArtistData {
   provider_id: string;
   sync_timestamp: number;
   artist_name: string;
+  artist_name_normalized?: string;
   artist_feature_picture?: IMediaPicture;
   extra?: object;
 }
@@ -184,6 +187,7 @@ export interface IMediaCollectionSearchResults {
 export interface IMediaPlaylistData {
   id: string;
   name: string;
+  name_normalized?: string;
   tracks: IMediaPlaylistTrackData[];
   cover_picture?: IMediaPicture;
   created_at: number;

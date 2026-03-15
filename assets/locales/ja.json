@@ -322,5 +322,8 @@
   "button_settings_install_update": "今すぐインストール",
   "button_settings_mark_read": "既読にする",
   "label_settings_whats_new": "新機能",
-  "label_settings_audio_cd_import_heading": "Audio-CD インポート"
+  "label_settings_audio_cd_import_heading": "Audio-CD インポート",
+  "label_settings_sync_progress_x_of_y": "{found} 曲中 {processed} 曲をスキャン",
+  "label_player_output_local": "ローカル音声出力",
+  "label_player_output_device_none": "リモート DLNA デバイスが見つかりません"
 }

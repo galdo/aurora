@@ -91,6 +91,8 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
     loading,
     saving,
     syncing,
+    syncFilesFoundCount,
+    syncFilesProcessedCount,
     syncDirectoryStats,
   } = state;
   const cdImportSettings = settings.cd_import || {
@@ -197,6 +199,14 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
               }}
             />
           </div>
+          {syncing && (
+            <div className={cx('settings-description')} style={{ marginBottom: '10px' }}>
+              {I18nService.getString('label_settings_sync_progress_x_of_y', {
+                processed: syncFilesProcessedCount,
+                found: syncFilesFoundCount,
+              })}
+            </div>
+          )}
 
           <div className={cx('settings-action-row')}>
             <Button

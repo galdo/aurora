@@ -105,3 +105,27 @@
   text-overflow: ellipsis;
   overflow: hidden;
 }
+
+.podcast-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.podcast-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #16c784;
+  box-shadow: 0 0 0 3px rgba(22, 199, 132, 0.2);
+}
+
+.podcast-status-new,
+.podcast-status-unplayed {
+  color: #16c784;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}

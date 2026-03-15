@@ -141,45 +141,56 @@ export function PodcastsPage() {
         className={cx('podcasts-grid')}
         style={{ '--album-cover-size': `${coverSize}px` } as React.CSSProperties}
       >
-        {subscriptionsSorted.map(subscription => (
-          <div
-            key={subscription.id}
-            className={cx('podcast-card')}
-            role="button"
-            tabIndex={0}
-            onClick={() => openPodcastSideView(subscription.id)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                openPodcastSideView(subscription.id);
-              }
-            }}
-          >
-            <div className={cx('podcast-card-content')}>
-              <div className={cx('podcast-cover-wrapper')}>
-                {subscription.imageUrl ? (
-                  <img
-                    src={subscription.imageUrl}
-                    alt={subscription.title}
-                    className={cx('podcast-cover')}
-                  />
-                ) : (
-                  <div className={cx('podcast-cover-placeholder')}>
-                    <Icon name={Icons.Podcast}/>
-                  </div>
-                )}
-              </div>
-              <div className={cx('podcast-meta')}>
-                <div className={cx('podcast-title')}>
-                  {subscription.title}
+        {subscriptionsSorted.map((subscription) => {
+          const hasUnplayedEpisodes = subscription.hasNewEpisodes
+            || subscription.episodes.some(episode => episode.isNew);
+          return (
+            <div
+              key={subscription.id}
+              className={cx('podcast-card')}
+              role="button"
+              tabIndex={0}
+              onClick={() => openPodcastSideView(subscription.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  openPodcastSideView(subscription.id);
+                }
+              }}
+            >
+              <div className={cx('podcast-card-content')}>
+                <div className={cx('podcast-cover-wrapper')}>
+                  {subscription.imageUrl ? (
+                    <img
+                      src={subscription.imageUrl}
+                      alt={subscription.title}
+                      className={cx('podcast-cover')}
+                    />
+                  ) : (
+                    <div className={cx('podcast-cover-placeholder')}>
+                      <Icon name={Icons.Podcast}/>
+                    </div>
+                  )}
                 </div>
-                <div className={cx('podcast-publisher')}>
-                  {subscription.publisher || '-'}
+                <div className={cx('podcast-meta')}>
+                  <div className={cx('podcast-title')}>
+                    {subscription.title}
+                  </div>
+                  <div className={cx('podcast-publisher')}>
+                    {subscription.publisher || '-'}
+                  </div>
+                  {hasUnplayedEpisodes && (
+                    <div className={cx('podcast-status')}>
+                      <span className={cx('podcast-status-dot')}/>
+                      <span className={cx('podcast-status-new')}>Neu</span>
+                      <span className={cx('podcast-status-unplayed')}>(ungespielt)</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

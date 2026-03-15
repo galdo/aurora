@@ -32,6 +32,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   private playbackSourcePath = '';
   private hasTriedConversionFallback = false;
   private bitPerfectMutedPrimaryPath = false;
+  private remotePlaybackActive = false;
+  private remotePlaybackStartedAt = 0;
+  private remotePlaybackPausedProgress = 0;
   private preparationStatusListener?: (status?: IMediaPlaybackPreparationStatus) => void;
 
   constructor(mediaTrack: IMediaLocalTrack, mediaPlaybackOptions: IMediaPlaybackOptions) {
@@ -73,6 +76,21 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
   async play(): Promise<boolean> {
     this.mediaPlaybackEnded = false;
+    if (DlnaService.isRemoteOutputSelected()) {
+      const remotePlayed = await DlnaService.playMediaTrackOnSelectedRenderer(this.mediaTrack, this.remotePlaybackPausedProgress, {
+        mediaPlaybackVolume: this.mediaPlaybackOptions.mediaPlaybackVolume,
+        mediaPlaybackMaxVolume: this.mediaPlaybackOptions.mediaPlaybackMaxVolume,
+        muted: this.mediaPlaybackOptions.mediaPlaybackVolumeMuted,
+      });
+      if (!remotePlayed) {
+        return false;
+      }
+      this.remotePlaybackActive = true;
+      this.remotePlaybackStartedAt = Date.now();
+      this.mediaPlaybackEnded = false;
+      return true;
+    }
+
     const sourcePath = this.mediaTrack.extra.file_path;
 
     if (!this.mediaPlaybackLocalAudio) {
@@ -120,6 +138,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
   async prepareForPlayback(): Promise<boolean> {
     this.mediaPlaybackEnded = false;
+    if (DlnaService.isRemoteOutputSelected()) {
+      return true;
+    }
     const sourcePath = this.mediaTrack.extra.file_path;
 
     if (!this.mediaPlaybackLocalAudio) {
@@ -157,6 +178,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   checkIfLoading(): boolean {
+    if (DlnaService.isRemoteOutputSelected()) {
+      return false;
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return false;
     }
@@ -165,6 +189,17 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   checkIfPlaying(): boolean {
+    if (DlnaService.isRemoteOutputSelected()) {
+      if (!this.remotePlaybackActive) {
+        return false;
+      }
+      if (this.getPlaybackProgress() >= Number(this.mediaTrack.track_duration || 0)) {
+        this.remotePlaybackActive = false;
+        this.mediaPlaybackEnded = true;
+        return false;
+      }
+      return true;
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return false;
     }
@@ -179,6 +214,14 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   getPlaybackProgress(): number {
+    if (DlnaService.isRemoteOutputSelected()) {
+      if (!this.remotePlaybackActive) {
+        return this.remotePlaybackPausedProgress;
+      }
+      const elapsedSeconds = Math.max(0, (Date.now() - this.remotePlaybackStartedAt) / 1000);
+      const maxDuration = Number(this.mediaTrack.track_duration || 0);
+      return Math.min(maxDuration, this.remotePlaybackPausedProgress + elapsedSeconds);
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return 0;
     }
@@ -187,6 +230,19 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   seekPlayback(mediaPlaybackSeekPosition: number): Promise<boolean> {
+    if (DlnaService.isRemoteOutputSelected()) {
+      return DlnaService.seekSelectedRenderer(mediaPlaybackSeekPosition).then((seeked) => {
+        if (!seeked) {
+          return false;
+        }
+        this.remotePlaybackPausedProgress = mediaPlaybackSeekPosition;
+        if (this.remotePlaybackActive) {
+          this.remotePlaybackStartedAt = Date.now();
+        }
+        this.mediaPlaybackEnded = false;
+        return true;
+      });
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }
@@ -212,6 +268,16 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   pausePlayback(): Promise<boolean> {
+    if (DlnaService.isRemoteOutputSelected()) {
+      return DlnaService.pauseSelectedRenderer().then((paused) => {
+        if (!paused) {
+          return false;
+        }
+        this.remotePlaybackPausedProgress = this.getPlaybackProgress();
+        this.remotePlaybackActive = false;
+        return true;
+      });
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }
@@ -234,6 +300,17 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   stopPlayback(): Promise<boolean> {
+    if (DlnaService.isRemoteOutputSelected()) {
+      return DlnaService.stopSelectedRenderer().then((stopped) => {
+        if (!stopped) {
+          return false;
+        }
+        this.remotePlaybackPausedProgress = 0;
+        this.remotePlaybackActive = false;
+        this.mediaPlaybackEnded = true;
+        return true;
+      });
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }
@@ -252,6 +329,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   changePlaybackVolume(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): Promise<boolean> {
+    if (DlnaService.isRemoteOutputSelected()) {
+      return DlnaService.setSelectedRendererVolume(mediaPlaybackVolume, mediaPlaybackMaxVolume);
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }
@@ -272,6 +352,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   mutePlaybackVolume(): Promise<boolean> {
+    if (DlnaService.isRemoteOutputSelected()) {
+      return DlnaService.muteSelectedRenderer();
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }
@@ -292,6 +375,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   unmutePlaybackVolume(): Promise<boolean> {
+    if (DlnaService.isRemoteOutputSelected()) {
+      return DlnaService.unmuteSelectedRenderer();
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }

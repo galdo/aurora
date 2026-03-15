@@ -21,6 +21,8 @@ class MediaTrackDatastore {
         unique: true,
       }, {
         field: 'track_name',
+      }, {
+        field: 'track_name_normalized',
       }],
     });
   }

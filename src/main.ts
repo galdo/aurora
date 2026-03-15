@@ -617,13 +617,23 @@ class App implements IAppMain {
   }
 
   private saveUpdateSettings(nextSettings: AppUpdateSettings) {
-    this.updateSettings = nextSettings;
+    const safeSettings: AppUpdateSettings = {
+      checkOnStartup: Boolean(nextSettings?.checkOnStartup),
+      downloadMode: nextSettings?.downloadMode === 'manual' ? 'manual' : 'auto',
+      autoInstallOnDownload: Boolean(nextSettings?.autoInstallOnDownload),
+      betaChannelEnabled: Boolean(nextSettings?.betaChannelEnabled),
+    };
+    this.updateSettings = safeSettings;
     const updateSettingsPath = this.getUpdateSettingsPath();
     fs.mkdirSync(path.dirname(updateSettingsPath), { recursive: true });
-    fs.writeFileSync(updateSettingsPath, JSON.stringify(this.updateSettings));
-    if (app.isPackaged) {
-      electronUpdater.autoUpdater.autoDownload = this.updateSettings.downloadMode === 'auto';
-      electronUpdater.autoUpdater.allowPrerelease = this.updateSettings.betaChannelEnabled;
+    fs.writeFileSync(updateSettingsPath, JSON.stringify(this.updateSettings), 'utf8');
+    if (app.isPackaged && this.autoUpdaterRegistered) {
+      try {
+        electronUpdater.autoUpdater.autoDownload = this.updateSettings.downloadMode === 'auto';
+        electronUpdater.autoUpdater.allowPrerelease = this.updateSettings.betaChannelEnabled;
+      } catch (error) {
+        debug('saveUpdateSettings - failed to apply updater runtime settings - %o', error);
+      }
     }
     return this.updateSettings;
   }

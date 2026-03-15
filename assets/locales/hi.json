@@ -322,5 +322,8 @@
   "button_settings_install_update": "अभी इंस्टॉल करें",
   "button_settings_mark_read": "पढ़ा हुआ चिह्नित करें",
   "label_settings_whats_new": "नया क्या है",
-  "label_settings_audio_cd_import_heading": "Audio-CD आयात"
+  "label_settings_audio_cd_import_heading": "Audio-CD आयात",
+  "label_settings_sync_progress_x_of_y": "{found} में से {processed} ट्रैक स्कैन हुए",
+  "label_player_output_local": "लोकल ऑडियो आउटपुट",
+  "label_player_output_device_none": "कोई रिमोट DLNA डिवाइस नहीं मिला"
 }

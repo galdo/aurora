@@ -524,6 +524,7 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
             const summary = toPlainText(episode.description);
             const isEpisodeActive = podcastPlaybackSnapshot.episode?.id === episode.id;
             const isEpisodePlaying = isEpisodeActive && podcastPlaybackSnapshot.isPlaying;
+            const isEpisodeUnplayed = Boolean(episode.isNew);
             return (
               <div key={episode.id} className={cx('sideview-episode-item')}>
                 <Button
@@ -534,7 +535,16 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
                   <Icon name={isEpisodePlaying ? Icons.MediaPause : Icons.MediaPlay}/>
                 </Button>
                 <div className={cx('sideview-episode-content')}>
-                  <div className={cx('sideview-episode-title')}>{episode.title}</div>
+                  <div className={cx('sideview-episode-title-row')}>
+                    <div className={cx('sideview-episode-title')}>{episode.title}</div>
+                    {isEpisodeUnplayed && (
+                      <div className={cx('sideview-episode-status')}>
+                        <span className={cx('sideview-episode-status-dot')}/>
+                        <span className={cx('sideview-episode-status-new')}>Neu</span>
+                        <span className={cx('sideview-episode-status-unplayed')}>(ungespielt)</span>
+                      </div>
+                    )}
+                  </div>
                   {dateLabel && (
                     <div className={cx('sideview-episode-date')}>{dateLabel}</div>
                   )}

@@ -21,6 +21,8 @@ class MediaArtistDatastore {
         unique: true,
       }, {
         field: 'artist_name',
+      }, {
+        field: 'artist_name_normalized',
       }],
     });
   }

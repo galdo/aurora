@@ -322,5 +322,8 @@
   "button_settings_install_update": "Jetzt installieren",
   "button_settings_mark_read": "Gelesen",
   "label_settings_whats_new": "Was ist neu",
-  "label_settings_audio_cd_import_heading": "Audio-CD Import"
+  "label_settings_audio_cd_import_heading": "Audio-CD Import",
+  "label_settings_sync_progress_x_of_y": "{processed} von {found} Titeln gescannt",
+  "label_player_output_local": "Lokale Audioausgabe",
+  "label_player_output_device_none": "Keine entfernten DLNA-Geräte gefunden"
 }

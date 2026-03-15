@@ -35,6 +35,7 @@
   "PlayerVolume1": "fas fa-volume-up",
   "PlayerVolume2": "fas fa-volume-down",
   "PlayerVolumeMuted": "fas fa-volume-mute",
+  "PlayerCast": "fas fa-volume-up",
   "Refresh": "fas fa-sync-alt",
   "Refreshing": "fas fa-sync-alt fa-spin",
   "Search": "fas fa-search",

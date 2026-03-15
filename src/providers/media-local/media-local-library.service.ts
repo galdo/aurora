@@ -47,6 +47,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   private readonly syncAddFileQueue = new PQueue({ concurrency: 10, autoStart: true, timeout: 5 * 60 * 1000 }); // timeout 5 minutes / track
   private readonly syncLock = new Semaphore(1);
   private syncAbortController: AbortController | null = null;
+  private syncPostProcessingPromise: Promise<void> | null = null;
   private syncFilesQueuedCount = 0;
   private syncFilesProcessedQueueCount = 0;
   private playlistCoversRefreshedThisSession = false;
@@ -120,36 +121,12 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           settings,
           forceRescan,
         }));
+        await this.waitForQueueInputToStabilize(signal);
 
-        // Wait for potential IPC delays/race conditions where 'complete' arrives before 'data'
-        // This ensures the queue is populated before we check for idleness
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // wait for queue to empty and process all files
         debug('syncMediaTracks - waiting for queue to drain. Queued: %d, Processed: %d', this.syncFilesQueuedCount, this.syncFilesProcessedQueueCount);
         await this.syncAddFileQueue.onIdle();
+        await this.waitForQueueProcessingCompletion(signal);
 
-        // Safety check: ensure all queued files are processed
-        let retries = 0;
-        while (this.syncFilesProcessedQueueCount < this.syncFilesQueuedCount && retries < 60) {
-          debug('syncMediaTracks - waiting for processing completion... %d/%d', this.syncFilesProcessedQueueCount, this.syncFilesQueuedCount);
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          retries += 1;
-        }
-
-        // consolidate compilation albums
-        await this.consolidateCompilationAlbums(settings);
-        await this.syncFolderPlaylists(settings);
-        await this.repairAlbumArtists();
-
-        // process compilation album covers
-        await this.processCompilationAlbumCovers(settings);
-        await this.processHiddenAlbumPlaylistCovers();
-        await this.processArtistFeaturePictures();
-        await this.processSmartPlaylistCovers();
-
-        // done - only finish if not aborted or new run is already in place
         if (signal.aborted || this.syncAbortController !== abortController) {
           debug('syncMediaTracks - operation aborted');
           return;
@@ -172,11 +149,10 @@ class MediaLocalLibraryService implements IMediaLibraryService {
             tracksAddedCount: syncFilesAddedCount,
           }));
         }
-
-        // reload library
         MediaAlbumService.loadMediaAlbums();
         MediaArtistService.loadMediaArtists();
         MediaPlaylistService.loadMediaPlaylists();
+        this.runSyncPostProcessing(settings, signal);
 
         debug(
           'syncMediaTracks - finished sync, took - %s, found - %d, processed - %d, added - %d',
@@ -189,6 +165,95 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         finalize();
       }
     });
+  }
+
+  private async waitForQueueInputToStabilize(signal: AbortSignal): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let previousQueuedCount = this.syncFilesQueuedCount;
+      let stableCycles = 0;
+      let cycles = 0;
+      const tick = () => {
+        if (signal.aborted || cycles >= 20 || stableCycles >= 3) {
+          resolve();
+          return;
+        }
+        cycles += 1;
+        if (this.syncFilesQueuedCount === previousQueuedCount) {
+          stableCycles += 1;
+        } else {
+          previousQueuedCount = this.syncFilesQueuedCount;
+          stableCycles = 0;
+        }
+        setTimeout(tick, 100);
+      };
+      setTimeout(tick, 100);
+    });
+  }
+
+  private async waitForQueueProcessingCompletion(signal: AbortSignal): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let retries = 0;
+      const tick = () => {
+        if (signal.aborted || retries >= 30 || this.syncFilesProcessedQueueCount >= this.syncFilesQueuedCount) {
+          resolve();
+          return;
+        }
+        retries += 1;
+        debug('syncMediaTracks - waiting for processing completion... %d/%d', this.syncFilesProcessedQueueCount, this.syncFilesQueuedCount);
+        setTimeout(tick, 250);
+      };
+      setTimeout(tick, 250);
+    });
+  }
+
+  private runSyncPostProcessing(settings: IMediaLocalSettings, signal: AbortSignal): void {
+    if (this.syncPostProcessingPromise) {
+      return;
+    }
+
+    this.syncPostProcessingPromise = (async () => {
+      if (signal.aborted) {
+        return;
+      }
+      await this.consolidateCompilationAlbums(settings);
+      if (signal.aborted) {
+        return;
+      }
+      await this.syncFolderPlaylists(settings);
+      if (signal.aborted) {
+        return;
+      }
+      await this.repairAlbumArtists();
+      if (signal.aborted) {
+        return;
+      }
+      await this.processCompilationAlbumCovers(settings);
+      if (signal.aborted) {
+        return;
+      }
+      await this.processHiddenAlbumPlaylistCovers();
+      if (signal.aborted) {
+        return;
+      }
+      await this.processArtistFeaturePictures();
+      if (signal.aborted) {
+        return;
+      }
+      await this.processSmartPlaylistCovers();
+      if (signal.aborted) {
+        return;
+      }
+      MediaAlbumService.loadMediaAlbums();
+      MediaArtistService.loadMediaArtists();
+      MediaPlaylistService.loadMediaPlaylists();
+    })()
+      .catch((error) => {
+        console.error('sync post-processing failed');
+        console.error(error);
+      })
+      .finally(() => {
+        this.syncPostProcessingPromise = null;
+      });
   }
 
   private addTracksFromDirectory(directory: string, options: { signal: AbortSignal, settings: IMediaLocalSettings, forceRescan?: boolean }): Promise<void> {
@@ -355,7 +420,15 @@ class MediaLocalLibraryService implements IMediaLibraryService {
               id: mediaTrack.track_album_id,
             }, {
               sync_timestamp: scanTimestamp,
+              album_name_normalized: MediaLocalLibraryService.normalizeSearchValue(mediaTrack.track_album.album_name),
             });
+
+            await MediaTrackService.updateMediaTrack({
+              id: mediaTrack.id,
+            }, {
+              track_name_normalized: MediaLocalLibraryService.normalizeSearchValue(mediaTrack.track_name),
+              sync_timestamp: scanTimestamp,
+            } as any);
 
             await MediaArtistService.updateMediaArtists({
               id: {
@@ -376,7 +449,15 @@ class MediaLocalLibraryService implements IMediaLibraryService {
             id: mediaTrack.track_album_id,
           }, {
             sync_timestamp: scanTimestamp,
+            album_name_normalized: MediaLocalLibraryService.normalizeSearchValue(mediaTrack.track_album.album_name),
           });
+
+          await MediaTrackService.updateMediaTrack({
+            id: mediaTrack.id,
+          }, {
+            track_name_normalized: MediaLocalLibraryService.normalizeSearchValue(mediaTrack.track_name),
+            sync_timestamp: scanTimestamp,
+          } as any);
 
           await MediaArtistService.updateMediaArtists({
             id: {
@@ -598,6 +679,15 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
   private static getMediaId(...mediaInput: string[]): string {
     return CryptoService.sha256(...mediaInput);
+  }
+
+  private static normalizeSearchValue(value: string): string {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 
   private static readAudioMetadataFromFile(filePath: string): Promise<IAudioMetadata> {
@@ -1017,6 +1107,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       }, {
         id: folderPlaylistId,
         name: path.basename(directory),
+        name_normalized: path.basename(directory).toLowerCase().trim(),
         tracks: playlistTracks,
         is_smart: true,
         smart_match_mode: 'all',

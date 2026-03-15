@@ -24,11 +24,28 @@ export class MediaCollectionService {
   private static readonly tracksInFlight = new Map<string, Promise<IMediaTrack[]>>();
 
   static async searchCollection(query: string): Promise<IMediaCollectionSearchResults> {
+    const searchQuery = String(query || '').trim();
+    if (!searchQuery) {
+      return {
+        tracks: [],
+        albums: [],
+        artists: [],
+        playlists: [],
+      };
+    }
+
+    const [tracks, albums, artists, playlists] = await Promise.all([
+      MediaTrackService.searchTracksByName(searchQuery),
+      MediaAlbumService.searchAlbumsByName(searchQuery),
+      MediaArtistService.searchArtistsByName(searchQuery),
+      MediaPlaylistService.searchPlaylistsByName(searchQuery),
+    ]);
+
     return {
-      tracks: await MediaTrackService.searchTracksByName(query),
-      albums: await MediaAlbumService.searchAlbumsByName(query),
-      artists: await MediaArtistService.searchArtistsByName(query),
-      playlists: await MediaPlaylistService.searchPlaylistsByName(query),
+      tracks,
+      albums,
+      artists,
+      playlists,
     };
   }
 

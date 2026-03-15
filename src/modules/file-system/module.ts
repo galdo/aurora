@@ -73,6 +73,7 @@ export class FileSystemModule implements IAppModule {
 
     const entryFilter = (entry: Entry): boolean => {
       if (!entry.dirent.isFile()) return false;
+      if (this.shouldIgnoreEntryByName(entry.name)) return false;
       if (!fileExtensions || isEmpty(fileExtensions)) return true;
 
       const i = entry.name.lastIndexOf('.');
@@ -82,11 +83,19 @@ export class FileSystemModule implements IAppModule {
       return fileExtensions.includes(ext);
     };
 
+    const deepFilter = (entry: Entry): boolean => {
+      if (!entry.dirent.isDirectory()) {
+        return true;
+      }
+      return !this.shouldIgnoreEntryByName(entry.name);
+    };
+
     const walker = walkStream(directory, {
       followSymbolicLinks: false,
       stats: true,
       throwErrorOnBrokenSymbolicLink: false,
       entryFilter,
+      deepFilter,
     });
 
     // stream
@@ -168,5 +177,22 @@ export class FileSystemModule implements IAppModule {
     } catch {
       return false;
     }
+  }
+
+  private shouldIgnoreEntryByName(entryName: string): boolean {
+    const normalizedName = String(entryName || '');
+    if (!normalizedName) {
+      return false;
+    }
+
+    if (normalizedName.startsWith('._')) {
+      return true;
+    }
+
+    if (process.platform === 'win32' || process.platform === 'linux') {
+      return normalizedName.startsWith('.');
+    }
+
+    return false;
   }
 }

@@ -382,7 +382,7 @@ export function SettingsPage() {
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
-                    className={cx('theme-switch-item', { active: groupCompilationsByFolder })}
+                    className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: groupCompilationsByFolder })}
                     onClick={() => {
                       mediaLocalStore.dispatch({
                         type: MediaLocalStateActionType.ToggleGroupCompilations,
@@ -502,7 +502,7 @@ export function SettingsPage() {
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
-                    className={cx('theme-switch-item', { active: dapAutoSyncEnabled })}
+                    className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: dapAutoSyncEnabled })}
                     onClick={() => {
                       persistDapSettings({
                         targetDirectory: dapTargetDirectory,
@@ -527,7 +527,7 @@ export function SettingsPage() {
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
-                    className={cx('theme-switch-item', { active: dapDeleteMissingOnDevice })}
+                    className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: dapDeleteMissingOnDevice })}
                     onClick={() => {
                       persistDapSettings({
                         targetDirectory: dapTargetDirectory,
@@ -610,7 +610,7 @@ export function SettingsPage() {
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
-                    className={cx('theme-switch-item', { active: bitPerfectState.enabled })}
+                    className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: bitPerfectState.enabled })}
                     onClick={() => {
                       BitPerfectService.setEnabled(!bitPerfectState.enabled).catch((error) => {
                         console.error(error);
@@ -644,7 +644,7 @@ export function SettingsPage() {
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
-                    className={cx('theme-switch-item', { active: dlnaState.enabled })}
+                    className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: dlnaState.enabled })}
                     onClick={() => {
                       DlnaService.setEnabled(!dlnaState.enabled).catch((error) => {
                         console.error(error);
@@ -709,7 +709,7 @@ export function SettingsPage() {
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
-                    className={cx('theme-switch-item', { active: autoUpdateEnabled })}
+                    className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: autoUpdateEnabled })}
                     disabled={updateSettingsSaving}
                     onClick={() => {
                       const currentSettings = updateSettings;
@@ -746,7 +746,7 @@ export function SettingsPage() {
                 <div className={cx('theme-switch')}>
                   <button
                     type="button"
-                    className={cx('theme-switch-item', { active: updateSettings.betaChannelEnabled })}
+                    className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: updateSettings.betaChannelEnabled })}
                     disabled={updateSettingsSaving}
                     onClick={() => {
                       applyUpdateSettings({

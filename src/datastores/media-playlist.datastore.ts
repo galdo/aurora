@@ -10,6 +10,10 @@ class MediaPlaylistDatastore {
       indexes: [{
         field: 'id',
         unique: true,
+      }, {
+        field: 'name',
+      }, {
+        field: 'name_normalized',
       }],
     });
   }
@@ -20,9 +24,11 @@ class MediaPlaylistDatastore {
 
   insertMediaPlaylist(mediaPlaylistInputData: DataStoreInputData<IMediaPlaylistData>): Promise<IMediaPlaylistData> {
     const now = Date.now();
+    const name = String(mediaPlaylistInputData.name || '');
 
     return IPCRenderer.sendAsyncMessage(IPCCommChannel.DSInsertOne, this.mediaPlaylistsDatastoreName, {
       ...mediaPlaylistInputData,
+      name_normalized: mediaPlaylistInputData.name_normalized || this.normalizeSearchValue(name),
       created_at: now,
       updated_at: now,
     });
@@ -80,6 +86,9 @@ class MediaPlaylistDatastore {
     }, {
       $set: {
         ...mediaPlaylistUpdateData,
+        ...(mediaPlaylistUpdateData.name ? {
+          name_normalized: this.normalizeSearchValue(mediaPlaylistUpdateData.name),
+        } : {}),
         updated_at: Date.now(),
       },
     });
@@ -87,11 +96,22 @@ class MediaPlaylistDatastore {
 
   upsertMediaPlaylist(mediaPlaylistFilterData: DataStoreFilterData<IMediaPlaylistData>, mediaPlaylistInputData: DataStoreInputData<IMediaPlaylistData>) {
     const now = Date.now();
+    const name = String(mediaPlaylistInputData.name || '');
     return IPCRenderer.sendAsyncMessage(IPCCommChannel.DSUpsertOne, this.mediaPlaylistsDatastoreName, mediaPlaylistFilterData, {
       ...mediaPlaylistInputData,
+      name_normalized: mediaPlaylistInputData.name_normalized || this.normalizeSearchValue(name),
       updated_at: now,
       created_at: now,
     });
+  }
+
+  private normalizeSearchValue(value: string): string {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 }
 

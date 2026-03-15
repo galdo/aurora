@@ -87,13 +87,51 @@ export class MediaPlaylistService {
   }
 
   static async searchPlaylistsByName(query: string): Promise<IMediaPlaylist[]> {
-    const playlists = await MediaPlaylistDatastore.findMediaPlaylists({
-      name: {
-        $regex: new RegExp(query, 'i'),
+    const normalizedQuery = this.normalizeSearchValue(query);
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    const escapedNormalizedQuery = _.escapeRegExp(normalizedQuery);
+    const escapedRawQuery = _.escapeRegExp(query);
+    const prefixRegex = new RegExp(`^${escapedNormalizedQuery}`);
+    const containsRegex = new RegExp(escapedNormalizedQuery);
+    const containsRawRegex = new RegExp(escapedRawQuery, 'i');
+    const limit = 120;
+
+    const playlistsPrefix = await MediaPlaylistDatastore.findMediaPlaylists({
+      name_normalized: {
+        $regex: prefixRegex,
       },
+    } as any);
+
+    const playlistsContains = playlistsPrefix.length < limit
+      ? await MediaPlaylistDatastore.findMediaPlaylists({
+        name_normalized: {
+          $regex: containsRegex,
+        },
+      } as any)
+      : [];
+
+    const playlistsFallback = playlistsPrefix.length === 0 && playlistsContains.length === 0
+      ? await MediaPlaylistDatastore.findMediaPlaylists({
+        name: {
+          $regex: containsRawRegex,
+        },
+      })
+      : [];
+
+    const playlistsById = new Map<string, IMediaPlaylistData>();
+    [...playlistsPrefix, ...playlistsContains, ...playlistsFallback].forEach((playlist) => {
+      playlistsById.set(playlist.id, playlist);
     });
 
-    return this.buildMediaPlaylists(playlists);
+    const mediaPlaylists = await this.buildMediaPlaylists(Array.from(playlistsById.values()));
+    return _.orderBy(
+      mediaPlaylists,
+      [playlist => this.normalizeSearchValue(playlist.name)],
+      ['asc'],
+    ).slice(0, limit);
   }
 
   static async getMediaPlaylist(mediaPlaylistId: string): Promise<IMediaPlaylist | undefined> {
@@ -198,6 +236,7 @@ export class MediaPlaylistService {
       name: await this.getDefaultNewPlaylistName(),
       tracks: [],
     });
+    inputData.name_normalized = this.normalizeSearchValue(inputData.name || '');
     inputData.tracks = inputData.tracks.map(trackInputData => this.buildMediaPlaylistTrackFromInput(trackInputData));
 
     const mediaPlaylistData = await MediaPlaylistDatastore.insertMediaPlaylist(inputData);
@@ -518,6 +557,7 @@ export class MediaPlaylistService {
     const data: DataStoreUpdateData<IMediaPlaylistData> = {};
     if (playlistUpdateData.name) {
       data.name = playlistUpdateData.name;
+      data.name_normalized = this.normalizeSearchValue(playlistUpdateData.name);
     }
     if (playlistUpdateData.cover_picture) {
       data.cover_picture = playlistUpdateData.cover_picture;
@@ -691,6 +731,15 @@ export class MediaPlaylistService {
       .trim()
       .replace(/[<>:"/\\|?*]/g, '_');
     return value || 'playlist';
+  }
+
+  private static normalizeSearchValue(value: string): string {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 
   private static getPlaylistsDirectoryPath(): string {

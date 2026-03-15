@@ -1,11 +1,16 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { Row } from 'react-bootstrap';
 import { useSelector } from 'react-redux';
 import classNames from 'classnames/bind';
 
 import { Icons, Routes } from '../../constants';
 import { RootState } from '../../reducers';
-import { MediaPlayerService } from '../../services';
+import { DlnaService, MediaPlayerService } from '../../services';
 import { I18nService } from '../../services/i18n.service';
 
 import { Icon } from '../icon/icon.component';
@@ -31,6 +36,38 @@ export function MediaPlayerSide() {
 
   // TODO: Add implementation for setMediaVolumeDragStartValue
   const [mediaVolumeDragStartValue] = useState<number | undefined>(undefined);
+  const [dlnaState, setDlnaState] = useState(() => DlnaService.getState());
+  const [showOutputMenu, setShowOutputMenu] = useState(false);
+  const outputMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    DlnaService.initialize();
+    setDlnaState(DlnaService.getState());
+    const unsubscribeDlna = DlnaService.subscribe((state) => {
+      setDlnaState(state);
+    });
+    return () => {
+      unsubscribeDlna();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (!outputMenuRef.current) {
+        return;
+      }
+      if (outputMenuRef.current.contains(event.target as Node)) {
+        return;
+      }
+      setShowOutputMenu(false);
+    };
+    if (showOutputMenu) {
+      window.addEventListener('mousedown', handleDocumentClick);
+    }
+    return () => {
+      window.removeEventListener('mousedown', handleDocumentClick);
+    };
+  }, [showOutputMenu]);
 
   const handleVolumeChangeDragCommit = useCallback((value: number) => {
     MediaPlayerService.changeMediaPlayerVolume(value);
@@ -151,6 +188,55 @@ export function MediaPlayerSide() {
               maxValue={mediaPlaybackVolumeMaxLimit}
               onDragCommit={handleVolumeChangeDragCommit}
             />
+          </div>
+          <div className={cx('media-player-output-selector')} ref={outputMenuRef}>
+            <Button
+              className={cx('media-player-control', 'media-player-control-sm', 'media-player-output-button', {
+                active: dlnaState.outputMode === 'remote',
+                connected: dlnaState.outputMode === 'remote' && !!dlnaState.selectedRendererId,
+              })}
+              onButtonSubmit={() => {
+                setShowOutputMenu(!showOutputMenu);
+              }}
+            >
+              <Icon name={Icons.PlayerCast}/>
+            </Button>
+            {showOutputMenu && (
+              <div className={cx('media-player-output-menu')}>
+                <button
+                  type="button"
+                  className={cx('media-player-output-item', {
+                    active: dlnaState.outputMode === 'local',
+                  })}
+                  onClick={() => {
+                    DlnaService.setOutputDevice('local').catch(console.error);
+                    setShowOutputMenu(false);
+                  }}
+                >
+                  {I18nService.getString('label_player_output_local')}
+                </button>
+                {dlnaState.rendererDevices.map(renderer => (
+                  <button
+                    key={renderer.id}
+                    type="button"
+                    className={cx('media-player-output-item', {
+                      active: dlnaState.outputMode === 'remote' && dlnaState.selectedRendererId === renderer.id,
+                    })}
+                    onClick={() => {
+                      DlnaService.setOutputDevice(renderer.id).catch(console.error);
+                      setShowOutputMenu(false);
+                    }}
+                  >
+                    {renderer.name}
+                  </button>
+                ))}
+                {dlnaState.rendererDevices.length === 0 && (
+                  <div className={cx('media-player-output-empty')}>
+                    {I18nService.getString('label_player_output_device_none')}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
         {!!audioDetailsLabel && (

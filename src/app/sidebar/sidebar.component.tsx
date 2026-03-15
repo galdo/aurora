@@ -1,4 +1,4 @@
-import React, { useCallback, useSyncExternalStore, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import classNames from 'classnames/bind';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -9,9 +9,9 @@ import {
   RouterLink,
 } from '../../components';
 
-import { AppService, I18nService, PodcastService } from '../../services';
+import { AppService, I18nService } from '../../services';
 import routes from '../app.routes';
-import { Icons, Routes } from '../../constants';
+import { Icons } from '../../constants';
 import { MediaLibraryActions } from '../../enums';
 import { PlatformOS } from '../../modules/platform';
 import { IPCCommChannel, IPCRenderer } from '../../modules/ipc';
@@ -129,19 +129,13 @@ function SidebarAudioCd() {
 }
 
 function SidebarNavigationList() {
-  const hasPodcastUpdates = useSyncExternalStore(
-    listener => PodcastService.subscribe(listener),
-    () => PodcastService.hasNewEpisodes(),
-    () => PodcastService.hasNewEpisodes(),
-  );
-
   return (
     <div className={cx('sidebar-navigation-list')}>
       {routes.sidebar.map(route => (
         <SidebarNavigationLink
           key={route.path}
           route={route}
-          hasNewContent={route.path === Routes.Podcasts && hasPodcastUpdates}
+          hasNewContent={false}
         />
       ))}
       <SidebarAudioCd/>

@@ -322,5 +322,8 @@
   "label_settings_dap_status_aborted": "Aborted",
   "label_settings_dap_status_error": "Error",
   "label_settings_dap_time_remaining": "Time remaining:",
-  "label_settings_dap_resumable": "Resumable from {count} already processed files."
+  "label_settings_dap_resumable": "Resumable from {count} already processed files.",
+  "label_settings_sync_progress_x_of_y": "{processed} di {found} brani scansionati",
+  "label_player_output_local": "Uscita audio locale",
+  "label_player_output_device_none": "Nessun dispositivo DLNA remoto trovato"
 }

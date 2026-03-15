@@ -1,4 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import classNames from 'classnames/bind';
 import { isEmpty } from 'lodash';
 import { useHistory, useLocation } from 'react-router-dom';
@@ -34,42 +39,45 @@ export function SearchPage() {
   const query = useQuery();
 
   const [searchInput, setSearchInput] = React.useState(query);
-  const [searchLoading, setSearchLoading] = React.useState(false);
+  const [searchTerm, setSearchTerm] = React.useState(query);
   const [searchResults, setSearchResults] = React.useState<Partial<IMediaCollectionSearchResults>>({});
   const [searchCategory, setSearchCategory] = useState('all');
   const isSearchingAll = searchCategory === 'all';
+  const activeSearchRequestRef = useRef(0);
 
-  useEffect(() => {
-    console.log({ searchLoading, searchResults });
-  }, [
-    searchLoading,
-    searchResults,
-  ]);
-
-  const search = useCallback((searchTerm: string) => {
+  const search = useCallback((nextSearchTerm: string) => {
     setSearchCategory('all');
+    activeSearchRequestRef.current += 1;
+    const searchRequestId = activeSearchRequestRef.current;
 
-    if (isEmpty(searchTerm)) {
+    if (isEmpty(nextSearchTerm) || nextSearchTerm.length < 2) {
       setSearchResults({});
-      setSearchLoading(false);
+      history.replace(buildQueryPath(nextSearchTerm));
       return;
     }
 
-    setSearchLoading(true);
-
-    MediaCollectionService.searchCollection(searchTerm)
+    MediaCollectionService.searchCollection(nextSearchTerm)
       .then((results) => {
+        if (searchRequestId !== activeSearchRequestRef.current) {
+          return;
+        }
         setSearchResults(results);
-        history.replace(buildQueryPath(searchTerm));
-      })
-      .finally(() => setSearchLoading(false));
-  }, []);
+        history.replace(buildQueryPath(nextSearchTerm));
+      });
+  }, [history]);
 
   useEffect(() => {
-    search(searchInput.trim());
+    const timeout = setTimeout(() => {
+      setSearchTerm(searchInput.trim());
+    }, 180);
+    return () => clearTimeout(timeout);
+  }, [searchInput]);
+
+  useEffect(() => {
+    search(searchTerm);
   }, [
     search,
-    searchInput,
+    searchTerm,
   ]);
 
   return (

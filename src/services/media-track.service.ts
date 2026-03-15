@@ -18,13 +18,59 @@ export class MediaTrackService {
   private static readonly albumTracksInFlight = new Map<string, Promise<IMediaTrack[]>>();
 
   static async searchTracksByName(query: string): Promise<IMediaTrack[]> {
-    const tracks = await MediaTrackDatastore.findMediaTracks({
-      track_name: {
-        $regex: new RegExp(query, 'i'),
+    const normalizedQuery = this.normalizeSearchValue(query);
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    const escapedNormalizedQuery = _.escapeRegExp(normalizedQuery);
+    const escapedRawQuery = _.escapeRegExp(query);
+    const prefixRegex = new RegExp(`^${escapedNormalizedQuery}`);
+    const containsRegex = new RegExp(escapedNormalizedQuery);
+    const containsRawRegex = new RegExp(escapedRawQuery, 'i');
+    const limit = 120;
+
+    const tracksPrefix = await MediaTrackDatastore.findMediaTracks({
+      track_name_normalized: {
+        $regex: prefixRegex,
       },
+    } as any);
+
+    const tracksContains = tracksPrefix.length < limit
+      ? await MediaTrackDatastore.findMediaTracks({
+        track_name_normalized: {
+          $regex: containsRegex,
+        },
+      } as any)
+      : [];
+
+    const tracksFallback = tracksPrefix.length === 0 && tracksContains.length === 0
+      ? await MediaTrackDatastore.findMediaTracks({
+        track_name: {
+          $regex: containsRawRegex,
+        },
+      })
+      : [];
+
+    const tracksById = new Map<string, IMediaTrackData>();
+    [...tracksPrefix, ...tracksContains, ...tracksFallback].forEach((track) => {
+      tracksById.set(track.id, track);
     });
 
-    return this.buildMediaTracks(tracks);
+    const mediaTracks = await this.buildMediaTracks(Array.from(tracksById.values()));
+    const queryTerms = normalizedQuery
+      .split(/\s+/)
+      .map(value => value.trim())
+      .filter(Boolean);
+
+    return _.orderBy(
+      mediaTracks,
+      [
+        track => this.getTrackSearchScore(track, normalizedQuery, queryTerms),
+        track => this.normalizeSearchValue(track.track_name),
+      ],
+      ['desc', 'asc'],
+    ).slice(0, limit);
   }
 
   static async searchTracksByQuery(query: string, limit = 20): Promise<IMediaTrack[]> {
@@ -172,7 +218,12 @@ export class MediaTrackService {
   }
 
   static async updateMediaTrack(mediaTrackFilterData: DataStoreFilterData<IMediaTrackData>, mediaTrackUpdateData: DataStoreUpdateData<IMediaTrackData>): Promise<IMediaTrack | undefined> {
-    const mediaTrackData = await MediaTrackDatastore.updateMediaTrack(mediaTrackFilterData, mediaTrackUpdateData);
+    const mediaTrackData = await MediaTrackDatastore.updateMediaTrack(mediaTrackFilterData, {
+      ...mediaTrackUpdateData,
+      ...(mediaTrackUpdateData.track_name ? {
+        track_name_normalized: this.normalizeSearchValue(mediaTrackUpdateData.track_name),
+      } : {}),
+    });
     if (!mediaTrackData) {
       return undefined;
     }
@@ -363,7 +414,12 @@ export class MediaTrackService {
   }
 
   private static normalizeSearchValue(value: string): string {
-    return String(value || '').toLowerCase().trim();
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 
   private static getTrackSearchScore(track: IMediaTrack, normalizedQuery: string, queryTerms: string[]): number {

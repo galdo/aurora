@@ -21,6 +21,8 @@ class MediaAlbumDatastore {
         unique: true,
       }, {
         field: 'album_name',
+      }, {
+        field: 'album_name_normalized',
       }],
     });
   }
