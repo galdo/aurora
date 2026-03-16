@@ -18,7 +18,7 @@ import 'regenerator-runtime/runtime';
 
 import path from 'path';
 import fs from 'fs';
-import electronUpdater from 'electron-updater';
+import * as electronUpdater from 'electron-updater';
 import electronLog from 'electron-log/main';
 import electronDebug from 'electron-debug';
 import _ from 'lodash';
@@ -456,7 +456,19 @@ class App implements IAppMain {
 
   private getAutoUpdater() {
     const updaterModule = electronUpdater as any;
-    return updaterModule?.autoUpdater || updaterModule?.default?.autoUpdater;
+    const pickUpdater = (candidate: any) => (
+      candidate
+        && typeof candidate.checkForUpdates === 'function'
+        && typeof candidate.downloadUpdate === 'function'
+        && typeof candidate.quitAndInstall === 'function'
+        ? candidate
+        : undefined
+    );
+
+    return pickUpdater(updaterModule)
+      || pickUpdater(updaterModule?.autoUpdater)
+      || pickUpdater(updaterModule?.default)
+      || pickUpdater(updaterModule?.default?.autoUpdater);
   }
 
   private async installExtensions(): Promise<void> {
