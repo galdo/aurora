@@ -132,7 +132,7 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "bbbneo333",
+      "owner": "galdo",
       "repo": "aurora",
       "private": false
     },
@@ -145,13 +145,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bbbneo333/aurora.git"
+    "url": "git+https://github.com/galdo/aurora.git"
   },
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/bbbneo333/aurora/issues"
+    "url": "https://github.com/galdo/aurora/issues"
   },
-  "homepage": "https://github.com/bbbneo333/aurora",
+  "homepage": "https://github.com/galdo/aurora",
   "devDependencies": {
     "@babel/core": "^7.12.9",
     "@babel/plugin-proposal-class-properties": "^7.12.1",
