@@ -342,10 +342,17 @@ jobs:
             **Notes**
             - Scope intentionally reflects the practical delta from v1.4.0 to v1.5.0 across UX, playback transparency, build/release workflow, and platform packaging readiness.
           files: |
-            release/**/*.dmg
-            release/**/*.exe
-            release/**/*.flatpak
-            release/**/*.yml
-            release/**/*.blockmap
+            release/macos-arm64/*.dmg
+            release/macos-arm64/*.zip
+            release/macos-arm64/*.blockmap
+            release/macos-arm64/latest-mac.yml
+            release/macos-x64/*.dmg
+            release/macos-x64/*.zip
+            release/macos-x64/*.blockmap
+            release/windows/*.exe
+            release/windows/*.blockmap
+            release/windows/latest.yml
+            release/windows/builder-debug.yml
+            release/linux-flatpak/*.flatpak
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
