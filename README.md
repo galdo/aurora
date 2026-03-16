@@ -85,3 +85,8 @@ This is not a cosmetic rename. It is an execution-focused evolution of the same 
 ## Original Source
 
 Aurora Pulse builds on the original work by **bbbneo333**. The original repository is available at https://github.com/bbbneo333/aurora, and this project continues under the [MIT License](./LICENSE).
+
+## Disclaimer
+Aurora Pulse interacts directly with your local file system and external storage media (DAPs).
+Use at your own risk: The software is provided "as is." The developer assumes no liability for data loss, corruption of music files, or hardware damage that may arise from the use of this software.
+Back up your data: Always ensure you have a complete and current backup of your music library before performing any synchronization operations.
