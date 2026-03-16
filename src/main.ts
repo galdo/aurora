@@ -693,8 +693,19 @@ class App implements IAppMain {
         return false;
       }
       const osMatches = osTokens.some(token => fileName.includes(token));
+      if (!osMatches) {
+        return false;
+      }
+      const hasExplicitArchToken = ['arm64', 'x64', 'ia32'].some(archToken => (
+        fileName.includes(`-${archToken}-`)
+        || fileName.includes(`_${archToken}_`)
+        || fileName.includes(archToken)
+      ));
+      if (!hasExplicitArchToken) {
+        return true;
+      }
       const archMatches = fileName.includes(`-${process.arch}-`) || fileName.includes(`_${process.arch}_`) || fileName.includes(process.arch);
-      return osMatches && archMatches;
+      return archMatches;
     });
   }
 
