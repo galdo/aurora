@@ -132,6 +132,7 @@ class App implements IAppMain {
   private mediaHardwareShortcutsRegistered = false;
   private readonly updateSettingsFileName = 'update.settings.json';
   private readonly whatsNewFileName = 'update.whats-new.json';
+  private readonly updateCheckTimeoutMs = 45000;
   private updateSettings: AppUpdateSettings = {
     checkOnStartup: true,
     downloadMode: 'auto',
@@ -723,7 +724,30 @@ class App implements IAppMain {
       canDownload: false,
       canInstall: false,
     });
-    return electronUpdater.autoUpdater.checkForUpdates();
+    let timeoutRef: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const updateCheckPromise = electronUpdater.autoUpdater.checkForUpdates();
+      const updateCheckTimeoutPromise = new Promise<never>((_resolveTimeout, reject) => {
+        timeoutRef = setTimeout(() => {
+          reject(new Error('Die Update-Prüfung hat zu lange gedauert. Bitte später erneut versuchen.'));
+        }, this.updateCheckTimeoutMs);
+      });
+      return await Promise.race([updateCheckPromise, updateCheckTimeoutPromise]);
+    } catch (error) {
+      if (this.updateState.status === 'checking') {
+        this.setUpdateState({
+          status: 'error',
+          message: String((error as any)?.message || error),
+          canDownload: false,
+          canInstall: false,
+        });
+      }
+      return undefined;
+    } finally {
+      if (timeoutRef) {
+        clearTimeout(timeoutRef);
+      }
+    }
   }
 
   private async downloadAvailableUpdate() {
