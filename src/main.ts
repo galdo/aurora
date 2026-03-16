@@ -454,6 +454,11 @@ class App implements IAppMain {
     electronDebug();
   }
 
+  private getAutoUpdater() {
+    const updaterModule = electronUpdater as any;
+    return updaterModule?.autoUpdater || updaterModule?.default?.autoUpdater;
+  }
+
   private async installExtensions(): Promise<void> {
     if (!this.debug || process.env.ENABLE_ELECTRON_EXTENSIONS !== 'true') {
       return;
@@ -485,7 +490,16 @@ class App implements IAppMain {
     }
     this.autoUpdaterRegistered = true;
 
-    const { autoUpdater } = electronUpdater;
+    const autoUpdater = this.getAutoUpdater();
+    if (!autoUpdater) {
+      this.setUpdateState({
+        status: 'error',
+        message: 'AutoUpdater konnte nicht initialisiert werden.',
+        canDownload: false,
+        canInstall: false,
+      });
+      return;
+    }
 
     autoUpdater.logger = electronLog;
     autoUpdater.autoDownload = this.updateSettings.downloadMode === 'auto';
@@ -512,13 +526,13 @@ class App implements IAppMain {
         canInstall: false,
       });
     });
-    autoUpdater.on('error', (error) => {
+    autoUpdater.on('error', (error: any) => {
       this.setUpdateState({
         status: 'error',
         message: String((error as any)?.message || error),
       });
     });
-    autoUpdater.on('update-available', (info) => {
+    autoUpdater.on('update-available', (info: any) => {
       if (!this.isUpdateInfoCompatible(info)) {
         this.latestUpdateInfo = undefined;
         this.setUpdateState({
@@ -540,7 +554,7 @@ class App implements IAppMain {
         message: '',
       });
     });
-    autoUpdater.on('download-progress', (progress) => {
+    autoUpdater.on('download-progress', (progress: any) => {
       const progressPercent = Number(progress?.percent || 0);
       this.setUpdateState({
         status: 'downloading',
@@ -549,7 +563,7 @@ class App implements IAppMain {
         canInstall: false,
       });
     });
-    autoUpdater.on('update-downloaded', (info) => {
+    autoUpdater.on('update-downloaded', (info: any) => {
       this.latestUpdateInfo = info;
       this.setUpdateState({
         status: 'downloaded',
@@ -630,8 +644,11 @@ class App implements IAppMain {
     fs.writeFileSync(updateSettingsPath, JSON.stringify(this.updateSettings), 'utf8');
     if (app.isPackaged && this.autoUpdaterRegistered) {
       try {
-        electronUpdater.autoUpdater.autoDownload = this.updateSettings.downloadMode === 'auto';
-        electronUpdater.autoUpdater.allowPrerelease = this.updateSettings.betaChannelEnabled;
+        const autoUpdater = this.getAutoUpdater();
+        if (autoUpdater) {
+          autoUpdater.autoDownload = this.updateSettings.downloadMode === 'auto';
+          autoUpdater.allowPrerelease = this.updateSettings.betaChannelEnabled;
+        }
       } catch (error) {
         debug('saveUpdateSettings - failed to apply updater runtime settings - %o', error);
       }
@@ -724,9 +741,19 @@ class App implements IAppMain {
       canDownload: false,
       canInstall: false,
     });
+    const autoUpdater = this.getAutoUpdater();
+    if (!autoUpdater) {
+      this.setUpdateState({
+        status: 'error',
+        message: 'AutoUpdater konnte nicht initialisiert werden.',
+        canDownload: false,
+        canInstall: false,
+      });
+      return undefined;
+    }
     let timeoutRef: ReturnType<typeof setTimeout> | undefined;
     try {
-      const updateCheckPromise = electronUpdater.autoUpdater.checkForUpdates();
+      const updateCheckPromise = autoUpdater.checkForUpdates();
       const updateCheckTimeoutPromise = new Promise<never>((_resolveTimeout, reject) => {
         timeoutRef = setTimeout(() => {
           reject(new Error('Die Update-Prüfung hat zu lange gedauert. Bitte später erneut versuchen.'));
@@ -759,7 +786,17 @@ class App implements IAppMain {
       canDownload: false,
       canInstall: false,
     });
-    await electronUpdater.autoUpdater.downloadUpdate();
+    const autoUpdater = this.getAutoUpdater();
+    if (!autoUpdater) {
+      this.setUpdateState({
+        status: 'error',
+        message: 'AutoUpdater konnte nicht initialisiert werden.',
+        canDownload: false,
+        canInstall: false,
+      });
+      return;
+    }
+    await autoUpdater.downloadUpdate();
   }
 
   private persistWhatsNewFromLatestUpdateInfo() {
@@ -783,7 +820,17 @@ class App implements IAppMain {
       status: 'installing',
       canInstall: false,
     });
-    electronUpdater.autoUpdater.quitAndInstall(true, true);
+    const autoUpdater = this.getAutoUpdater();
+    if (!autoUpdater) {
+      this.setUpdateState({
+        status: 'error',
+        message: 'AutoUpdater konnte nicht initialisiert werden.',
+        canDownload: false,
+        canInstall: false,
+      });
+      return;
+    }
+    autoUpdater.quitAndInstall(true, true);
   }
 
   private async createWindow(): Promise<BrowserWindow> {
