@@ -55,6 +55,7 @@ export function MediaPlaylists(props: {
       <MediaCollectionContextMenu
         id={mediaContextMenuId}
         menuItems={[
+          MediaCollectionContextMenuItem.Pin,
           MediaCollectionContextMenuItem.AddToQueue,
           MediaCollectionContextMenuItem.ManagePlaylist,
           MediaCollectionContextMenuItem.ToggleHidden,

@@ -1,3 +1,58 @@
 .media-pinned-item-list {
-  gap: 10px
+  gap: 8px;
+}
+
+.media-pinned-item-list-section-title {
+  margin: 2px 8px 10px;
+  padding-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--text-dark-color);
+  opacity: 0.55;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-dark-color) 18%, transparent);
+}
+
+.media-pinned-item-link {
+  font-size: 15px;
+  font-weight: 500;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  border-radius: 8px;
+  color: var(--text-dark-color);
+  transition: all 0.2s ease;
+}
+
+.media-pinned-item-link:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--text-light-color);
+}
+
+.media-pinned-item-link-active {
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.media-pinned-item-link-active:hover {
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+}
+
+.media-pinned-item-icon {
+  margin-right: 12px;
+  opacity: 0.8;
+}
+
+.media-pinned-item-link-active .media-pinned-item-icon {
+  opacity: 1;
+}
+
+.media-pinned-item-label {
+  align-items: center;
+  display: inline-flex;
+  white-space: nowrap;
 }

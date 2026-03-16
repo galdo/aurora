@@ -19,6 +19,27 @@
   opacity: 1 !important;
 }
 
+.collection-item.compact .collection-item-cover-content {
+  background-color: transparent !important;
+  align-items: flex-end !important;
+  justify-content: flex-end !important;
+  padding: 6px;
+}
+
+.collection-item.compact .collection-item-cover {
+  box-shadow: none !important;
+  border-radius: 6px;
+}
+
+.collection-item.compact .collection-item-cover img {
+  border-radius: 6px;
+}
+
+.collection-item.compact .collection-item-playback-button {
+  --size: 2.2rem;
+  box-shadow: none;
+}
+
 .collection-item-content {
   display: flex;
   flex-direction: row;

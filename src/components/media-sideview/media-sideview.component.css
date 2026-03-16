@@ -258,6 +258,14 @@
   line-height: 1.35;
 }
 
+.sideview-episode-title-unplayed {
+  color: #16c784;
+}
+
+.sideview-episode-title-active {
+  font-weight: 800;
+}
+
 .sideview-episode-status {
   display: inline-flex;
   align-items: center;

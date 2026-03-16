@@ -9,7 +9,7 @@
   padding: 10px;
   user-select: none;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .media-player-container:not(.tinted) {
@@ -307,6 +307,8 @@
   right: 0;
   bottom: 36px;
   min-width: 210px;
+  max-height: min(55vh, 420px);
+  overflow-y: auto;
   background: var(--stage-overlay-bg-color);
   border: 1px solid var(--stage-overlay-outline-color);
   border-radius: 8px;
@@ -367,4 +369,9 @@
 }
 .media-player-side-controls-column .icon {
   font-size: 1em;
+}
+
+.media-player-output-button .icon {
+  font-size: 1.06em;
+  text-shadow: 0 0 0 currentColor, 0.35px 0 currentColor, -0.35px 0 currentColor;
 }

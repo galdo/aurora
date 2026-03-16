@@ -524,7 +524,8 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
             const summary = toPlainText(episode.description);
             const isEpisodeActive = podcastPlaybackSnapshot.episode?.id === episode.id;
             const isEpisodePlaying = isEpisodeActive && podcastPlaybackSnapshot.isPlaying;
-            const isEpisodeUnplayed = Boolean(episode.isNew);
+            const isEpisodeNew = Boolean(episode.isNew);
+            const isEpisodeUnplayed = isEpisodeNew || !PodcastService.isEpisodeListened(subscription, episode);
             return (
               <div key={episode.id} className={cx('sideview-episode-item')}>
                 <Button
@@ -536,12 +537,17 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
                 </Button>
                 <div className={cx('sideview-episode-content')}>
                   <div className={cx('sideview-episode-title-row')}>
-                    <div className={cx('sideview-episode-title')}>{episode.title}</div>
-                    {isEpisodeUnplayed && (
+                    <div className={cx('sideview-episode-title', {
+                      'sideview-episode-title-unplayed': isEpisodeUnplayed,
+                      'sideview-episode-title-active': isEpisodeActive,
+                    })}
+                    >
+                      {episode.title}
+                    </div>
+                    {isEpisodeNew && (
                       <div className={cx('sideview-episode-status')}>
                         <span className={cx('sideview-episode-status-dot')}/>
                         <span className={cx('sideview-episode-status-new')}>Neu</span>
-                        <span className={cx('sideview-episode-status-unplayed')}>(ungespielt)</span>
                       </div>
                     )}
                   </div>

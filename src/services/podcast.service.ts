@@ -30,6 +30,7 @@ export type PodcastPlaybackSnapshot = {
 
 export class PodcastService {
   static readonly podcastStorageKey = 'aurora:podcasts';
+  static readonly podcastPlaybackSeenStorageKey = 'aurora:podcasts:played-episodes';
   static readonly podcastChangeEventName = 'aurora:podcasts-updated';
   static readonly podcastPlaybackChangeEventName = 'aurora:podcast-playback-updated';
   static readonly podcastDirectoryName = 'Podcasts';
@@ -87,12 +88,18 @@ export class PodcastService {
     };
   }
 
+  static isEpisodeListened(subscription: IPodcastSubscription, episode: IPodcastEpisode): boolean {
+    const listenedEpisodeIds = this.getListenedEpisodeIdSet(subscription.id);
+    return listenedEpisodeIds.has(episode.id);
+  }
+
   static async playEpisode(subscription: IPodcastSubscription, episode: IPodcastEpisode): Promise<boolean> {
     this.stopPlayback();
     const audio = new Audio(episode.audioUrl);
     this.podcastPlaybackAudio = audio;
     this.podcastPlaybackEpisode = episode;
     this.podcastPlaybackSubscription = subscription;
+    this.markEpisodeAsListened(subscription.id, episode.id);
 
     audio.onended = () => {
       this.stopPlayback();
@@ -549,6 +556,44 @@ export class PodcastService {
       return 0;
     }
     return Math.max(...subscriptions.map(subscription => Number(subscription.updatedAt || 0)));
+  }
+
+  private static getListenedEpisodesMap(): Record<string, string[]> {
+    try {
+      const rawData = localStorage.getItem(this.podcastPlaybackSeenStorageKey);
+      const parsedData = JSON.parse(String(rawData || '{}'));
+      if (!parsedData || typeof parsedData !== 'object' || Array.isArray(parsedData)) {
+        return {};
+      }
+      return Object.entries(parsedData).reduce<Record<string, string[]>>((result, [subscriptionId, episodeIds]) => {
+        if (!Array.isArray(episodeIds)) {
+          return result;
+        }
+        return {
+          ...result,
+          [subscriptionId]: episodeIds.map(item => String(item || '')).filter(Boolean),
+        };
+      }, {});
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  private static persistListenedEpisodesMap(listenedEpisodesMap: Record<string, string[]>) {
+    localStorage.setItem(this.podcastPlaybackSeenStorageKey, JSON.stringify(listenedEpisodesMap));
+  }
+
+  private static getListenedEpisodeIdSet(subscriptionId: string): Set<string> {
+    const listenedEpisodesMap = this.getListenedEpisodesMap();
+    return new Set(listenedEpisodesMap[subscriptionId] || []);
+  }
+
+  private static markEpisodeAsListened(subscriptionId: string, episodeId: string) {
+    const listenedEpisodesMap = this.getListenedEpisodesMap();
+    const listenedEpisodeIds = new Set(listenedEpisodesMap[subscriptionId] || []);
+    listenedEpisodeIds.add(episodeId);
+    listenedEpisodesMap[subscriptionId] = Array.from(listenedEpisodeIds);
+    this.persistListenedEpisodesMap(listenedEpisodesMap);
   }
 
   private static persistSubscriptionsToLocalStorage(subscriptions: IPodcastSubscription[]) {

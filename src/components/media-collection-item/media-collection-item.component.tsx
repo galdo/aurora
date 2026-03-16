@@ -75,6 +75,7 @@ export function MediaCollectionItem(props: MediaCollectionItemProps) {
       isPlaying={isMediaPlaying}
       disabled={disablePlayback}
       className={cx('collection-item-playback-button')}
+      variant={variant === 'compact' ? ['rounded', 'primary'] : undefined}
       onPlay={play}
       onPause={pause}
       tabIndex={-1}
@@ -84,6 +85,7 @@ export function MediaCollectionItem(props: MediaCollectionItemProps) {
     isMediaPlaying,
     pause,
     play,
+    variant,
   ]);
 
   return (

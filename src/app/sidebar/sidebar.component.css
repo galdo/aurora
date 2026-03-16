@@ -143,5 +143,8 @@
 
 .sidebar-quick-access {
   flex: 1 0 0; /* stretch to fill remaining space */
-  padding: var(--selectable-focus-ring-size); /* this is to not clip focus ring */
+  padding-left: var(--scrollable-scrollbar-width);
+  padding-right: var(--scrollable-scrollbar-width);
+  padding-top: var(--selectable-focus-ring-size);
+  padding-bottom: var(--selectable-focus-ring-size);
 }

@@ -21,6 +21,7 @@ const debug = require('debug')('aurora:service:bit_perfect');
 
 export class BitPerfectService {
   private static readonly storageKey = 'aurora:bit-perfect-settings';
+  private static readonly processRegistryStorageKey = 'aurora:bit-perfect-process-registry';
   private static readonly eventName = 'aurora:bit-perfect-state-changed';
   private static readonly suggestedBufferMs = 200;
   private static enabled = false;
@@ -33,6 +34,8 @@ export class BitPerfectService {
   private static currentVolumePercent = 100;
   private static muted = false;
   private static initialized = false;
+  private static shutdownHandlersRegistered = false;
+  private static trackedProcessIds: Set<number> = new Set();
 
   static initialize() {
     if (this.initialized) {
@@ -41,6 +44,9 @@ export class BitPerfectService {
     this.initialized = true;
     this.loadSettings();
     this.backend = this.resolveBackend();
+    this.loadTrackedProcessRegistry();
+    this.cleanupTrackedProcesses();
+    this.registerShutdownHandlers();
     this.emitState();
   }
 
@@ -148,13 +154,22 @@ export class BitPerfectService {
         stdio: 'ignore',
       });
       this.currentProcess = childProcess;
+      if (childProcess.pid) {
+        this.trackProcessId(childProcess.pid);
+      }
       childProcess.once('error', (error) => {
         this.lastError = String(error?.message || error);
+        if (childProcess.pid) {
+          this.untrackProcessId(childProcess.pid);
+        }
         this.currentProcess = undefined;
         this.currentIpcPath = undefined;
         this.emitState();
       });
       childProcess.once('close', () => {
+        if (childProcess.pid) {
+          this.untrackProcessId(childProcess.pid);
+        }
         this.currentProcess = undefined;
         this.cleanupIpcSocketPath();
         this.emitState();
@@ -205,14 +220,94 @@ export class BitPerfectService {
     if (!this.currentProcess) {
       return;
     }
+    const currentPid = this.currentProcess.pid;
     try {
       this.currentProcess.kill();
     } catch (error) {
       debug('stopPlayback kill failed - %o', error);
     }
+    if (currentPid) {
+      this.untrackProcessId(currentPid);
+    }
     this.currentProcess = undefined;
     this.cleanupIpcSocketPath();
     this.emitState();
+  }
+
+  private static registerShutdownHandlers() {
+    if (this.shutdownHandlersRegistered) {
+      return;
+    }
+    this.shutdownHandlersRegistered = true;
+    const shutdown = () => {
+      this.stopPlayback();
+      this.cleanupTrackedProcesses();
+    };
+    window.addEventListener('beforeunload', shutdown);
+    process.once('exit', shutdown);
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+  }
+
+  private static loadTrackedProcessRegistry() {
+    this.trackedProcessIds = new Set<number>();
+    try {
+      const payload = JSON.parse(localStorage.getItem(this.processRegistryStorageKey) || '[]');
+      if (Array.isArray(payload)) {
+        payload.forEach((entry) => {
+          const normalizedPid = Number(entry);
+          if (Number.isInteger(normalizedPid) && normalizedPid > 0) {
+            this.trackedProcessIds.add(normalizedPid);
+          }
+        });
+      }
+    } catch (_error) {
+      this.trackedProcessIds = new Set<number>();
+    }
+  }
+
+  private static persistTrackedProcessRegistry() {
+    localStorage.setItem(this.processRegistryStorageKey, JSON.stringify(Array.from(this.trackedProcessIds)));
+  }
+
+  private static trackProcessId(processId: number) {
+    const normalizedPid = Number(processId);
+    if (!Number.isInteger(normalizedPid) || normalizedPid <= 0) {
+      return;
+    }
+    this.trackedProcessIds.add(normalizedPid);
+    this.persistTrackedProcessRegistry();
+  }
+
+  private static untrackProcessId(processId: number) {
+    const normalizedPid = Number(processId);
+    if (!Number.isInteger(normalizedPid) || normalizedPid <= 0) {
+      return;
+    }
+    this.trackedProcessIds.delete(normalizedPid);
+    this.persistTrackedProcessRegistry();
+  }
+
+  private static cleanupTrackedProcesses() {
+    if (this.trackedProcessIds.size === 0) {
+      return;
+    }
+    const staleProcessIds = Array.from(this.trackedProcessIds.values());
+    staleProcessIds.forEach((processId) => {
+      try {
+        process.kill(processId, 'SIGTERM');
+      } catch (_error) {
+        debug('cleanupTrackedProcesses SIGTERM failed for pid=%s', processId);
+      }
+      try {
+        process.kill(processId, 0);
+        process.kill(processId, 'SIGKILL');
+      } catch (_error) {
+        debug('cleanupTrackedProcesses SIGKILL failed for pid=%s', processId);
+      }
+      this.trackedProcessIds.delete(processId);
+    });
+    this.persistTrackedProcessRegistry();
   }
 
   private static normalizeVolume(volumePercent: number) {

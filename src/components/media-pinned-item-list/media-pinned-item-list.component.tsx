@@ -3,9 +3,9 @@ import { useSelector } from 'react-redux';
 import classNames from 'classnames/bind';
 import { isNil } from 'lodash';
 
-import { useModal } from '../../contexts';
+import { useContextMenu, useModal } from '../../contexts';
 import { MediaCollectionItemType } from '../../enums';
-import { IMediaPinnedItem } from '../../interfaces';
+import { IMediaCollectionItem, IMediaPinnedItem } from '../../interfaces';
 import {
   I18nService,
   MediaCollectionService,
@@ -15,7 +15,8 @@ import {
 import { selectSortedPinnedItems } from '../../selectors';
 
 import { List } from '../list/list.component';
-import { MediaCollectionItem } from '../media-collection-item/media-collection-item.component';
+import { Icon } from '../icon/icon.component';
+import { RouterLink } from '../router-link/router-link.component';
 import { MediaCollectionContextMenu, MediaCollectionContextMenuItem } from '../media-collection-context-menu/media-collection-context-menu.component';
 import { MediaPlaylistDeleteModal } from '../media-playlist-delete-modal/media-playlist-delete-modal.component';
 
@@ -43,6 +44,8 @@ const getLocalizedPinnedItem = (pinnedItem: IMediaPinnedItem): IMediaPinnedItem 
 
 export function MediaPinnedItemList() {
   const sortedMediaPinnedItems = useSelector(selectSortedPinnedItems);
+  const hasPinnedPlaylists = sortedMediaPinnedItems.some(pinnedItem => pinnedItem.type === MediaCollectionItemType.Playlist);
+  const { showMenu } = useContextMenu<{ mediaItem?: IMediaCollectionItem }>();
   const { showModal } = useModal();
   const contextMenuId = 'media-pinned-item-list-context-menu';
 
@@ -75,8 +78,23 @@ export function MediaPinnedItemList() {
     sortedMediaPinnedItems,
   ]);
 
+  const handleItemContextMenu = useCallback((event: React.MouseEvent, mediaItem: IMediaCollectionItem) => {
+    showMenu({
+      id: contextMenuId,
+      event,
+      props: {
+        mediaItem,
+      },
+    });
+  }, [contextMenuId, showMenu]);
+
   return (
     <>
+      {hasPinnedPlaylists && (
+        <div className={cx('media-pinned-item-list-section-title')}>
+          Playlists
+        </div>
+      )}
       <List
         disableMultiSelect
         sortable
@@ -88,16 +106,24 @@ export function MediaPinnedItemList() {
       >
         {(pinnedItem) => {
           const localizedPinnedItem = getLocalizedPinnedItem(pinnedItem);
+          const pinnedItemRouterLink = MediaCollectionService.getItemRouterLink(localizedPinnedItem);
+          const pinnedItemIcon = MediaCollectionService.getItemCoverPlaceholderIcon(localizedPinnedItem);
           return (
-            <MediaCollectionItem
+            <RouterLink
               key={localizedPinnedItem.id}
-              mediaItem={localizedPinnedItem}
-              variant="compact"
-              routerLink={MediaCollectionService.getItemRouterLink(localizedPinnedItem)}
-              coverPlaceholderIcon={MediaCollectionService.getItemCoverPlaceholderIcon(localizedPinnedItem)}
-              subtitle={MediaCollectionService.getItemSubtitle(localizedPinnedItem)}
-              contextMenuId={contextMenuId}
-            />
+              to={pinnedItemRouterLink}
+              exact
+              activeClassName={cx('media-pinned-item-link-active')}
+              className={cx('media-pinned-item-link', 'app-nav-link')}
+              onContextMenu={event => handleItemContextMenu(event, localizedPinnedItem)}
+            >
+              <span className={cx('media-pinned-item-icon')}>
+                <Icon name={pinnedItemIcon}/>
+              </span>
+              <span className={cx('media-pinned-item-label')}>
+                {localizedPinnedItem.name}
+              </span>
+            </RouterLink>
           );
         }}
       </List>

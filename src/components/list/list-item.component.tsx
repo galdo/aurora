@@ -80,7 +80,7 @@ export function ListItem(props: {
       {React.cloneElement(child, {
         'data-list-item-id': itemId,
         'aria-selected': isSelected,
-        className: cx('list-item-content', { dragging: isDragging }),
+        className: cx('list-item-content', child.props.className, { dragging: isDragging }),
       })}
     </div>
   );
