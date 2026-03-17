@@ -285,48 +285,45 @@ jobs:
           name: Release ${{ needs.meta.outputs.tag }}
           prerelease: ${{ needs.meta.outputs.prerelease }}
           body: |
-            ### Release 1.5.0 (Beta 7)
+            ## AuroraPulse 1.5.0
 
-            **Added**
-            - Shared collection view controls across Albums, Artists, Playlists, and Podcasts (cover-size slider + unified sorting controls).
-            - Bit-Perfect parallel audio chain (using mpv library)
-            - DLNA Server with Broadcasting Tracks, Albums, Album-Artists / Artists, Playlists and Podcasts
-            - DLNA Control for Devices like DLNA Ready Speakers, TVs, ...
-            - Most-Played (100 Tracks) Playlist automaticall created
-            - Gapless Audio Playback on Albums
-            - Global single-instance right sideview state store to prevent stacked overlays and enable clean content replacement.
-            - Auto-Update support implemented
-            - Linux Flatpak packaging support (x86_64) including build scripts, Flatpak metadata, and a dedicated GitHub Actions workflow.
-            - Library export utility script for JSON snapshots and diagnostics (not available for public use)
-            - Extended track metadata persistence for technical audio details (sample rate, bit depth, bitrate, codec, file type).
-            - Additional languages added: chinese (simplified), hindi, portuguese, turkish and many more
+            ### Highlights
+            - Unified collection controls across Albums, Artists, Playlists, and Podcasts.
+            - Improved playback stack with Bit-Perfect mode and smoother album playback flow.
+            - Full DLNA experience for both serving and controlling playback devices.
+            - Integrated auto-update workflow and broader platform packaging support.
+            - Improved app structure and navigation with consistent side view behavior.
 
-            **Changed**
-            - Equalizer evolved into a fuller tuning workflow with AutoEQ profile support, history handling, and stronger UX.
-            - Podcasts area was redesigned for parity with Library layout, sorting, and cover-size synchronization.
-            - Player and sideview interaction model refined: title click opens/reuses sideview, transitions are smoother, and visual focus is more consistent.
-            - README rewritten as a product-focused landing page with clearer value messaging and fork rationale.
-            - Switch for Artists view extended - new Option "Album Artist" introduced to change the artist listing from all artists (on track level) to album related artists
-            - Settings, topbar actions, and secondary button styling were streamlined for clearer primary/secondary action hierarchy.
-            - All Playlist and Albums now can be pinned to the left sidebar
-            - Import Details shown during Initial- and Delta Import and DAP Sync
-            - Performance Optimization in Search and Import
+            ### Added
+            - Shared view controls for cover size and sorting across core library pages.
+            - DLNA media server support for tracks, albums, artists, playlists, and podcasts.
+            - DLNA output control for compatible speakers, TVs, and network renderers.
+            - Automatic Most Played playlist generation.
+            - Gapless playback behavior for album listening.
+            - Flatpak distribution support for Linux (x86_64).
+            - Broader language coverage, including Chinese (Simplified), Hindi, Portuguese, Turkish, and more.
 
-            **Fixed**
-            - Resolved sideview stacking behavior by reusing a single global sideview instance.
-            - Fixed inconsistent hover/text styling for secondary actions.
-            - Fixed multiple layout mismatches between Library and Podcasts (header, spacing, grid alignment, cover presentation).
-            - Improved reliability of metadata display paths in player and media ingestion flow.
-            - Stabilized packaging prerequisites for native sharp runtimes across targets.
-            - Memory and Performance Optimizations
-            - Fixing issues with Auto-Update
-            - Fixing issues with DLNA Streaming Control-Issues in Player
-            - Fixing crash on DAP disconnect
-            - Count issue fixed for "most played"-Playlist
-            - Fixing sync issue with DAP
+            ### Improved
+            - Equalizer workflow with stronger preset/profile usability and tuning flow.
+            - Podcast browsing and layout consistency with the rest of the library.
+            - Player and side view transitions for cleaner and more predictable navigation.
+            - Search and import responsiveness in larger libraries.
+            - Settings and action styling for clearer primary/secondary interaction patterns.
 
-            **Notes**
-            - Scope intentionally reflects the practical delta from v1.4.0 to v1.5.0 across UX, playback transparency, build/release workflow, and platform packaging readiness.
+            ### Fixed
+            - Stability issues in side view handling.
+            - Reliability issues in DLNA playback control scenarios.
+            - Auto-update edge cases.
+            - Playback and sync edge cases around connected devices.
+            - Playlist behavior issues around Most Played counting and flow.
+
+            ### Installation Notes
+            - **macOS:** Open the DMG, move AuroraPulse to Applications, then launch from Applications. If Gatekeeper blocks first launch, right-click AuroraPulse.app and choose Open.
+            - **Windows:** Download the `.exe` installer and run it. If SmartScreen appears, choose More info > Run anyway.
+            - **Linux (Flatpak):** Install the provided `.flatpak` package using your Flatpak manager or `flatpak install`.
+
+            ### Notes
+            - This release represents the functional 1.5.0 milestone and includes cumulative improvements made throughout the 1.5 cycle.
           files: |
             release/macos-arm64/*.dmg
             release/macos-arm64/*.zip

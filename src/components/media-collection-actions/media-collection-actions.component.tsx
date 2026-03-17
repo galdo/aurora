@@ -31,12 +31,14 @@ export function MediaCollectionActions(props: {
   hasTracks?: boolean;
   onReloadAlbum?: () => void;
   reloadingAlbum?: boolean;
+  showPlaylistManagementActions?: boolean;
 }) {
   const {
     mediaItem,
     hasTracks = true,
     onReloadAlbum,
     reloadingAlbum = false,
+    showPlaylistManagementActions = true,
   } = props;
   const { showMenu } = useContextMenu();
   const { showModal } = useModal();
@@ -117,7 +119,7 @@ export function MediaCollectionActions(props: {
           </Menu>
         </>
       )}
-      {isPlaylist && (
+      {isPlaylist && showPlaylistManagementActions && (
         <>
           <Button
             variant={['rounded', 'outline']}
