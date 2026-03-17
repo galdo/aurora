@@ -99,7 +99,7 @@ jobs:
         run: |
           npm run "prepare:sharp:mac:${ARCH}"
           npm run "prepare:mpv:mac:${ARCH}"
-          npm run package -- --mac --${ARCH} --c.mac.identity=-
+          npm run package -- --mac --${ARCH} --c.mac.identity=null
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
