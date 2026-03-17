@@ -99,7 +99,7 @@ jobs:
         run: |
           npm run "prepare:sharp:mac:${ARCH}"
           npm run "prepare:mpv:mac:${ARCH}"
-          npm run package -- --mac --${ARCH} --c.mac.identity=-
+          npm run package -- --mac --${ARCH}
 
           APP_PATH="release/mac-${ARCH}/AuroraPulse.app"
           if [ ! -d "$APP_PATH" ]; then
@@ -112,7 +112,6 @@ jobs:
           fi
 
           DMG_PATH="release/AuroraPulse-mac-${ARCH}-${VERSION}.dmg"
-          codesign --deep --force --sign - "$APP_PATH"
           xattr -cr "$APP_PATH"
           STAGE_DIR="$(mktemp -d)"
           cp -R "$APP_PATH" "$STAGE_DIR/$(basename "$APP_PATH")"
