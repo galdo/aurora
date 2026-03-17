@@ -171,6 +171,13 @@ export function PodcastsPage() {
                       <Icon name={Icons.Podcast}/>
                     </div>
                   )}
+                  {hasUnplayedEpisodes && (
+                    <div className={cx('podcast-status')}>
+                      <span className={cx('podcast-status-dot')}/>
+                      <span className={cx('podcast-status-new')}>Neu</span>
+                      <span className={cx('podcast-status-unplayed')}>(ungespielt)</span>
+                    </div>
+                  )}
                 </div>
                 <div className={cx('podcast-meta')}>
                   <div className={cx('podcast-title')}>
@@ -179,13 +186,6 @@ export function PodcastsPage() {
                   <div className={cx('podcast-publisher')}>
                     {subscription.publisher || '-'}
                   </div>
-                  {hasUnplayedEpisodes && (
-                    <div className={cx('podcast-status')}>
-                      <span className={cx('podcast-status-dot')}/>
-                      <span className={cx('podcast-status-new')}>Neu</span>
-                      <span className={cx('podcast-status-unplayed')}>(ungespielt)</span>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>

@@ -19,6 +19,7 @@ import { MediaTrackService } from './media-track.service';
 import { MediaProviderService } from './media-provider.service';
 import { NotificationService } from './notification.service';
 import { PodcastService } from './podcast.service';
+import { DlnaService, DlnaState } from './dlna.service';
 
 const debug = require('debug')('aurora:service:media_player');
 
@@ -29,6 +30,16 @@ class MediaPlayerService {
   private gaplessPreloadLeadSeconds = 8;
   private preloadedPlaybackByQueueEntryId: Map<string, IMediaPlayback> = new Map();
   private preloadedQueueEntryId?: string;
+  private dlnaLastState?: DlnaState;
+  private outputSwitchInProgress = false;
+
+  constructor() {
+    DlnaService.initialize();
+    this.dlnaLastState = DlnaService.getState();
+    DlnaService.subscribe((nextState) => {
+      this.handleDlnaStateChanged(nextState);
+    });
+  }
 
   // media queue control API
 
@@ -422,11 +433,16 @@ class MediaPlayerService {
       return;
     }
 
-    mediaPlaybackCurrentPlayingInstance
+    const playbackInstance = mediaPlaybackCurrentPlayingInstance;
+    playbackInstance
       .pausePlayback()
       .then((mediaPlaybackPaused) => {
         if (!mediaPlaybackPaused) {
           // TODO: Handle cases where media playback could not be paused
+          return;
+        }
+        const { mediaPlayer: currentMediaPlayer } = store.getState();
+        if (currentMediaPlayer.mediaPlaybackCurrentPlayingInstance !== playbackInstance) {
           return;
         }
 
@@ -485,6 +501,62 @@ class MediaPlayerService {
     }
   }
 
+  async switchOutputDevice(outputDeviceId: string): Promise<void> {
+    if (this.outputSwitchInProgress) {
+      return;
+    }
+    this.outputSwitchInProgress = true;
+    try {
+      const { mediaPlayer } = store.getState();
+      const {
+        mediaPlaybackCurrentMediaTrack,
+        mediaPlaybackCurrentPlayingInstance,
+        mediaPlaybackState,
+      } = mediaPlayer;
+
+      const wasPlaying = mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing
+        || mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading;
+      const preserveProgress = mediaPlaybackCurrentPlayingInstance
+        ? this.getCurrentPlaybackProgressSafe(mediaPlaybackCurrentPlayingInstance)
+        : 0;
+
+      if (mediaPlaybackCurrentPlayingInstance) {
+        store.dispatch({
+          type: MediaEnums.MediaPlayerActions.PausePlayer,
+        });
+        await mediaPlaybackCurrentPlayingInstance.stopPlayback().catch(() => false);
+      }
+
+      await DlnaService.setOutputDevice(outputDeviceId);
+
+      if (!mediaPlaybackCurrentMediaTrack) {
+        return;
+      }
+
+      const mediaPlayback = this.loadMediaTrack(mediaPlaybackCurrentMediaTrack);
+      if (wasPlaying) {
+        const mediaPlayed = await mediaPlayback.play();
+        if (!mediaPlayed) {
+          return;
+        }
+        if (preserveProgress > 0) {
+          await mediaPlayback.seekPlayback(preserveProgress).catch(() => false);
+        }
+        store.dispatch({
+          type: MediaEnums.MediaPlayerActions.Play,
+          data: {
+            mediaPlaybackProgress: this.getCurrentPlaybackProgressSafe(mediaPlayback),
+          },
+        });
+        this.reportMediaPlaybackProgress();
+      } else if (preserveProgress > 0) {
+        await mediaPlayback.seekPlayback(preserveProgress).catch(() => false);
+      }
+    } finally {
+      this.outputSwitchInProgress = false;
+    }
+  }
+
   stopMediaPlayer(): void {
     const {
       mediaPlayer,
@@ -499,11 +571,16 @@ class MediaPlayerService {
       return;
     }
 
-    mediaPlaybackCurrentPlayingInstance
+    const playbackInstance = mediaPlaybackCurrentPlayingInstance;
+    playbackInstance
       .stopPlayback()
       .then((mediaPlaybackStopped) => {
         if (!mediaPlaybackStopped) {
           // TODO: Handle cases where media playback could not be stopped
+          return;
+        }
+        const { mediaPlayer: currentMediaPlayer } = store.getState();
+        if (currentMediaPlayer.mediaPlaybackCurrentPlayingInstance !== playbackInstance) {
           return;
         }
 
@@ -974,6 +1051,10 @@ class MediaPlayerService {
   }
 
   private reportMediaPlaybackProgress(): void {
+    if (this.outputSwitchInProgress) {
+      debug('reportMediaPlaybackProgress - output switch in progress, skipping tick');
+      return;
+    }
     const {
       mediaPlayer,
     } = store.getState();
@@ -1059,10 +1140,12 @@ class MediaPlayerService {
 
     // providers are not allowed to report progress greater than the
     // set track duration
-    return Math.min(
-      mediaPlaybackCurrentPlayingInstance.getPlaybackProgress(),
-      mediaPlaybackCurrentMediaTrack.track_duration,
-    );
+    const playbackProgress = Number(mediaPlaybackCurrentPlayingInstance.getPlaybackProgress() || 0);
+    const trackDuration = Number(mediaPlaybackCurrentMediaTrack.track_duration || 0);
+    if (!Number.isFinite(trackDuration) || trackDuration <= 0) {
+      return Math.max(0, playbackProgress);
+    }
+    return Math.min(Math.max(0, playbackProgress), trackDuration);
   }
 
   private retryMediaProgressReporting(): boolean {
@@ -1212,6 +1295,39 @@ class MediaPlayerService {
 
   private stopPodcastPlayback() {
     PodcastService.stopPlayback();
+  }
+
+  private handleDlnaStateChanged(nextState: DlnaState) {
+    const previousState = this.dlnaLastState;
+    this.dlnaLastState = nextState;
+    if (!previousState) {
+      return;
+    }
+    const remoteConnectionLost = previousState.outputMode === 'remote'
+      && !!previousState.selectedRendererId
+      && nextState.outputMode === 'local';
+    if (!remoteConnectionLost || this.outputSwitchInProgress) {
+      return;
+    }
+    const { mediaPlayer } = store.getState();
+    if (!mediaPlayer.mediaPlaybackCurrentPlayingInstance || !mediaPlayer.mediaPlaybackCurrentMediaTrack) {
+      return;
+    }
+    this.switchOutputDevice('local').catch((error) => {
+      debug('handleDlnaStateChanged - failed switching output to local after disconnect - %o', error);
+    });
+  }
+
+  private getCurrentPlaybackProgressSafe(mediaPlayback: IMediaPlayback): number {
+    try {
+      const progress = Number(mediaPlayback.getPlaybackProgress() || 0);
+      if (!Number.isFinite(progress)) {
+        return 0;
+      }
+      return Math.max(0, progress);
+    } catch (_error) {
+      return 0;
+    }
   }
 
   private createMediaPlayback(mediaQueueTrack: IMediaQueueTrack, bindPreparationStatus: boolean): IMediaPlayback {

@@ -35,6 +35,8 @@ type DlnaTrack = {
   filePath: string;
   mimeType: string;
   fileSize: number;
+  coverPath?: string;
+  coverMimeType?: string;
 };
 
 type DlnaRendererDevice = {
@@ -222,8 +224,24 @@ export class DlnaService {
       && this.rendererDevices.has(this.selectedRendererId);
   }
 
+  static isRemoteOutputRequested(): boolean {
+    return this.outputMode === 'remote' && !!this.selectedRendererId;
+  }
+
   static async setOutputDevice(outputDeviceId: string): Promise<void> {
     const normalizedOutputDeviceId = String(outputDeviceId || '').trim();
+    const previousRenderer = this.getSelectedRenderer();
+    const shouldStopPreviousRenderer = !!previousRenderer
+      && (
+        !normalizedOutputDeviceId
+        || normalizedOutputDeviceId === 'local'
+        || normalizedOutputDeviceId !== previousRenderer.id
+      );
+    if (shouldStopPreviousRenderer && previousRenderer) {
+      await this.stopRenderer(previousRenderer).catch((error) => {
+        debug('setOutputDevice - failed to stop previous renderer %s - %o', previousRenderer.id, error);
+      });
+    }
     if (!normalizedOutputDeviceId || normalizedOutputDeviceId === 'local') {
       this.outputMode = 'local';
       this.selectedRendererId = undefined;
@@ -351,6 +369,11 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
+    await this.stopRenderer(renderer);
+    return true;
+  }
+
+  private static async stopRenderer(renderer: DlnaRendererDevice): Promise<void> {
     await this.sendSoapRequest(
       renderer.avTransportControlUrl,
       renderer.avTransportServiceType,
@@ -359,7 +382,6 @@ export class DlnaService {
         InstanceID: '0',
       },
     );
-    return true;
   }
 
   static async seekSelectedRenderer(seekPositionSeconds: number): Promise<boolean> {
@@ -633,13 +655,17 @@ export class DlnaService {
 
   private static pruneInactiveRenderers() {
     const now = Date.now();
+    const selectedRenderer = this.selectedRendererId
+      ? this.rendererDevices.get(this.selectedRendererId)
+      : undefined;
     const activeRenderers = Array.from(this.rendererDevices.entries()).filter(([, renderer]) => (now - renderer.lastSeenAt) < this.rendererMaxAgeMs);
-    this.rendererDevices = new Map(activeRenderers);
-    if (this.outputMode === 'remote' && this.selectedRendererId && !this.rendererDevices.has(this.selectedRendererId)) {
-      this.outputMode = 'local';
-      this.selectedRendererId = undefined;
-      this.persistControlSettings();
+    if (selectedRenderer) {
+      const selectedRendererPresent = activeRenderers.some(([rendererId]) => rendererId === selectedRenderer.id);
+      if (!selectedRendererPresent) {
+        activeRenderers.push([selectedRenderer.id, selectedRenderer]);
+      }
     }
+    this.rendererDevices = new Map(activeRenderers);
     this.emitState();
   }
 
@@ -675,19 +701,31 @@ export class DlnaService {
     return `http://${servingIp}:${this.port}/stream/${encodeURIComponent(mediaTrackId)}`;
   }
 
+  private static getTrackCoverUrlForRenderer(renderer: DlnaRendererDevice, mediaTrackId: string): string {
+    const rendererUrl = new URL(renderer.location);
+    const rendererAddress = String(rendererUrl.hostname || '').replace(/^::ffff:/, '');
+    const servingIp = this.getBestServingIpForClient(rendererAddress);
+    return `http://${servingIp}:${this.port}/cover/${encodeURIComponent(mediaTrackId)}`;
+  }
+
   private static buildRendererTrackMetadata(mediaTrack: IMediaTrack, streamUrl: string): string {
     const title = this.escapeXml(String(mediaTrack.track_name || 'Track'));
     const artist = this.escapeXml(String(mediaTrack.track_artists?.map(trackArtist => trackArtist.artist_name).join(', ') || ''));
     const album = this.escapeXml(String(mediaTrack.track_album?.album_name || ''));
     const mimeType = this.getMimeType(String((mediaTrack.extra as any)?.file_path || ''));
+    const coverPath = this.getTrackCoverPathFromMediaTrack(mediaTrack);
+    const coverMimeType = this.getImageMimeType(coverPath);
+    const coverUrl = coverPath ? this.getTrackCoverUrlForRenderer(this.getSelectedRenderer() as DlnaRendererDevice, String(mediaTrack.id || mediaTrack.provider_id || '')) : '';
     const duration = this.formatSecondsAsDlnaTime(Number(mediaTrack.track_duration || 0));
     return `<?xml version="1.0" encoding="utf-8"?>
-<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+${this.getDidlRootStart()}
 <item id="${this.escapeXml(String(mediaTrack.id || mediaTrack.provider_id || 'track'))}" parentID="0" restricted="1">
 <dc:title>${title}</dc:title>
 <upnp:artist>${artist}</upnp:artist>
 <upnp:album>${album}</upnp:album>
 <upnp:class>object.item.audioItem.musicTrack</upnp:class>
+${coverUrl ? `<upnp:albumArtURI dlna:profileID="JPEG_TN">${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl && coverMimeType ? `<res protocolInfo="http-get:*:${coverMimeType}:DLNA.ORG_PN=JPEG_TN">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${mimeType}:*" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>
 </DIDL-Lite>`;
@@ -727,9 +765,7 @@ ${actionBody}
       },
       body,
     });
-    if (!response.ok) {
-      throw new Error(`SOAP request failed: ${actionName} (${response.status})`);
-    }
+    await response.text().catch(() => '');
   }
 
   private static registerUiSettingsListener() {
@@ -1025,6 +1061,17 @@ ${actionBody}
       });
       return;
     }
+    if (requestPath.startsWith('/cover/')) {
+      const trackId = decodeURIComponent(requestPath.replace('/cover/', ''));
+      this.streamTrackCover(response, trackId === 'current' ? this.currentTrackId : trackId).catch((error) => {
+        debug('streamTrackCover failed - %o', error);
+        if (!response.headersSent) {
+          response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+          response.end('Cover failed');
+        }
+      });
+      return;
+    }
     response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     response.end('Not found');
   }
@@ -1094,6 +1141,28 @@ ${actionBody}
     stream.pipe(response);
   }
 
+  private static async streamTrackCover(response: ServerResponse, trackId?: string) {
+    if (!trackId) {
+      response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end('No track selected');
+      return;
+    }
+    const track = await this.resolveStreamTrack(trackId);
+    const coverPath = String(track?.coverPath || '').trim();
+    if (!coverPath || !fs.existsSync(coverPath)) {
+      response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end('Cover not available');
+      return;
+    }
+    const coverBuffer = fs.readFileSync(coverPath);
+    response.writeHead(200, {
+      'Content-Type': track?.coverMimeType || this.getImageMimeType(coverPath),
+      'Content-Length': coverBuffer.byteLength,
+      'Cache-Control': 'public, max-age=3600',
+    });
+    response.end(coverBuffer);
+  }
+
   private static getDescriptionXml() {
     const ipAddress = this.getIpAddresses()[0] || '127.0.0.1';
     const baseUrl = `http://${ipAddress}:${this.port}`;
@@ -1157,7 +1226,8 @@ ${actionBody}
     return `<?xml version="1.0" encoding="utf-8"?>
 <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
 xmlns:dc="http://purl.org/dc/elements/1.1/"
-xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"
+xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">
 ${items}
 </DIDL-Lite>`;
   }
@@ -1435,7 +1505,7 @@ ${actionBody}
 </container>`
         : '';
       const xml = `<?xml version="1.0" encoding="utf-8"?>
-<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+${this.getDidlRootStart()}
 <container id="tracks" parentID="0" restricted="1" searchable="0">
 <dc:title>Tracks</dc:title>
 <upnp:class>object.container</upnp:class>
@@ -1468,7 +1538,7 @@ ${artistsContainerXml}
       const pagedTracks = allTracks.slice(start, start + count);
       const itemsXml = pagedTracks.map(track => this.buildTrackDidlItem(track, 'tracks', clientAddress)).join('');
       const xml = `<?xml version="1.0" encoding="utf-8"?>
-<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+${this.getDidlRootStart()}
 ${itemsXml}
 </DIDL-Lite>`;
       return {
@@ -1562,7 +1632,8 @@ ${this.buildTrackDidlItem(track, 'tracks', clientAddress)}
         '<?xml version="1.0" encoding="utf-8"?>',
         '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"',
         'xmlns:dc="http://purl.org/dc/elements/1.1/"',
-        'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">',
+        'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"',
+        'xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">',
         '</DIDL-Lite>',
       ].join(''),
       numberReturned: 0,
@@ -1579,11 +1650,14 @@ ${this.buildTrackDidlItem(track, 'tracks', clientAddress)}
     const seconds = durationSeconds % 60;
     const duration = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.000`;
     const streamUrl = `${baseUrl}/stream/${encodeURIComponent(track.id)}`;
+    const coverUrl = track.coverPath ? `${baseUrl}/cover/${encodeURIComponent(track.id)}` : '';
     return `<item id="${this.escapeXml(track.id)}" parentID="${this.escapeXml(parentId)}" restricted="1">
 <dc:title>${this.escapeXml(track.title)}</dc:title>
 <upnp:class>object.item.audioItem.musicTrack</upnp:class>
 <upnp:artist>${this.escapeXml(track.artist)}</upnp:artist>
 <upnp:album>${this.escapeXml(track.album)}</upnp:album>
+${coverUrl ? `<upnp:albumArtURI dlna:profileID="JPEG_TN">${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl && track.coverMimeType ? `<res protocolInfo="http-get:*:${track.coverMimeType}:DLNA.ORG_PN=JPEG_TN">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${track.mimeType}:*" size="${track.fileSize}" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>`;
   }
@@ -1633,7 +1707,7 @@ ${this.buildTrackDidlItem(track, 'tracks', clientAddress)}
 
   private static buildDidlResult(itemsXml: string, numberReturned: number, totalMatches: number) {
     const xml = `<?xml version="1.0" encoding="utf-8"?>
-<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+${this.getDidlRootStart()}
 ${itemsXml}
 </DIDL-Lite>`;
     return {
@@ -1665,6 +1739,13 @@ ${itemsXml}
     return normalizedId;
   }
 
+  private static getDidlRootStart() {
+    return '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"'
+      + ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
+      + ' xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"'
+      + ' xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">';
+  }
+
   private static async getBrowseLibrary(): Promise<DlnaBrowseLibrary> {
     const now = Date.now();
     if (this.browseLibraryCache && (now - this.browseLibraryCache.updatedAt) < this.browseLibraryCacheTtlMs) {
@@ -1692,6 +1773,12 @@ ${itemsXml}
     const albumById = new Map<string, string>(
       albumsRaw.map(album => [String(album.id), String(album.album_name || '')]),
     );
+    const albumCoverByAlbumId = new Map<string, string>(
+      albumsRaw.map((album) => {
+        const albumCoverPath = this.normalizePicturePath(album.album_cover_picture?.image_data);
+        return [String(album.id), albumCoverPath];
+      }),
+    );
     const albumArtistByAlbumId = new Map<string, string>(
       albumsRaw.map(album => [String(album.id), String(album.album_artist_id || '')]),
     );
@@ -1702,6 +1789,7 @@ ${itemsXml}
       .map(trackData => this.createDlnaTrackFromMediaTrackData(
         trackData,
         albumById,
+        albumCoverByAlbumId,
         artistById,
         artistViewMode,
         albumArtistByAlbumId,
@@ -1741,6 +1829,7 @@ ${itemsXml}
   private static createDlnaTrackFromMediaTrackData(
     track: IMediaTrackData,
     albumById: Map<string, string>,
+    albumCoverByAlbumId: Map<string, string>,
     artistById: Map<string, string>,
     artistViewMode: ArtistViewMode,
     albumArtistByAlbumId: Map<string, string>,
@@ -1759,6 +1848,8 @@ ${itemsXml}
       .filter(Boolean) as string[];
     const albumId = String(track.track_album_id || '');
     const albumName = String(albumById.get(albumId) || '');
+    const coverPathFromTrack = this.normalizePicturePath(track.track_cover_picture?.image_data);
+    const coverPath = coverPathFromTrack || String(albumCoverByAlbumId.get(albumId) || '');
     return {
       id: String(track.id || track.provider_id || filePath),
       providerId: String(track.provider_id || ''),
@@ -1771,7 +1862,36 @@ ${itemsXml}
       filePath,
       mimeType: this.getMimeType(filePath),
       fileSize,
+      coverPath,
+      coverMimeType: this.getImageMimeType(coverPath),
     };
+  }
+
+  private static getTrackCoverPathFromMediaTrack(mediaTrack: IMediaTrack): string {
+    const coverFromTrack = this.normalizePicturePath(mediaTrack.track_cover_picture?.image_data);
+    if (coverFromTrack) {
+      return coverFromTrack;
+    }
+    return this.normalizePicturePath(mediaTrack.track_album?.album_cover_picture?.image_data);
+  }
+
+  private static normalizePicturePath(imageData?: any): string {
+    const picturePath = String(imageData || '').replace(/^file:\/\//, '').trim();
+    if (!picturePath || !fs.existsSync(picturePath)) {
+      return '';
+    }
+    return picturePath;
+  }
+
+  private static getImageMimeType(filePath?: string): string {
+    const extension = path.extname(String(filePath || '')).toLowerCase();
+    if (extension === '.png') {
+      return 'image/png';
+    }
+    if (extension === '.webp') {
+      return 'image/webp';
+    }
+    return 'image/jpeg';
   }
 
   private static async resolveStreamTrack(trackId: string): Promise<DlnaTrack | undefined> {
@@ -1801,6 +1921,9 @@ ${itemsXml}
       } as any)
       : [];
     const albumById = new Map<string, string>(albumData ? [[String(albumData.id), String(albumData.album_name || '')]] : []);
+    const albumCoverByAlbumId = new Map<string, string>(
+      albumData ? [[String(albumData.id), this.normalizePicturePath(albumData.album_cover_picture?.image_data)]] : [],
+    );
     const albumArtistByAlbumId = new Map<string, string>(
       albumData ? [[String(albumData.id), String(albumData.album_artist_id || '')]] : [],
     );
@@ -1808,6 +1931,7 @@ ${itemsXml}
     return this.createDlnaTrackFromMediaTrackData(
       mediaTrackData,
       albumById,
+      albumCoverByAlbumId,
       artistById,
       this.getArtistViewMode(),
       albumArtistByAlbumId,

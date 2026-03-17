@@ -18,6 +18,7 @@ import 'regenerator-runtime/runtime';
 
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'child_process';
 import * as electronUpdater from 'electron-updater';
 import electronLog from 'electron-log/main';
 import electronDebug from 'electron-debug';
@@ -500,15 +501,6 @@ class App implements IAppMain {
     if (!app.isPackaged || this.autoUpdaterRegistered) {
       return;
     }
-    if (this.platform === PlatformOS.Darwin) {
-      this.setUpdateState({
-        status: 'not_available',
-        message: 'In-App-Updates sind für macOS ohne Developer-ID-Signierung deaktiviert. Bitte neue Version manuell aus dem Release installieren.',
-        canDownload: false,
-        canInstall: false,
-      });
-      return;
-    }
     this.autoUpdaterRegistered = true;
 
     const autoUpdater = this.getAutoUpdater();
@@ -548,9 +540,13 @@ class App implements IAppMain {
       });
     });
     autoUpdater.on('error', (error: any) => {
-      this.setUpdateState({
-        status: 'error',
-        message: String((error as any)?.message || error),
+      this.handleAutoUpdaterError(error).catch((nestedError) => {
+        this.setUpdateState({
+          status: 'error',
+          message: String((nestedError as any)?.message || nestedError),
+          canDownload: false,
+          canInstall: false,
+        });
       });
     });
     autoUpdater.on('update-available', (info: any) => {
@@ -756,15 +752,6 @@ class App implements IAppMain {
       });
       return undefined;
     }
-    if (this.platform === PlatformOS.Darwin) {
-      this.setUpdateState({
-        status: 'not_available',
-        message: 'In-App-Updates sind für macOS ohne Developer-ID-Signierung deaktiviert. Bitte neue Version manuell aus dem Release installieren.',
-        canDownload: false,
-        canInstall: false,
-      });
-      return undefined;
-    }
     this.setUpdateState({
       status: 'checking',
       message: '',
@@ -811,15 +798,6 @@ class App implements IAppMain {
     if (!app.isPackaged) {
       return;
     }
-    if (this.platform === PlatformOS.Darwin) {
-      this.setUpdateState({
-        status: 'not_available',
-        message: 'In-App-Updates sind für macOS ohne Developer-ID-Signierung deaktiviert. Bitte neue Version manuell aus dem Release installieren.',
-        canDownload: false,
-        canInstall: false,
-      });
-      return;
-    }
     this.setUpdateState({
       status: 'downloading',
       canDownload: false,
@@ -854,15 +832,6 @@ class App implements IAppMain {
     if (!app.isPackaged) {
       return;
     }
-    if (this.platform === PlatformOS.Darwin) {
-      this.setUpdateState({
-        status: 'not_available',
-        message: 'In-App-Updates sind für macOS ohne Developer-ID-Signierung deaktiviert. Bitte neue Version manuell aus dem Release installieren.',
-        canDownload: false,
-        canInstall: false,
-      });
-      return;
-    }
     this.persistWhatsNewFromLatestUpdateInfo();
     this.setUpdateState({
       status: 'installing',
@@ -879,6 +848,74 @@ class App implements IAppMain {
       return;
     }
     autoUpdater.quitAndInstall(true, true);
+  }
+
+  private async handleAutoUpdaterError(error: any) {
+    const rawMessage = String((error as any)?.message || error || '');
+    if (this.platform !== PlatformOS.Darwin) {
+      this.setUpdateState({
+        status: 'error',
+        message: rawMessage,
+        canDownload: false,
+        canInstall: false,
+      });
+      return;
+    }
+
+    const macAppBundlePath = this.getMacAppBundlePathFromError(rawMessage);
+    const hasSignatureError = /code signature|did not pass validation|code-anforderungen|beschädigt|damaged/i.test(rawMessage);
+    const quarantineAutoClearSuccess = macAppBundlePath
+      ? await this.clearMacQuarantine(macAppBundlePath)
+      : false;
+    const hintMessage = hasSignatureError
+      ? this.getMacQuarantineHintMessage(macAppBundlePath, quarantineAutoClearSuccess)
+      : '';
+
+    this.setUpdateState({
+      status: 'error',
+      message: hintMessage ? `${rawMessage}\n\n${hintMessage}` : rawMessage,
+      canDownload: false,
+      canInstall: false,
+    });
+  }
+
+  private getMacAppBundlePathFromError(errorMessage: string): string | undefined {
+    const fileUrlMatch = String(errorMessage || '').match(/file:\/\/([^\s]+?\.app)/i);
+    if (!fileUrlMatch?.[1]) {
+      return undefined;
+    }
+    try {
+      return decodeURIComponent(fileUrlMatch[1]);
+    } catch (_error) {
+      return fileUrlMatch[1];
+    }
+  }
+
+  private async clearMacQuarantine(appBundlePath: string): Promise<boolean> {
+    if (this.platform !== PlatformOS.Darwin) {
+      return false;
+    }
+    const normalizedPath = String(appBundlePath || '').trim();
+    if (!normalizedPath || !fs.existsSync(normalizedPath)) {
+      return false;
+    }
+    return new Promise((resolve) => {
+      execFile('xattr', ['-dr', 'com.apple.quarantine', normalizedPath], (error) => {
+        resolve(!error);
+      });
+    });
+  }
+
+  private getMacQuarantineHintMessage(appBundlePath?: string, autoClearSuccess?: boolean): string {
+    const candidatePath = appBundlePath && appBundlePath.trim()
+      ? appBundlePath
+      : '/Applications/AuroraPulse.app';
+    const escapedPath = candidatePath.replace(/"/g, '\\"');
+    const command = `xattr -dr com.apple.quarantine "${escapedPath}"`;
+    if (autoClearSuccess) {
+      return `Quarantäne wurde bereits automatisch entfernt. Falls der Start weiterhin blockiert ist, führe bitte im Terminal aus: ${command}`;
+    }
+    return `Falls macOS den Start blockiert, führe bitte im Terminal aus: ${command}`;
   }
 
   private async createWindow(): Promise<BrowserWindow> {

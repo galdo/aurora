@@ -209,7 +209,7 @@ export function MediaPlayerSide() {
                     active: dlnaState.outputMode === 'local',
                   })}
                   onClick={() => {
-                    DlnaService.setOutputDevice('local').catch(console.error);
+                    MediaPlayerService.switchOutputDevice('local').catch(console.error);
                     setShowOutputMenu(false);
                   }}
                 >
@@ -223,7 +223,7 @@ export function MediaPlayerSide() {
                       active: dlnaState.outputMode === 'remote' && dlnaState.selectedRendererId === renderer.id,
                     })}
                     onClick={() => {
-                      DlnaService.setOutputDevice(renderer.id).catch(console.error);
+                      MediaPlayerService.switchOutputDevice(renderer.id).catch(console.error);
                       setShowOutputMenu(false);
                     }}
                   >

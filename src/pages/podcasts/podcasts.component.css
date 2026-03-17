@@ -107,10 +107,17 @@
 }
 
 .podcast-status {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 3px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(2px);
+  z-index: 1;
 }
 
 .podcast-status-dot {
@@ -124,7 +131,7 @@
 .podcast-status-new,
 .podcast-status-unplayed {
   color: #16c784;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.3px;
