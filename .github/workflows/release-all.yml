@@ -286,7 +286,6 @@ jobs:
           prerelease: ${{ needs.meta.outputs.prerelease }}
           body: |
             ### Release 1.5.0 (Beta 7)
-            Changelog (based on code changes between v1.4.0 and v1.5.0)
 
             **Added**
             - Shared collection view controls across Albums, Artists, Playlists, and Podcasts (cover-size slider + unified sorting controls).
