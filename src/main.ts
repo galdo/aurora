@@ -500,6 +500,15 @@ class App implements IAppMain {
     if (!app.isPackaged || this.autoUpdaterRegistered) {
       return;
     }
+    if (this.platform === PlatformOS.Darwin) {
+      this.setUpdateState({
+        status: 'not_available',
+        message: 'In-App-Updates sind für macOS ohne Developer-ID-Signierung deaktiviert. Bitte neue Version manuell aus dem Release installieren.',
+        canDownload: false,
+        canInstall: false,
+      });
+      return;
+    }
     this.autoUpdaterRegistered = true;
 
     const autoUpdater = this.getAutoUpdater();
@@ -747,6 +756,15 @@ class App implements IAppMain {
       });
       return undefined;
     }
+    if (this.platform === PlatformOS.Darwin) {
+      this.setUpdateState({
+        status: 'not_available',
+        message: 'In-App-Updates sind für macOS ohne Developer-ID-Signierung deaktiviert. Bitte neue Version manuell aus dem Release installieren.',
+        canDownload: false,
+        canInstall: false,
+      });
+      return undefined;
+    }
     this.setUpdateState({
       status: 'checking',
       message: '',
@@ -793,6 +811,15 @@ class App implements IAppMain {
     if (!app.isPackaged) {
       return;
     }
+    if (this.platform === PlatformOS.Darwin) {
+      this.setUpdateState({
+        status: 'not_available',
+        message: 'In-App-Updates sind für macOS ohne Developer-ID-Signierung deaktiviert. Bitte neue Version manuell aus dem Release installieren.',
+        canDownload: false,
+        canInstall: false,
+      });
+      return;
+    }
     this.setUpdateState({
       status: 'downloading',
       canDownload: false,
@@ -825,6 +852,15 @@ class App implements IAppMain {
 
   private async installDownloadedUpdate() {
     if (!app.isPackaged) {
+      return;
+    }
+    if (this.platform === PlatformOS.Darwin) {
+      this.setUpdateState({
+        status: 'not_available',
+        message: 'In-App-Updates sind für macOS ohne Developer-ID-Signierung deaktiviert. Bitte neue Version manuell aus dem Release installieren.',
+        canDownload: false,
+        canInstall: false,
+      });
       return;
     }
     this.persistWhatsNewFromLatestUpdateInfo();
