@@ -354,9 +354,20 @@
 
 .dap-progress-meta {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 12px;
   color: var(--text-dark-color);
+}
+
+.dap-progress-meta-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+.dap-progress-meta-separator {
+  opacity: 0.7;
 }
 
 .settings-technical-grid {

@@ -193,7 +193,8 @@ export class MediaLocalPlayback implements IMediaPlayback {
       if (!this.remotePlaybackActive) {
         return false;
       }
-      if (this.getPlaybackProgress() >= Number(this.mediaTrack.track_duration || 0)) {
+      const trackDuration = Number(this.mediaTrack.track_duration || 0);
+      if (trackDuration > 0 && this.getPlaybackProgress() >= trackDuration) {
         this.remotePlaybackActive = false;
         this.mediaPlaybackEnded = true;
         return false;
@@ -220,7 +221,10 @@ export class MediaLocalPlayback implements IMediaPlayback {
       }
       const elapsedSeconds = Math.max(0, (Date.now() - this.remotePlaybackStartedAt) / 1000);
       const maxDuration = Number(this.mediaTrack.track_duration || 0);
-      return Math.min(maxDuration, this.remotePlaybackPausedProgress + elapsedSeconds);
+      if (maxDuration > 0) {
+        return Math.min(maxDuration, this.remotePlaybackPausedProgress + elapsedSeconds);
+      }
+      return this.remotePlaybackPausedProgress + elapsedSeconds;
     }
     if (!this.mediaPlaybackLocalAudio) {
       return 0;

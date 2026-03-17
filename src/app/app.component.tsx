@@ -138,6 +138,28 @@ function Stage() {
     };
   }, [mediaIsSyncing]);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const dapSyncSettings = MediaLibraryService.getDapSyncSettings();
+      if (!dapSyncSettings.autoSyncEnabled || !dapSyncSettings.targetDirectory) {
+        return;
+      }
+      const dapSyncSnapshot = MediaLibraryService.getDapSyncProgressSnapshot();
+      if (dapSyncSnapshot.isRunning || !dapSyncSnapshot.canResume) {
+        return;
+      }
+      MediaLibraryService.syncDapLibrary({
+        targetDirectory: dapSyncSettings.targetDirectory,
+        deleteMissingOnDevice: dapSyncSettings.deleteMissingOnDevice,
+        silent: true,
+      }).catch(() => {});
+    }, 12000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
   return (
     <div className={cx('app-stage')}>
       <Sidebar/>

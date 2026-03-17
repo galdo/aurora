@@ -1278,18 +1278,6 @@ class App implements IAppMain {
       accelerators: ['MediaStop'],
       action: 'stop',
       required: true,
-    }, {
-      accelerators: ['VolumeUp', 'MediaVolumeUp'],
-      action: 'volume_up',
-      required: false,
-    }, {
-      accelerators: ['VolumeDown', 'MediaVolumeDown'],
-      action: 'volume_down',
-      required: false,
-    }, {
-      accelerators: ['VolumeMute', 'MediaVolumeMute'],
-      action: 'volume_mute',
-      required: false,
     }];
 
     let failedRegistrationCount = 0;

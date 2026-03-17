@@ -35,6 +35,7 @@ export class DeviceModule implements IAppModule {
     IPCMain.addSyncMessageHandler(IPCCommChannel.DeviceGetAudioCdStatus, this.getAudioCdStatus, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceGetAudioCdTracks, this.getAudioCdTracks, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceEjectAudioCd, this.ejectAudioCd, this);
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceEjectVolume, this.ejectVolume, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceSearchDiscogsReleases, this.searchDiscogsReleases, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceGetDiscogsRelease, this.getDiscogsRelease, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceImportAudioCd, this.importAudioCd, this);
@@ -166,6 +167,43 @@ export class DeviceModule implements IAppModule {
 
     this.sendUpdate(true, this.currentCdPath, this.currentCdName || undefined);
     return false;
+  }
+
+  private async ejectVolume(input: {
+    targetPath?: string;
+  }): Promise<boolean> {
+    const targetPath = path.resolve(String(input?.targetPath || '').trim());
+    if (!targetPath) {
+      return false;
+    }
+
+    const runCommand = (command: string, args: string[]) => {
+      const result = spawnSync(command, args, { encoding: 'utf-8' });
+      return result.status === 0;
+    };
+
+    if (process.platform === 'darwin') {
+      const diskIdentifier = ((spawnSync('diskutil', ['info', targetPath], { encoding: 'utf-8' }).stdout || '').match(/Device Identifier:\s*([^\s]+)/i)?.[1]);
+      return runCommand('diskutil', ['eject', targetPath])
+        || (!!diskIdentifier && runCommand('diskutil', ['eject', diskIdentifier]))
+        || runCommand('diskutil', ['unmount', targetPath]);
+    }
+
+    if (process.platform === 'win32') {
+      const driveMatch = targetPath.match(/^([a-zA-Z]:)/);
+      if (!driveMatch) {
+        return false;
+      }
+      const driveLetter = driveMatch[1].replace(':', '');
+      return runCommand('powershell', [
+        '-NoProfile',
+        '-Command',
+        `(New-Object -comObject Shell.Application).Namespace(17).ParseName('${driveLetter}:').InvokeVerb('Eject')`,
+      ]);
+    }
+
+    return runCommand('udisksctl', ['unmount', '--object-path', targetPath])
+      || runCommand('umount', [targetPath]);
   }
 
   private async getAudioFiles(cdPath: string) {

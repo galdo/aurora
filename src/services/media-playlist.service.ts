@@ -503,10 +503,24 @@ export class MediaPlaylistService {
         track => Number(track.sync_timestamp || 0),
       ],
       ['desc', 'desc', 'desc'],
-    ).slice(0, this.mostPlayedPlaylistLimit);
+    );
+    const playedTracks = sortedByPlayCount.filter(track => Number(_.get(track, 'extra.play_count', 0)) > 0);
+    const tracksForPlaylist = (() => {
+      if (playedTracks.length <= this.mostPlayedPlaylistLimit) {
+        return playedTracks;
+      }
 
-    const tracks: IMediaPlaylistTrackData[] = sortedByPlayCount
-      .filter(track => Number(_.get(track, 'extra.play_count', 0)) > 0)
+      const cutOffPlayCount = Number(_.get(playedTracks[this.mostPlayedPlaylistLimit - 1], 'extra.play_count', 0));
+      const tracksAboveCutOff = playedTracks.filter(track => Number(_.get(track, 'extra.play_count', 0)) > cutOffPlayCount);
+      const tracksAtCutOff = playedTracks.filter(track => Number(_.get(track, 'extra.play_count', 0)) === cutOffPlayCount);
+      const remainingSlots = Math.max(0, this.mostPlayedPlaylistLimit - tracksAboveCutOff.length);
+      return [
+        ...tracksAboveCutOff,
+        ..._.shuffle(tracksAtCutOff).slice(0, remainingSlots),
+      ];
+    })();
+
+    const tracks: IMediaPlaylistTrackData[] = tracksForPlaylist
       .map(track => ({
         playlist_track_id: `${this.mostPlayedPlaylistId}:${track.id}`,
         provider: track.provider,

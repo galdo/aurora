@@ -760,10 +760,12 @@ export function AudioCdPage() {
           artist: I18nService.getString('label_audio_cd_unknown_artist'),
           tracks: tracks.map(track => ({ title: track.track_name })),
         },
-      }) as { count: number; importedDirectory: string };
+      }) as { count?: number; importedDirectory?: string } | undefined;
+      const importedCount = Number(result?.count || 0);
+      const importedDirectory = String(result?.importedDirectory || importDirectory);
       setStatusMessage(I18nService.getString('message_audio_cd_import_success', {
-        count: result.count,
-        importedDirectory: result.importedDirectory,
+        count: importedCount,
+        importedDirectory,
       }));
     } catch (error) {
       setStatusMessage((error as Error).message || I18nService.getString('message_audio_cd_import_failed'));

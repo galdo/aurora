@@ -33,10 +33,17 @@ function SidebarQuickAccess() {
 }
 
 function SidebarBrandingLogo() {
+  const displayNameWords = String(AppService.details.display_name || 'Aurora Pulse').trim().split(/\s+/).filter(Boolean);
+  const auroraLabel = displayNameWords[0] || 'Aurora';
+  const pulseLabel = displayNameWords.slice(1).join(' ') || 'Pulse';
+
   return (
     <div className={cx('sidebar-branding')}>
       <div className={cx('sidebar-logo')} style={{ backgroundImage: `url(${AppLogo})` }}/>
-      <div className={cx('sidebar-app-name')}>{AppService.details.display_name}</div>
+      <div className={cx('sidebar-app-name')}>
+        <span className={cx('sidebar-app-name-aurora')}>{auroraLabel}</span>
+        <span className={cx('sidebar-app-name-pulse')}>{pulseLabel}</span>
+      </div>
     </div>
   );
 }

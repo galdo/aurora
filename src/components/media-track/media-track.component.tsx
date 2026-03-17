@@ -63,6 +63,8 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
   });
 
   const { showModal } = useModal();
+  const showPlayCount = !!(mediaTrack.extra as any)?.show_play_count;
+  const playCount = Number((mediaTrack.extra as any)?.play_count || 0);
 
   return (
     <div
@@ -168,6 +170,11 @@ export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
               className={cx('media-track-like-button')}
             />
           </div>
+          {showPlayCount && (
+            <div className={cx('media-track-play-count')}>
+              {`Plays ${playCount}`}
+            </div>
+          )}
           <div className={cx('media-track-duration')}>
             {MediaUtils.formatMediaTrackDuration(mediaTrack.track_duration)}
           </div>

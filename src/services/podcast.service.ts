@@ -17,6 +17,8 @@ type PodcastSyncResult = {
   copiedFiles: number;
   deletedFiles: number;
   downloadedEpisodes: number;
+  totalFiles: number;
+  syncedFiles: number;
 };
 
 export type PodcastPlaybackSnapshot = {
@@ -350,6 +352,8 @@ export class PodcastService {
         copiedFiles: 0,
         deletedFiles: 0,
         downloadedEpisodes: 0,
+        totalFiles: 0,
+        syncedFiles: 0,
       };
     }
 
@@ -448,11 +452,30 @@ export class PodcastService {
 
     NotificationService.showMessage(`Podcast Sync: ${syncTotals.downloadedEpisodes} geladen, ${syncTotals.copiedFiles} auf DAP synchronisiert, ${deletedFiles} gelöscht.`);
 
+    const expectedFilePathList = [...expectedFilePaths];
+    const syncedFiles = (await Promise.all(expectedFilePathList.map(async (expectedFilePath) => {
+      const fileStats = await fs.promises.stat(expectedFilePath).catch(() => undefined);
+      return !!fileStats && fileStats.isFile() && Number(fileStats.size || 0) > 0;
+    }))).filter(Boolean).length;
+
     return {
       copiedFiles: syncTotals.copiedFiles,
       deletedFiles,
       downloadedEpisodes: syncTotals.downloadedEpisodes,
+      totalFiles: expectedFilePaths.size,
+      syncedFiles,
     };
+  }
+
+  static getExpectedDapSyncFileCount(): number {
+    const subscriptions = this.getSubscriptions();
+    return subscriptions.reduce((count, subscription) => {
+      const expectedEpisodeCount = subscription.episodes
+        .filter(episode => !_.isEmpty(episode.audioUrl))
+        .slice(0, this.podcastSyncEpisodeLimit)
+        .length;
+      return count + expectedEpisodeCount;
+    }, 0);
   }
 
   private static async fetchEpisodes(feedUrl: string): Promise<IPodcastEpisode[]> {

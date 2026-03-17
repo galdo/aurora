@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Meow+Script&display=swap');
+
 .sidebar {
   width: clamp(240px, 17vw, 320px);
   min-width: 240px;
@@ -47,10 +49,22 @@
 }
 
 .sidebar-app-name {
-  font-size: 20px;
-  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   color: var(--text-light-color);
   letter-spacing: -0.5px;
+}
+
+.sidebar-app-name-aurora {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.sidebar-app-name-pulse {
+  font-size: 46px;
+  font-family: 'Meow Script', cursive;
+  line-height: 1;
 }
 
 .sidebar-navigation-list {

@@ -294,12 +294,12 @@
 }
 
 .media-player-output-button.connected {
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px rgba(22, 199, 132, 0.95);
+  color: #16c784;
 }
 
-.media-player-output-button.connected:not(.disabled):hover {
-  box-shadow: 0 0 0 2px rgba(22, 199, 132, 1), 0 0 0 6px rgba(22, 199, 132, 0.2);
+.media-player-output-button.connected .icon {
+  font-weight: 800;
+  font-variation-settings: 'wght' 800;
 }
 
 .media-player-output-menu {

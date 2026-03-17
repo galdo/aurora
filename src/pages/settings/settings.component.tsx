@@ -559,12 +559,15 @@ export function SettingsPage() {
                   />
                 </div>
                 <div className={cx('dap-progress-meta')}>
-                  <span>
+                  <span className={cx('dap-progress-meta-item')}>
+                    Gesamt
+                    {' '}
                     {dapSyncProgress.processedItems}
                     {' / '}
                     {dapSyncProgress.totalItems}
                   </span>
-                  <span>
+                  <span className={cx('dap-progress-meta-separator')}>•</span>
+                  <span className={cx('dap-progress-meta-item')}>
                     {I18nService.getString('label_settings_dap_time_remaining')}
                     {' '}
                     {formatDuration(dapSyncProgress.etaMs)}
@@ -572,7 +575,9 @@ export function SettingsPage() {
                 </div>
                 {!!dapSyncProgress.resumedFromProcessedItems && !dapSyncProgress.isRunning && (
                   <div className={cx('settings-description')}>
-                    {I18nService.getString('label_settings_dap_resumable').replace('{count}', String(dapSyncProgress.resumedFromProcessedItems))}
+                    {I18nService.getString('label_settings_dap_resumable', {
+                      count: String(dapSyncProgress.resumedFromProcessedItems),
+                    })}
                   </div>
                 )}
                 {dapSyncProgress.errorMessage && (

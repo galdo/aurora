@@ -21,6 +21,8 @@
 .browser-header-windows {
   --windows-controls-safe-height: max(var(--titlebar-overlay-height), 62px);
   margin: 0 14px 0 18px;
+  width: calc(100% - 32px);
+  max-width: calc(100% - 32px);
   flex: 0 0 var(--windows-controls-safe-height);
   height: var(--windows-controls-safe-height);
   min-height: var(--windows-controls-safe-height);
@@ -55,6 +57,12 @@
   width: 300px;
   min-width: 300px;
   max-width: 300px;
+}
+
+.browser-header-windows .browser-search {
+  width: clamp(170px, 22vw, 240px);
+  min-width: 170px;
+  max-width: 240px;
 }
 
 .browser-header-inline-controls {

@@ -36,6 +36,7 @@ export enum IPCCommChannel {
   DeviceGetAudioCdStatus = 'device:get_audio_cd_status',
   DeviceGetAudioCdTracks = 'device:get_audio_cd_tracks',
   DeviceEjectAudioCd = 'device:eject_audio_cd',
+  DeviceEjectVolume = 'device:eject_volume',
   DeviceSearchDiscogsReleases = 'device:search_discogs_releases',
   DeviceGetDiscogsRelease = 'device:get_discogs_release',
   DeviceImportAudioCd = 'device:import_audio_cd',

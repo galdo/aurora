@@ -149,3 +149,10 @@
   text-align: right;
   width: 70px; /* TODO: Hack to fit long durations (eg: 02:35:40) */
 }
+
+.media-track-play-count {
+  color: var(--text-dark-color);
+  font-size: 11px;
+  text-align: right;
+  min-width: 64px;
+}

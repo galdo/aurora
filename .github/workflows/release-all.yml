@@ -303,7 +303,7 @@ jobs:
           name: Release ${{ needs.meta.outputs.tag }}
           prerelease: ${{ needs.meta.outputs.prerelease }}
           body: |
-            ### Release 1.5.0 (Beta 5)
+            ### Release 1.5.0 (Beta 7)
             Changelog (based on code changes between v1.4.0 and v1.5.0)
 
             **Added**
@@ -328,7 +328,7 @@ jobs:
             - Switch for Artists view extended - new Option "Album Artist" introduced to change the artist listing from all artists (on track level) to album related artists
             - Settings, topbar actions, and secondary button styling were streamlined for clearer primary/secondary action hierarchy.
             - All Playlist and Albums now can be pinned to the left sidebar
-            - Import Details shown during Initial- and Delta Import
+            - Import Details shown during Initial- and Delta Import and DAP Sync
             - Performance Optimization in Search and Import
 
             **Fixed**
@@ -338,6 +338,11 @@ jobs:
             - Improved reliability of metadata display paths in player and media ingestion flow.
             - Stabilized packaging prerequisites for native sharp runtimes across targets.
             - Memory and Performance Optimizations
+            - Fixing issues with Auto-Update
+            - Fixing issues with DLNA Streaming Control-Issues in Player
+            - Fixing crash on DAP disconnect
+            - Count issue fixed for "most played"-Playlist
+            - Fixing sync issue with DAP
 
             **Notes**
             - Scope intentionally reflects the practical delta from v1.4.0 to v1.5.0 across UX, playback transparency, build/release workflow, and platform packaging readiness.

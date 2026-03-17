@@ -47,7 +47,30 @@ export function PlaylistPage() {
 
     MediaPlaylistService.resolveMediaPlaylistTracks(mediaSelectedPlaylist.id)
       .then((tracks) => {
-        setMediaPlaylistTracks(tracks);
+        const shouldShowPlayCounter = mediaSelectedPlaylist.id === MediaPlaylistService.mostPlayedPlaylistId;
+        const sortedTracks = shouldShowPlayCounter
+          ? [...tracks].sort((a, b) => {
+            const aPlayCount = Number((a.extra as any)?.play_count || 0);
+            const bPlayCount = Number((b.extra as any)?.play_count || 0);
+            if (aPlayCount !== bPlayCount) {
+              return bPlayCount - aPlayCount;
+            }
+            const aLastPlayed = Number((a.extra as any)?.last_played_at || 0);
+            const bLastPlayed = Number((b.extra as any)?.last_played_at || 0);
+            if (aLastPlayed !== bLastPlayed) {
+              return bLastPlayed - aLastPlayed;
+            }
+            return Number(b.sync_timestamp || 0) - Number(a.sync_timestamp || 0);
+          })
+          : tracks;
+        const tracksWithDisplayMeta = sortedTracks.map(track => ({
+          ...track,
+          extra: {
+            ...(track.extra || {}),
+            show_play_count: shouldShowPlayCounter,
+          },
+        }));
+        setMediaPlaylistTracks(tracksWithDisplayMeta);
       });
   }, [
     mediaSelectedPlaylist,
