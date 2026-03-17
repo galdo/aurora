@@ -13,8 +13,7 @@ exports.default = async function notarizeMacos(context) {
   }
 
   if (!('APPLE_ID' in process.env && 'APPLE_ID_PASS' in process.env)) {
-    console.warn('Skipping notarizing step. APPLE_ID and APPLE_ID_PASS env variables must be set');
-    return;
+    throw new Error('APPLE_ID and APPLE_ID_PASS env variables must be set for CI notarization');
   }
 
   const appName = context.packager.appInfo.productFilename;

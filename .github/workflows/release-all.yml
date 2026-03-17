@@ -86,6 +86,26 @@ jobs:
         run: |
           yarn install --non-interactive --silent
 
+      - name: Validate macOS signing secrets
+        shell: bash
+        run: |
+          if [[ -z "${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}" ]]; then
+            echo "Missing secret: MACOS_CERTIFICATE_P12_BASE64"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.MACOS_CERTIFICATE_PASSWORD }}" ]]; then
+            echo "Missing secret: MACOS_CERTIFICATE_PASSWORD"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.APPLE_ID }}" ]]; then
+            echo "Missing secret: APPLE_ID"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.APPLE_ID_PASS }}" ]]; then
+            echo "Missing secret: APPLE_ID_PASS"
+            exit 1
+          fi
+
       - name: Sync app version
         shell: bash
         run: |
@@ -96,10 +116,16 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           VERSION: ${{ needs.meta.outputs.version }}
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASS: ${{ secrets.APPLE_ID_PASS }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'true'
+          CSC_FOR_PULL_REQUEST: 'false'
         run: |
           npm run "prepare:sharp:mac:${ARCH}"
           npm run "prepare:mpv:mac:${ARCH}"
-          npm run package -- --mac --${ARCH} --c.mac.identity=-
+          npm run package -- --mac --${ARCH}
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
