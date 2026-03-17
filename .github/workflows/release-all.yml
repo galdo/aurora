@@ -99,31 +99,14 @@ jobs:
         run: |
           npm run "prepare:sharp:mac:${ARCH}"
           npm run "prepare:mpv:mac:${ARCH}"
-          npm run package -- --mac --${ARCH}
-
-          APP_PATH="release/mac-${ARCH}/AuroraPulse.app"
-          if [ ! -d "$APP_PATH" ]; then
-            APP_PATH=$(find release -maxdepth 3 -type d -name "*.app" | head -n 1)
-          fi
-          if [ -z "$APP_PATH" ]; then
-            echo "No .app bundle found under release/"
-            ls -lah release || true
-            exit 1
-          fi
-
-          DMG_PATH="release/AuroraPulse-mac-${ARCH}-${VERSION}.dmg"
-          xattr -cr "$APP_PATH"
-          STAGE_DIR="$(mktemp -d)"
-          cp -R "$APP_PATH" "$STAGE_DIR/$(basename "$APP_PATH")"
-          hdiutil create -volname "Aurora Pulse" -srcfolder "$STAGE_DIR" -ov -format UDZO "$DMG_PATH"
-          rm -rf "$STAGE_DIR"
+          npm run package -- --mac --${ARCH} --c.mac.identity=-
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
           path: |
-            release/AuroraPulse-mac-${{ matrix.arch }}-${{ needs.meta.outputs.version }}.dmg
+            release/*.dmg
             release/*.zip
             release/latest-mac*.yml
             release/*.blockmap

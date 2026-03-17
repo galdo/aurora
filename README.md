@@ -74,7 +74,7 @@ Aurora Pulse is designed around ownership by default. Your media library, databa
 
 ## Project History and Why This Fork Exists
 
-Aurora Pulse is a continuation fork of the original Aurora project by bbbneo333. The fork was created to maintain momentum on a focused direction: a modern local-first player with stronger execution for audiophile workflows and everyday reliability.
+Aurora Pulse is developed as a continuation of the Aurora project under the current maintainer team at galdo. The project focuses on a modern local-first player with stronger execution for audiophile workflows and everyday reliability.
 
 The motivation was practical. Users needed faster iteration on quality-of-life improvements, clearer audio transparency in the interface, more robust collection and sync behavior, and tighter consistency in how navigation and sideviews work across the app. Aurora Pulse keeps the original foundation and spirit, while intentionally accelerating delivery around these priorities.
 
@@ -84,7 +84,7 @@ This is not a cosmetic rename. It is an execution-focused evolution of the same 
 
 ## Original Source
 
-Aurora Pulse builds on the original work by **bbbneo333**. The original repository is available at https://github.com/bbbneo333/aurora, and this project continues under the [MIT License](./LICENSE).
+Aurora Pulse is maintained in the current repository at https://github.com/galdo/aurora and continues under the [MIT License](./LICENSE).
 
 ## Disclaimer
 Aurora Pulse interacts directly with your local file system and external storage media (DAPs).

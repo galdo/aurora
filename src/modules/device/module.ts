@@ -1031,14 +1031,14 @@ export class DeviceModule implements IAppModule {
     const requestUrl = `${this.discogsBaseUrl}${endpoint}`;
     return this.requestJson(requestUrl, {
       Authorization: `Discogs token=${token}`,
-      'User-Agent': 'AuroraPulse/1.0 (+https://github.com/bbbneo333/aurora)',
+      'User-Agent': 'AuroraPulse/1.0 (+https://github.com/galdo/aurora)',
     });
   }
 
   private requestMusicBrainzJson(endpoint: string): Promise<any> {
     const requestUrl = `${this.musicBrainzBaseUrl}${endpoint}`;
     return this.requestJson(requestUrl, {
-      'User-Agent': 'AuroraPulse/1.0 (+https://github.com/bbbneo333/aurora)',
+      'User-Agent': 'AuroraPulse/1.0 (+https://github.com/galdo/aurora)',
     });
   }
 
