@@ -289,6 +289,12 @@ body {
   min-width: min(50vw, 920px);
 }
 
+.modal-dialog.library-stats-modal-dialog {
+  width: min(60vw, 980px);
+  max-width: 94vw;
+  min-width: min(48vw, 860px);
+}
+
 .modal-backdrop.show.podcast-discover-modal-backdrop {
   --podcast-backdrop-player-offset: 100px;
   background-color: rgba(0, 0, 0, 0.05);
@@ -303,6 +309,11 @@ body {
 @media (max-width: 1200px) {
   .modal-dialog.podcast-discover-modal-dialog {
     width: min(90vw, 980px);
+    min-width: 0;
+  }
+
+  .modal-dialog.library-stats-modal-dialog {
+    width: min(92vw, 900px);
     min-width: 0;
   }
 }

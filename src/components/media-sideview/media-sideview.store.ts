@@ -2,6 +2,7 @@ export type MediaSideViewState =
   | { type: 'none' }
   | { type: 'album', albumId: string }
   | { type: 'playlist', playlistId: string }
+  | { type: 'liked-tracks' }
   | { type: 'podcast', podcastId: string };
 
 let state: MediaSideViewState = { type: 'none' };
@@ -34,6 +35,11 @@ export function openPlaylistSideView(playlistId: string) {
 
 export function openPodcastSideView(podcastId: string) {
   state = { type: 'podcast', podcastId };
+  emit();
+}
+
+export function openLikedTracksSideView() {
+  state = { type: 'liked-tracks' };
   emit();
 }
 

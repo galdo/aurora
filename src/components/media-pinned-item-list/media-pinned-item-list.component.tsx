@@ -19,10 +19,15 @@ import { Icon } from '../icon/icon.component';
 import { RouterLink } from '../router-link/router-link.component';
 import { MediaCollectionContextMenu, MediaCollectionContextMenuItem } from '../media-collection-context-menu/media-collection-context-menu.component';
 import { MediaPlaylistDeleteModal } from '../media-playlist-delete-modal/media-playlist-delete-modal.component';
+import { openLikedTracksSideView, openPlaylistSideView } from '../media-sideview/media-sideview.store';
 
 import styles from './media-pinned-item-list.component.css';
 
 const cx = classNames.bind(styles);
+const likedTracksLegacyPlaylistIds = new Set([
+  'liked-tracks',
+  'auto-playlist-liked-tracks',
+]);
 
 const getLocalizedPinnedItem = (pinnedItem: IMediaPinnedItem): IMediaPinnedItem => {
   if (pinnedItem.type === MediaCollectionItemType.LikedTracks) {
@@ -108,6 +113,9 @@ export function MediaPinnedItemList() {
           const localizedPinnedItem = getLocalizedPinnedItem(pinnedItem);
           const pinnedItemRouterLink = MediaCollectionService.getItemRouterLink(localizedPinnedItem);
           const pinnedItemIcon = MediaCollectionService.getItemCoverPlaceholderIcon(localizedPinnedItem);
+          const opensLikedTracksSideView = localizedPinnedItem.type === MediaCollectionItemType.LikedTracks
+            || (localizedPinnedItem.type === MediaCollectionItemType.Playlist
+              && likedTracksLegacyPlaylistIds.has(localizedPinnedItem.id));
           return (
             <RouterLink
               key={localizedPinnedItem.id}
@@ -115,6 +123,17 @@ export function MediaPinnedItemList() {
               exact
               activeClassName={cx('media-pinned-item-link-active')}
               className={cx('media-pinned-item-link', 'app-nav-link')}
+              onClick={(event) => {
+                if (opensLikedTracksSideView) {
+                  event.preventDefault();
+                  openLikedTracksSideView();
+                  return;
+                }
+                if (localizedPinnedItem.type === MediaCollectionItemType.Playlist) {
+                  event.preventDefault();
+                  openPlaylistSideView(localizedPinnedItem.id);
+                }
+              }}
               onContextMenu={event => handleItemContextMenu(event, localizedPinnedItem)}
             >
               <span className={cx('media-pinned-item-icon')}>

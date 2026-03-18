@@ -36,7 +36,14 @@ export class MediaLocalPlayback implements IMediaPlayback {
   private remotePlaybackActive = false;
   private remotePlaybackStartedAt = 0;
   private remotePlaybackPausedProgress = 0;
+  private remotePlaybackLastSnapshotSeconds = 0;
+  private remotePlaybackStatePollInterval?: ReturnType<typeof setInterval>;
   private preparationStatusListener?: (status?: IMediaPlaybackPreparationStatus) => void;
+  private nativeBitPerfectDsdSession = false;
+  private nativeBitPerfectDsdActive = false;
+  private nativeBitPerfectDsdStartedAt = 0;
+  private nativeBitPerfectDsdPausedProgress = 0;
+  private nativeBitPerfectDsdTransitionUntil = 0;
 
   constructor(mediaTrack: IMediaLocalTrack, mediaPlaybackOptions: IMediaPlaybackOptions) {
     if (isEmpty(mediaTrack.extra.file_path)) {
@@ -89,10 +96,16 @@ export class MediaLocalPlayback implements IMediaPlayback {
       this.remotePlaybackSession = true;
       this.remotePlaybackActive = true;
       this.remotePlaybackStartedAt = Date.now();
+      this.remotePlaybackLastSnapshotSeconds = this.remotePlaybackPausedProgress;
       this.mediaPlaybackEnded = false;
+      this.startRemotePlaybackStatePolling();
       return true;
     }
     this.remotePlaybackSession = false;
+    this.stopRemotePlaybackStatePolling();
+    this.nativeBitPerfectDsdSession = false;
+    this.nativeBitPerfectDsdActive = false;
+    this.nativeBitPerfectDsdTransitionUntil = 0;
 
     const sourcePath = this.mediaTrack.extra.file_path;
 
@@ -111,14 +124,24 @@ export class MediaLocalPlayback implements IMediaPlayback {
       return true;
     }
 
-    const shouldTryConversionFallback = this.isAudioCdTrack() && MediaLocalPlayback.shouldConvertAudioCdTrack(sourcePath);
+    const canPlayNativeDsdWithBitPerfect = this.shouldUseNativeBitPerfectDsd(sourcePath);
+    if (canPlayNativeDsdWithBitPerfect) {
+      const startedNativeDsdPlayback = this.startNativeBitPerfectDsdPlayback(sourcePath, this.nativeBitPerfectDsdPausedProgress);
+      if (startedNativeDsdPlayback) {
+        this.syncSecondaryAudioPaths();
+        this.setPreparationStatus(undefined);
+        return true;
+      }
+    }
+
+    const shouldTryConversionFallback = MediaLocalPlayback.shouldConvertTrackToWav(sourcePath, this.isAudioCdTrack());
     if (!shouldTryConversionFallback || this.hasTriedConversionFallback) {
       this.setPreparationStatus(undefined);
       return false;
     }
 
     this.hasTriedConversionFallback = true;
-    const convertedPath = await MediaLocalPlayback.convertAudioCdTrackToWav(sourcePath, (progress) => {
+    const convertedPath = await MediaLocalPlayback.convertTrackToWav(sourcePath, this.isAudioCdTrack(), (progress) => {
       this.setPreparationStatus({
         phase: 'converting',
         progress,
@@ -204,6 +227,28 @@ export class MediaLocalPlayback implements IMediaPlayback {
       }
       return true;
     }
+    if (this.nativeBitPerfectDsdSession) {
+      const state = BitPerfectService.getState();
+      const isActive = state.active && state.currentFilePath === this.playbackSourcePath;
+      const transitionActive = Date.now() < this.nativeBitPerfectDsdTransitionUntil;
+      if (!isActive && transitionActive) {
+        return true;
+      }
+      if (!isActive && this.nativeBitPerfectDsdActive) {
+        this.nativeBitPerfectDsdActive = false;
+        this.mediaPlaybackEnded = true;
+      }
+      if (isActive) {
+        this.nativeBitPerfectDsdActive = true;
+      }
+      const trackDuration = Number(this.mediaTrack.track_duration || 0);
+      if (trackDuration > 0 && this.getPlaybackProgress() >= trackDuration) {
+        this.nativeBitPerfectDsdActive = false;
+        this.mediaPlaybackEnded = true;
+        return false;
+      }
+      return isActive;
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return false;
     }
@@ -229,6 +274,17 @@ export class MediaLocalPlayback implements IMediaPlayback {
       }
       return this.remotePlaybackPausedProgress + elapsedSeconds;
     }
+    if (this.nativeBitPerfectDsdSession) {
+      if (!this.nativeBitPerfectDsdActive) {
+        return this.nativeBitPerfectDsdPausedProgress;
+      }
+      const elapsedSeconds = Math.max(0, (Date.now() - this.nativeBitPerfectDsdStartedAt) / 1000);
+      const maxDuration = Number(this.mediaTrack.track_duration || 0);
+      if (maxDuration > 0) {
+        return Math.min(maxDuration, this.nativeBitPerfectDsdPausedProgress + elapsedSeconds);
+      }
+      return this.nativeBitPerfectDsdPausedProgress + elapsedSeconds;
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return 0;
     }
@@ -249,6 +305,16 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.mediaPlaybackEnded = false;
         return true;
       });
+    }
+    if (this.nativeBitPerfectDsdSession) {
+      const wasActive = this.nativeBitPerfectDsdActive;
+      BitPerfectService.seekTrack(this.playbackSourcePath, mediaPlaybackSeekPosition);
+      this.nativeBitPerfectDsdPausedProgress = mediaPlaybackSeekPosition;
+      this.nativeBitPerfectDsdStartedAt = Date.now();
+      this.nativeBitPerfectDsdActive = true;
+      this.nativeBitPerfectDsdTransitionUntil = wasActive ? Date.now() + 2500 : 0;
+      this.mediaPlaybackEnded = false;
+      return Promise.resolve(true);
     }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
@@ -281,9 +347,18 @@ export class MediaLocalPlayback implements IMediaPlayback {
           return false;
         }
         this.remotePlaybackPausedProgress = this.getPlaybackProgress();
+        this.remotePlaybackLastSnapshotSeconds = this.remotePlaybackPausedProgress;
         this.remotePlaybackActive = false;
+        this.stopRemotePlaybackStatePolling();
         return true;
       });
+    }
+    if (this.nativeBitPerfectDsdSession) {
+      this.nativeBitPerfectDsdPausedProgress = this.getPlaybackProgress();
+      this.nativeBitPerfectDsdActive = false;
+      this.nativeBitPerfectDsdTransitionUntil = 0;
+      BitPerfectService.stopPlayback();
+      return Promise.resolve(true);
     }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
@@ -303,6 +378,18 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   resumePlayback(): Promise<boolean> {
+    if (this.remotePlaybackSession) {
+      return DlnaService.resumeSelectedRenderer().then((resumed) => {
+        if (!resumed) {
+          return false;
+        }
+        this.remotePlaybackActive = true;
+        this.remotePlaybackStartedAt = Date.now();
+        this.remotePlaybackLastSnapshotSeconds = this.remotePlaybackPausedProgress;
+        this.startRemotePlaybackStatePolling();
+        return true;
+      });
+    }
     return this.play();
   }
 
@@ -313,11 +400,22 @@ export class MediaLocalPlayback implements IMediaPlayback {
           return false;
         }
         this.remotePlaybackPausedProgress = 0;
+        this.remotePlaybackLastSnapshotSeconds = 0;
         this.remotePlaybackActive = false;
         this.remotePlaybackSession = false;
         this.mediaPlaybackEnded = false;
+        this.stopRemotePlaybackStatePolling();
         return true;
       });
+    }
+    if (this.nativeBitPerfectDsdSession) {
+      this.nativeBitPerfectDsdPausedProgress = 0;
+      this.nativeBitPerfectDsdActive = false;
+      this.nativeBitPerfectDsdSession = false;
+      this.nativeBitPerfectDsdTransitionUntil = 0;
+      this.mediaPlaybackEnded = false;
+      BitPerfectService.stopPlayback();
+      return Promise.resolve(true);
     }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
@@ -339,6 +437,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   changePlaybackVolume(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): Promise<boolean> {
     if (this.remotePlaybackSession) {
       return DlnaService.setSelectedRendererVolume(mediaPlaybackVolume, mediaPlaybackMaxVolume);
+    }
+    if (this.nativeBitPerfectDsdSession) {
+      return BitPerfectService.setVolume(mediaPlaybackVolume, mediaPlaybackMaxVolume);
     }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
@@ -363,6 +464,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
     if (this.remotePlaybackSession) {
       return DlnaService.muteSelectedRenderer();
     }
+    if (this.nativeBitPerfectDsdSession) {
+      return BitPerfectService.muteVolume();
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
     }
@@ -385,6 +489,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   unmutePlaybackVolume(): Promise<boolean> {
     if (this.remotePlaybackSession) {
       return DlnaService.unmuteSelectedRenderer();
+    }
+    if (this.nativeBitPerfectDsdSession) {
+      return BitPerfectService.unmuteVolume();
     }
     if (!this.mediaPlaybackLocalAudio) {
       return Promise.resolve(false);
@@ -503,6 +610,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   private syncOutputRouting(isPlaying: boolean) {
+    if (this.nativeBitPerfectDsdSession) {
+      return;
+    }
     if (!this.mediaPlaybackLocalAudio) {
       return;
     }
@@ -538,18 +648,116 @@ export class MediaLocalPlayback implements IMediaPlayback {
     BitPerfectService.stopPlayback();
   }
 
+  private startRemotePlaybackStatePolling() {
+    if (this.remotePlaybackStatePollInterval) {
+      return;
+    }
+    this.remotePlaybackStatePollInterval = setInterval(() => {
+      this.refreshRemotePlaybackState().catch(() => undefined);
+    }, 1250);
+  }
+
+  private stopRemotePlaybackStatePolling() {
+    if (!this.remotePlaybackStatePollInterval) {
+      return;
+    }
+    clearInterval(this.remotePlaybackStatePollInterval);
+    this.remotePlaybackStatePollInterval = undefined;
+  }
+
+  private async refreshRemotePlaybackState() {
+    if (!this.remotePlaybackSession) {
+      return;
+    }
+    const snapshot = await DlnaService.getSelectedRendererSnapshot();
+    if (!snapshot) {
+      return;
+    }
+    if (Number.isFinite(snapshot.positionSeconds)) {
+      const snapshotSeconds = Math.max(0, Number(snapshot.positionSeconds || 0));
+      const hasForwardProgress = snapshotSeconds > (this.remotePlaybackLastSnapshotSeconds + 0.35);
+      if (!this.remotePlaybackActive || hasForwardProgress) {
+        this.remotePlaybackPausedProgress = snapshotSeconds;
+        this.remotePlaybackLastSnapshotSeconds = snapshotSeconds;
+        this.remotePlaybackStartedAt = Date.now();
+      }
+    }
+    const transportState = String(snapshot.transportState || '').toUpperCase();
+    const trackDuration = Number(this.mediaTrack.track_duration || 0);
+    if (transportState === 'PLAYING') {
+      this.remotePlaybackActive = true;
+      this.mediaPlaybackEnded = false;
+      return;
+    }
+    const reachedTrackEnd = trackDuration > 0
+      && this.remotePlaybackPausedProgress >= Math.max(0, trackDuration - 1);
+    if (transportState === 'STOPPED'
+      || transportState === 'NO_MEDIA_PRESENT'
+      || reachedTrackEnd) {
+      this.remotePlaybackActive = false;
+      this.mediaPlaybackEnded = true;
+      this.stopRemotePlaybackStatePolling();
+      return;
+    }
+    if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
+      this.remotePlaybackActive = false;
+    }
+  }
+
   private isAudioCdTrack(): boolean {
     return String(this.mediaTrack.extra.file_source || '').toLowerCase() === 'audio-cd';
   }
 
-  private static shouldConvertAudioCdTrack(sourcePath: string): boolean {
+  private static shouldConvertTrackToWav(sourcePath: string, isAudioCdTrack: boolean): boolean {
     const normalizedSource = String(sourcePath || '');
     if (!normalizedSource) {
       return false;
     }
 
     const extension = path.extname(normalizedSource).toLowerCase();
-    return extension === '.aiff' || extension === '.aif' || extension === '.aifc';
+    return isAudioCdTrack && (extension === '.aiff' || extension === '.aif' || extension === '.aifc');
+  }
+
+  private shouldUseNativeBitPerfectDsd(sourcePath: string): boolean {
+    const extension = path.extname(String(sourcePath || '')).toLowerCase();
+    if (extension !== '.dsf' && extension !== '.dff') {
+      return false;
+    }
+    if (!BitPerfectService.isEnabled()) {
+      return false;
+    }
+    const bitPerfectState = BitPerfectService.getState();
+    return bitPerfectState.backend !== 'none';
+  }
+
+  private startNativeBitPerfectDsdPlayback(sourcePath: string, startSeconds: number): boolean {
+    this.playbackSourcePath = sourcePath;
+    BitPerfectService.playTrack(sourcePath, Math.max(0, startSeconds), {
+      volumePercent: this.mediaPlaybackOptions.mediaPlaybackVolume,
+      muted: this.mediaPlaybackOptions.mediaPlaybackVolumeMuted,
+    });
+    const bitPerfectState = BitPerfectService.getState();
+    if (!bitPerfectState.active || bitPerfectState.currentFilePath !== sourcePath) {
+      return false;
+    }
+    this.nativeBitPerfectDsdSession = true;
+    this.nativeBitPerfectDsdActive = true;
+    this.nativeBitPerfectDsdPausedProgress = Math.max(0, startSeconds);
+    this.nativeBitPerfectDsdStartedAt = Date.now();
+    this.nativeBitPerfectDsdTransitionUntil = 0;
+    this.mediaPlaybackEnded = false;
+    return true;
+  }
+
+  private static convertTrackToWav(
+    sourcePath: string,
+    isAudioCdTrack: boolean,
+    onProgress?: (progress: number) => void,
+  ): Promise<string> {
+    if (isAudioCdTrack) {
+      return this.convertAudioCdTrackToWav(sourcePath, onProgress);
+    }
+    return Promise.resolve(sourcePath);
   }
 
   private static convertAudioCdTrackToWav(

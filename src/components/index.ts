@@ -20,6 +20,7 @@ export * from './media-header-navigation-link/media-header-navigation-link.compo
 export * from './media-liked-tracks-collection-item/media-liked-tracks-collection-item.component';
 export * from './media-most-played-collection-item/media-most-played-collection-item.component';
 export * from './media-liked-tracks-delete-modal/media-liked-tracks-delete-modal.component';
+export * from './media-library-stats-modal/media-library-stats-modal.component';
 export * from './media-pinned-item-list/media-pinned-item-list.component';
 export * from './media-playback-button/media-playback-button.component';
 export * from './media-player/media-player.component';

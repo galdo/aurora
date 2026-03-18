@@ -36,12 +36,12 @@
 .browser-header-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   margin-left: auto;
 }
 
 .browser-header-actions-windows {
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
   flex-shrink: 0;
 }

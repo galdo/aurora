@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import classNames from 'classnames/bind';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -9,9 +9,9 @@ import {
   RouterLink,
 } from '../../components';
 
-import { AppService, I18nService } from '../../services';
+import { AppService, I18nService, PodcastService } from '../../services';
 import routes from '../app.routes';
-import { Icons } from '../../constants';
+import { Icons, Routes } from '../../constants';
 import { MediaLibraryActions } from '../../enums';
 import { PlatformOS } from '../../modules/platform';
 import { IPCCommChannel, IPCRenderer } from '../../modules/ipc';
@@ -136,13 +136,29 @@ function SidebarAudioCd() {
 }
 
 function SidebarNavigationList() {
+  const [hasNewPodcastContent, setHasNewPodcastContent] = useState(() => PodcastService.hasNewEpisodes());
+
+  useEffect(() => {
+    const updateNewPodcastContent = () => {
+      setHasNewPodcastContent(PodcastService.hasNewEpisodes());
+    };
+    const unsubscribe = PodcastService.subscribe(updateNewPodcastContent);
+    updateNewPodcastContent();
+    PodcastService.refreshSubscriptions()
+      .then(updateNewPodcastContent)
+      .catch(() => undefined);
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   return (
     <div className={cx('sidebar-navigation-list')}>
       {routes.sidebar.map(route => (
         <SidebarNavigationLink
           key={route.path}
           route={route}
-          hasNewContent={false}
+          hasNewContent={route.path === Routes.Podcasts && hasNewPodcastContent}
         />
       ))}
       <SidebarAudioCd/>

@@ -7,6 +7,7 @@ import { I18nService, MediaCollectionService, MediaLikedTrackService } from '../
 
 import { MediaCollectionItem } from '../media-collection-item/media-collection-item.component';
 import { MediaCollectionContextMenu, MediaCollectionContextMenuItem } from '../media-collection-context-menu/media-collection-context-menu.component';
+import { openLikedTracksSideView } from '../media-sideview/media-sideview.store';
 
 const likesCollectionItem = MediaCollectionService.getMediaItemForLikedTracks();
 
@@ -38,6 +39,9 @@ export function MediaLikedTracksCollectionItem(props: {
         mediaItem={likesCollectionItem}
         contextMenuId={contextMenuId}
         routerLink={Routes.LibraryLikedTracks}
+        onClick={() => {
+          openLikedTracksSideView();
+        }}
         subtitle={I18nService.getString('label_playlist_subtitle', {
           trackCount: likedTracksCount,
         })}

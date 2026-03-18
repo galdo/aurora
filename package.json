@@ -1,7 +1,7 @@
 {
   "name": "aurora-pulse",
   "productName": "Aurora Pulse",
-  "version": "1.5.0",
+  "version": "1.5.1-beta.1",
   "description": "A local-first music player built with Electron",
   "scripts": {
     "build": "concurrently \"npm run build:main\" \"npm run build:renderer\"",
@@ -46,7 +46,7 @@
   },
   "build": {
     "productName": "Aurora Pulse",
-    "appId": "com.bbbneo333.aurorapulse",
+    "appId": "com.galdo.aurorapulse",
     "artifactName": "AuroraPulse-${os}-${arch}-${version}.${ext}",
     "files": [
       "dist/**",

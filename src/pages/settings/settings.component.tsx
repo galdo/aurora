@@ -195,6 +195,10 @@ export function SettingsPage() {
   const dapProgressPercent = dapSyncProgress.totalItems > 0
     ? Math.min(100, Math.round((dapSyncProgress.processedItems / dapSyncProgress.totalItems) * 100))
     : 0;
+  const dapUnchangedFiles = Math.max(
+    0,
+    Number(dapSyncProgress.processedItems || 0) - Number(dapSyncProgress.copiedFiles || 0) - Number(dapSyncProgress.deletedFiles || 0),
+  );
   const formatDuration = (durationMs?: number) => {
     if (!durationMs || durationMs <= 0) {
       return '0:00';
@@ -276,6 +280,7 @@ export function SettingsPage() {
   }, []);
   const groupCompilationsByFolder = mediaLocalState.settings?.library?.group_compilations_by_folder || false;
   const appDetails = AppService.details;
+  const updateMessageUrlMatches = Array.from(String(updateState.message || '').matchAll(/https?:\/\/[^\s]+/g)).map(match => String(match[0]));
   const mediaKeysRegistered = !!appDetails.media_hardware_shortcuts_registered;
   const mediaKeysAccessibilityTrusted = appDetails.platform === 'darwin'
     ? !!appDetails.media_hardware_shortcuts_accessibility_trusted
@@ -544,10 +549,27 @@ export function SettingsPage() {
               </div>
               <div className={cx('dap-progress-container')}>
                 <div className={cx('dap-progress-header')}>
-                  <span>{dapProgressStatusLabel}</span>
-                  <span>
-                    {dapProgressPercent}
-                    %
+                  <span className={cx('dap-progress-header-title')}>
+                    <span>{dapProgressStatusLabel}</span>
+                    {dapSyncProgress.isRunning && (
+                      <button
+                        type="button"
+                        className={cx('dap-progress-cancel-button')}
+                        onClick={() => {
+                          MediaLibraryService.cancelDapLibrarySync();
+                        }}
+                        title="Kopiervorgang abbrechen"
+                        aria-label="Kopiervorgang abbrechen"
+                      >
+                        <Icon name={Icons.Close}/>
+                      </button>
+                    )}
+                  </span>
+                  <span className={cx('dap-progress-header-actions')}>
+                    <span>
+                      {dapProgressPercent}
+                      %
+                    </span>
                   </span>
                 </div>
                 <div className={cx('dap-progress-track')}>
@@ -560,11 +582,29 @@ export function SettingsPage() {
                 </div>
                 <div className={cx('dap-progress-meta')}>
                   <span className={cx('dap-progress-meta-item')}>
-                    Gesamt
+                    Geprüft
                     {' '}
                     {dapSyncProgress.processedItems}
                     {' / '}
                     {dapSyncProgress.totalItems}
+                  </span>
+                  <span className={cx('dap-progress-meta-separator')}>•</span>
+                  <span className={cx('dap-progress-meta-item')}>
+                    Kopiert
+                    {' '}
+                    {dapSyncProgress.copiedFiles}
+                  </span>
+                  <span className={cx('dap-progress-meta-separator')}>•</span>
+                  <span className={cx('dap-progress-meta-item')}>
+                    Unverändert
+                    {' '}
+                    {dapUnchangedFiles}
+                  </span>
+                  <span className={cx('dap-progress-meta-separator')}>•</span>
+                  <span className={cx('dap-progress-meta-item')}>
+                    Gelöscht
+                    {' '}
+                    {dapSyncProgress.deletedFiles}
                   </span>
                   <span className={cx('dap-progress-meta-separator')}>•</span>
                   <span className={cx('dap-progress-meta-item')}>
@@ -792,6 +832,15 @@ export function SettingsPage() {
               {!!updateState.message && (
                 <div className={cx('settings-inline-error')}>
                   {updateState.message}
+                  {updateMessageUrlMatches.length > 0 && (
+                    <div className={cx('settings-info-source-links')}>
+                      {updateMessageUrlMatches.map(url => (
+                        <Link key={url} href={url} className={cx('settings-info-link')}>
+                          {url}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               {!autoUpdateEnabled && (

@@ -8,6 +8,7 @@ import { StringUtils } from '../../utils';
 
 import { MediaCollectionItem } from '../media-collection-item/media-collection-item.component';
 import { MediaCollectionContextMenu, MediaCollectionContextMenuItem } from '../media-collection-context-menu/media-collection-context-menu.component';
+import { openPlaylistSideView } from '../media-sideview/media-sideview.store';
 
 export function MediaMostPlayedCollectionItem(props: {
   className?: string;
@@ -32,6 +33,9 @@ export function MediaMostPlayedCollectionItem(props: {
         routerLink={StringUtils.buildRoute(Routes.LibraryPlaylist, {
           playlistId: mostPlayedPlaylist.id,
         })}
+        onClick={() => {
+          openPlaylistSideView(mostPlayedPlaylist.id);
+        }}
         subtitle={I18nService.getString('label_playlist_subtitle', {
           trackCount: mostPlayedPlaylist.tracks.length,
         })}

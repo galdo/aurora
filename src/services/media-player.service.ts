@@ -20,6 +20,7 @@ import { MediaProviderService } from './media-provider.service';
 import { NotificationService } from './notification.service';
 import { PodcastService } from './podcast.service';
 import { DlnaService, DlnaState } from './dlna.service';
+import { BitPerfectService } from './bit-perfect.service';
 
 const debug = require('debug')('aurora:service:media_player');
 
@@ -45,6 +46,9 @@ class MediaPlayerService {
 
   playMediaTrack(mediaTrack: IMediaTrack): void {
     this.stopPodcastPlayback();
+    if (this.shouldBlockDsdWithoutBitPerfect(mediaTrack)) {
+      return;
+    }
 
     const {
       mediaPlayer,
@@ -82,6 +86,9 @@ class MediaPlayerService {
     }
 
     this.stopPodcastPlayback();
+    if (this.shouldBlockDsdWithoutBitPerfect(mediaTracks[0])) {
+      return;
+    }
 
     const {
       mediaPlayer,
@@ -125,6 +132,9 @@ class MediaPlayerService {
     if (!mediaTrack) {
       throw new Error('MediaPlayerService encountered error at playMediaTracks - Provided media track does not exists in the list');
     }
+    if (this.shouldBlockDsdWithoutBitPerfect(mediaTrack)) {
+      return;
+    }
 
     const {
       mediaPlayer,
@@ -163,6 +173,9 @@ class MediaPlayerService {
 
   playMediaTrackFromQueue(mediaQueueTrack: IMediaQueueTrack) {
     this.stopPodcastPlayback();
+    if (this.shouldBlockDsdWithoutBitPerfect(mediaQueueTrack)) {
+      return;
+    }
 
     const {
       mediaPlayer,
@@ -436,9 +449,14 @@ class MediaPlayerService {
     const playbackInstance = mediaPlaybackCurrentPlayingInstance;
     playbackInstance
       .pausePlayback()
-      .then((mediaPlaybackPaused) => {
-        if (!mediaPlaybackPaused) {
-          // TODO: Handle cases where media playback could not be paused
+      .then(async (mediaPlaybackPaused) => {
+        let paused = mediaPlaybackPaused;
+        if (!paused && DlnaService.isRemoteOutputRequested()) {
+          const snapshot = await DlnaService.getSelectedRendererSnapshot().catch(() => undefined);
+          const transportState = String(snapshot?.transportState || '').toUpperCase();
+          paused = transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED';
+        }
+        if (!paused) {
           return;
         }
         const { mediaPlayer: currentMediaPlayer } = store.getState();
@@ -465,12 +483,20 @@ class MediaPlayerService {
     if (!mediaPlaybackCurrentMediaTrack || !mediaPlaybackCurrentPlayingInstance) {
       return;
     }
+    if (this.shouldBlockDsdWithoutBitPerfect(mediaPlaybackCurrentMediaTrack)) {
+      return;
+    }
 
     mediaPlaybackCurrentPlayingInstance
       .resumePlayback()
-      .then((mediaPlaybackResumed) => {
-        if (!mediaPlaybackResumed) {
-          // TODO: Handle cases where playback could not be resumed
+      .then(async (mediaPlaybackResumed) => {
+        let resumed = mediaPlaybackResumed;
+        if (!resumed && DlnaService.isRemoteOutputRequested()) {
+          const snapshot = await DlnaService.getSelectedRendererSnapshot().catch(() => undefined);
+          const transportState = String(snapshot?.transportState || '').toUpperCase();
+          resumed = transportState === 'PLAYING';
+        }
+        if (!resumed) {
           return;
         }
 
@@ -554,6 +580,11 @@ class MediaPlayerService {
       }
     } finally {
       this.outputSwitchInProgress = false;
+      const { mediaPlayer: currentMediaPlayer } = store.getState();
+      if (currentMediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing
+        && currentMediaPlayer.mediaPlaybackCurrentPlayingInstance) {
+        this.startMediaProgressReporting();
+      }
     }
   }
 
@@ -900,6 +931,9 @@ class MediaPlayerService {
     if (!mediaTrackToLoad) {
       throw new Error('MediaPlayerService encountered error at loadAndPlayMediaTrack - Could not find any track to load');
     }
+    if (this.shouldBlockDsdWithoutBitPerfect(mediaTrackToLoad)) {
+      return false;
+    }
 
     const mediaPlayback = this.loadMediaTrack(mediaTrackToLoad);
 
@@ -908,6 +942,24 @@ class MediaPlayerService {
 
     const mediaPlayed = await mediaPlayback.play();
     if (!mediaPlayed) {
+      if (DlnaService.isRemoteOutputRequested()) {
+        await DlnaService.setOutputDevice('local').catch((error) => {
+          debug('loadAndPlayMediaTrack - failed to fallback output to local - %o', error);
+        });
+        const fallbackPlayback = this.loadMediaTrack(mediaTrackToLoad);
+        const fallbackPlayed = await fallbackPlayback.play();
+        if (fallbackPlayed) {
+          NotificationService.showMessage(I18nService.getString('label_player_output_device_none'));
+          store.dispatch({
+            type: MediaEnums.MediaPlayerActions.Play,
+            data: {
+              mediaPlaybackProgress: this.getCurrentPlaybackProgress(),
+            },
+          });
+          this.reportMediaPlaybackProgress();
+          return true;
+        }
+      }
       this.setPlaybackPreparationStatus(undefined);
       return false;
     }
@@ -930,6 +982,21 @@ class MediaPlayerService {
         mediaPlaybackPreparationStatus,
       },
     });
+  }
+
+  private shouldBlockDsdWithoutBitPerfect(mediaTrack?: IMediaTrack): boolean {
+    const sourcePath = String((mediaTrack?.extra as any)?.file_path || '').toLowerCase();
+    const isDsdTrack = sourcePath.endsWith('.dsf') || sourcePath.endsWith('.dff');
+    if (!isDsdTrack) {
+      return false;
+    }
+    const bitPerfectState = BitPerfectService.getState();
+    const blocked = !BitPerfectService.isEnabled() || bitPerfectState.backend === 'none';
+    if (blocked) {
+      NotificationService.showMessage(I18nService.getString('message_dsd_requires_bitperfect'));
+      this.setPlaybackPreparationStatus(undefined);
+    }
+    return blocked;
   }
 
   private async changePlaybackVolumeAsync(mediaPlaybackVolume: number): Promise<boolean> {
@@ -1052,7 +1119,10 @@ class MediaPlayerService {
 
   private reportMediaPlaybackProgress(): void {
     if (this.outputSwitchInProgress) {
-      debug('reportMediaPlaybackProgress - output switch in progress, skipping tick');
+      debug('reportMediaPlaybackProgress - output switch in progress, scheduling next tick');
+      setTimeout(() => {
+        this.reportMediaPlaybackProgress();
+      }, this.mediaProgressReportRetryDelayMS);
       return;
     }
     const {
@@ -1115,7 +1185,9 @@ class MediaPlayerService {
       mediaPlaybackCurrentMediaProgress = 0,
     } = mediaPlayer;
 
-    if (mediaPlaybackCurrentMediaProgress === mediaPlaybackProgress) {
+    const nextPlaybackState = seeking ? mediaPlaybackState : MediaEnums.MediaPlaybackState.Playing;
+    if (mediaPlaybackCurrentMediaProgress === mediaPlaybackProgress
+      && mediaPlaybackState === nextPlaybackState) {
       return;
     }
 
@@ -1124,7 +1196,7 @@ class MediaPlayerService {
     store.dispatch({
       type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
       data: {
-        mediaPlaybackState: seeking ? mediaPlaybackState : MediaEnums.MediaPlaybackState.Playing,
+        mediaPlaybackState: nextPlaybackState,
         mediaPlaybackProgress,
       },
     });

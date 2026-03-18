@@ -15,6 +15,7 @@ import {
   IPodcastEpisode,
   IPodcastSubscription,
   IMediaAlbum,
+  IMediaLikedTrack,
   IMediaPicture,
   IMediaPlaylist,
   IMediaPlaylistTrack,
@@ -26,6 +27,7 @@ import {
   MediaCollectionService,
   I18nService,
   MediaLibraryService,
+  MediaLikedTrackService,
   MediaPlayerService,
   MediaPlaylistService,
   MediaTrackService,
@@ -361,6 +363,7 @@ export function MediaPlaylistSideView({ playlistId, onClose }: MediaSideViewPlay
           <MediaCoverPicture
             mediaPicture={playlist.cover_picture}
             mediaPictureAltText={playlist.name}
+            mediaCoverPlaceholderIcon={Icons.PlaylistPlaceholder}
             className={cx('sideview-cover-picture')}
           />
           <div className={cx('sideview-meta')}>
@@ -567,6 +570,73 @@ export function MediaPodcastSideView({ podcastId, onClose }: MediaSideViewPodcas
   );
 }
 
+export function MediaLikedTracksSideView({ onClose }: { onClose: () => void }) {
+  const [tracks, setTracks] = useState<IMediaLikedTrack[]>([]);
+  const likesCollectionItem = MediaCollectionService.getMediaItemForLikedTracks();
+
+  useEffect(() => {
+    MediaLikedTrackService.resolveLikedTracks().then(setTracks);
+
+    document.body.classList.add('sideview-open');
+    return () => {
+      document.body.classList.remove('sideview-open');
+    };
+  }, []);
+
+  return (
+    <>
+      <div
+        className={cx('sideview-backdrop')}
+        role="button"
+        tabIndex={0}
+        aria-label="Sideview schließen"
+        onClick={onClose}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') onClose();
+          if (e.key === 'Escape') onClose();
+        }}
+      />
+      <aside className={cx('sideview')}>
+        <div className={cx('sideview-header')}>
+          <div className={cx('sideview-title')}>
+            {likesCollectionItem.name}
+          </div>
+          <button type="button" className={cx('sideview-close')} onClick={onClose} title="Close">
+            <Icon name={Icons.Close}/>
+          </button>
+        </div>
+        <div className={cx('sideview-cover')}>
+          <MediaCoverPicture
+            mediaPicture={likesCollectionItem.picture}
+            mediaPictureAltText={likesCollectionItem.name}
+            mediaCoverPlaceholderIcon={Icons.MediaLike}
+            className={cx('sideview-cover-picture')}
+          />
+          <div className={cx('sideview-meta')}>
+            <div className={cx('sideview-meta-title')}>{likesCollectionItem.name}</div>
+            <div className={cx('sideview-meta-details')}>
+              {tracks.length}
+              {' '}
+              Tracks
+            </div>
+          </div>
+        </div>
+        {!isEmpty(tracks) && (
+          <div className={cx('sideview-tracklist')}>
+            <MediaTrackList
+              mediaTracks={tracks}
+              mediaTrackList={{ id: likesCollectionItem.id }}
+              getMediaTrackId={track => track.liked_track_id}
+              disableCovers
+              variant="sideview"
+            />
+          </div>
+        )}
+      </aside>
+    </>
+  );
+}
+
 export function GlobalMediaSideView() {
   const sideViewState = useSyncExternalStore(subscribeMediaSideView, getMediaSideViewState, getMediaSideViewState);
 
@@ -589,6 +659,14 @@ export function GlobalMediaSideView() {
       <MediaPlaylistSideView
         key={`sideview-playlist-${sideViewState.playlistId}`}
         playlistId={sideViewState.playlistId}
+        onClose={closeMediaSideView}
+      />
+    );
+  }
+
+  if (sideViewState.type === 'liked-tracks') {
+    return (
+      <MediaLikedTracksSideView
         onClose={closeMediaSideView}
       />
     );

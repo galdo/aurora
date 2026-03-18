@@ -329,7 +329,7 @@ class App implements IAppMain {
     app.name = APP_DISPLAY_NAME;
     app.setName(APP_DISPLAY_NAME);
     process.title = APP_DISPLAY_NAME;
-    app.setAppUserModelId('com.bbbneo333.aurorapulse');
+    app.setAppUserModelId('com.galdo.aurorapulse');
 
     app.setAboutPanelOptions({
       applicationName: this.displayName,
@@ -912,10 +912,12 @@ class App implements IAppMain {
       : '/Applications/AuroraPulse.app';
     const escapedPath = candidatePath.replace(/"/g, '\\"');
     const command = `xattr -dr com.apple.quarantine "${escapedPath}"`;
+    const releaseUrl = 'https://github.com/galdo/aurora/releases';
+    const manualOpenHint = 'Bitte versuche zuerst im Finder: Rechtsklick auf AuroraPulse.app → Öffnen.';
     if (autoClearSuccess) {
-      return `Quarantäne wurde bereits automatisch entfernt. Falls der Start weiterhin blockiert ist, führe bitte im Terminal aus: ${command}`;
+      return `${manualOpenHint} Falls die Installation weiterhin blockiert ist, lade das aktuelle macOS-Image manuell herunter: ${releaseUrl}\nTerminal-Fallback: ${command}`;
     }
-    return `Falls macOS den Start blockiert, führe bitte im Terminal aus: ${command}`;
+    return `${manualOpenHint} Falls die Installation weiterhin blockiert ist, lade das aktuelle macOS-Image manuell herunter: ${releaseUrl}\nTerminal-Fallback: ${command}`;
   }
 
   private async createWindow(): Promise<BrowserWindow> {

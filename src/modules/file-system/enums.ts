@@ -3,6 +3,8 @@ export enum FSAudioExtension {
   MP3 = 'mp3',
   M4A = 'm4a',
   WAV = 'wav',
+  DSF = 'dsf',
+  DFF = 'dff',
 }
 
 export enum FSImageExtension {

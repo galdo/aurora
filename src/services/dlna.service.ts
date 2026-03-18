@@ -94,6 +94,13 @@ export type DlnaState = {
   }>;
 };
 
+export type DlnaRendererSnapshot = {
+  transportState?: string;
+  positionSeconds?: number;
+  volumePercent?: number;
+  muted?: boolean;
+};
+
 const debug = require('debug')('aurora:service:dlna');
 
 export class DlnaService {
@@ -218,6 +225,13 @@ export class DlnaService {
     this.emitState();
   }
 
+  static async refreshRendererDevices(): Promise<void> {
+    await this.startRendererDiscovery();
+    this.sendRendererDiscoveryProbe();
+    this.pruneInactiveRenderers();
+    this.emitState();
+  }
+
   static isRemoteOutputSelected(): boolean {
     return this.outputMode === 'remote'
       && !!this.selectedRendererId
@@ -297,13 +311,30 @@ export class DlnaService {
     await this.sendSoapRequest(
       renderer.avTransportControlUrl,
       renderer.avTransportServiceType,
+      'Stop',
+      {
+        InstanceID: '0',
+      },
+    ).catch(() => undefined);
+    await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
       'SetAVTransportURI',
       {
         InstanceID: '0',
         CurrentURI: streamUrl,
         CurrentURIMetaData: metadata,
       },
-    );
+    ).catch(async () => this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'SetAVTransportURI',
+      {
+        InstanceID: '0',
+        CurrentURI: streamUrl,
+        CurrentURIMetaData: '',
+      },
+    ));
 
     if (seekPositionSeconds > 0) {
       await this.seekSelectedRenderer(seekPositionSeconds);
@@ -336,15 +367,22 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
-    await this.sendSoapRequest(
+    const paused = await this.sendSoapRequest(
       renderer.avTransportControlUrl,
       renderer.avTransportServiceType,
       'Pause',
       {
         InstanceID: '0',
       },
-    );
-    return true;
+    )
+      .then(() => true)
+      .catch(() => false);
+    if (paused) {
+      return true;
+    }
+    const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+    const transportState = String(snapshot?.transportState || '').toUpperCase();
+    return transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED';
   }
 
   static async resumeSelectedRenderer(): Promise<boolean> {
@@ -352,7 +390,7 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
-    await this.sendSoapRequest(
+    const resumed = await this.sendSoapRequest(
       renderer.avTransportControlUrl,
       renderer.avTransportServiceType,
       'Play',
@@ -360,8 +398,15 @@ export class DlnaService {
         InstanceID: '0',
         Speed: '1',
       },
-    );
-    return true;
+    )
+      .then(() => true)
+      .catch(() => false);
+    if (resumed) {
+      return true;
+    }
+    const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+    const transportState = String(snapshot?.transportState || '').toUpperCase();
+    return transportState === 'PLAYING';
   }
 
   static async stopSelectedRenderer(): Promise<boolean> {
@@ -371,6 +416,62 @@ export class DlnaService {
     }
     await this.stopRenderer(renderer);
     return true;
+  }
+
+  static async getSelectedRendererSnapshot(): Promise<DlnaRendererSnapshot | undefined> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return undefined;
+    }
+
+    const [transportInfoResponse, positionInfoResponse, volumeResponse, muteResponse] = await Promise.all([
+      this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'GetTransportInfo',
+        {
+          InstanceID: '0',
+        },
+      ).catch(() => ''),
+      this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'GetPositionInfo',
+        {
+          InstanceID: '0',
+        },
+      ).catch(() => ''),
+      this.sendSoapRequest(
+        renderer.renderingControlUrl,
+        renderer.renderingControlServiceType,
+        'GetVolume',
+        {
+          InstanceID: '0',
+          Channel: 'Master',
+        },
+      ).catch(() => ''),
+      this.sendSoapRequest(
+        renderer.renderingControlUrl,
+        renderer.renderingControlServiceType,
+        'GetMute',
+        {
+          InstanceID: '0',
+          Channel: 'Master',
+        },
+      ).catch(() => ''),
+    ]);
+
+    const currentTransportState = String(this.extractXmlTagValue(transportInfoResponse, 'CurrentTransportState') || '').trim();
+    const relativeTimePosition = String(this.extractXmlTagValue(positionInfoResponse, 'RelTime') || '').trim();
+    const currentVolume = Number(this.extractXmlTagValue(volumeResponse, 'CurrentVolume') || NaN);
+    const currentMute = String(this.extractXmlTagValue(muteResponse, 'CurrentMute') || '').trim();
+
+    return {
+      transportState: currentTransportState || undefined,
+      positionSeconds: this.parseDlnaTimeToSeconds(relativeTimePosition),
+      volumePercent: Number.isFinite(currentVolume) ? Math.max(0, Math.min(100, Math.floor(currentVolume))) : undefined,
+      muted: currentMute === '1',
+    };
   }
 
   private static async stopRenderer(renderer: DlnaRendererDevice): Promise<void> {
@@ -583,26 +684,39 @@ export class DlnaService {
     if (!this.rendererDiscoverySocket) {
       return;
     }
-    const payload = [
-      'M-SEARCH * HTTP/1.1',
-      `HOST: ${this.multicastIp}:${this.multicastPort}`,
-      'MAN: "ssdp:discover"',
-      'MX: 2',
-      'ST: urn:schemas-upnp-org:device:MediaRenderer:1',
-      '',
-      '',
-    ].join('\r\n');
-    this.rendererDiscoverySocket.send(payload, this.multicastPort, this.multicastIp);
+    [
+      'urn:schemas-upnp-org:device:MediaRenderer:1',
+      this.avTransportServiceType,
+      this.renderingControlServiceType,
+      'ssdp:all',
+    ].forEach((searchTarget) => {
+      const payload = [
+        'M-SEARCH * HTTP/1.1',
+        `HOST: ${this.multicastIp}:${this.multicastPort}`,
+        'MAN: "ssdp:discover"',
+        'MX: 2',
+        `ST: ${searchTarget}`,
+        '',
+        '',
+      ].join('\r\n');
+      this.rendererDiscoverySocket?.send(payload, this.multicastPort, this.multicastIp);
+    });
   }
 
   private static handleRendererDiscoveryMessage(message: string) {
-    const isSearchResponse = message.toUpperCase().startsWith('HTTP/1.1 200');
-    if (!isSearchResponse) {
+    const normalizedMessage = message.toUpperCase();
+    const isSearchResponse = normalizedMessage.startsWith('HTTP/1.1 200');
+    const isAliveNotify = normalizedMessage.startsWith('NOTIFY * HTTP/1.1')
+      && String(this.extractSsdpHeaderValue(message, 'NTS') || '').toLowerCase() === 'ssdp:alive';
+    if (!isSearchResponse && !isAliveNotify) {
       return;
     }
     const location = this.extractSsdpHeaderValue(message, 'LOCATION');
     const searchTarget = String(this.extractSsdpHeaderValue(message, 'ST') || this.extractSsdpHeaderValue(message, 'NT')).toLowerCase();
-    if (!location || !searchTarget.includes('mediarenderer')) {
+    const looksLikeRenderer = searchTarget.includes('mediarenderer')
+      || searchTarget.includes('avtransport')
+      || searchTarget.includes('renderingcontrol');
+    if (!location || !looksLikeRenderer) {
       return;
     }
     this.fetchAndStoreRendererDescription(location).catch((error) => {
@@ -744,7 +858,7 @@ ${coverUrl && coverMimeType ? `<res protocolInfo="http-get:*:${coverMimeType}:DL
     serviceType: string,
     actionName: string,
     params: Record<string, string>,
-  ) {
+  ): Promise<string> {
     const actionBody = Object.entries(params)
       .map(([key, value]) => `<${key}>${this.escapeXml(String(value || ''))}</${key}>`)
       .join('');
@@ -765,7 +879,14 @@ ${actionBody}
       },
       body,
     });
-    await response.text().catch(() => '');
+    const responseBody = await response.text().catch(() => '');
+    if (!response.ok) {
+      throw new Error(`DLNA SOAP ${actionName} failed: HTTP ${response.status}`);
+    }
+    if (/<(?:\w+:)?Fault>/i.test(responseBody)) {
+      throw new Error(`DLNA SOAP ${actionName} fault response`);
+    }
+    return responseBody;
   }
 
   private static registerUiSettingsListener() {
@@ -1285,6 +1406,12 @@ ${items}
     if (extension === '.ogg') {
       return 'audio/ogg';
     }
+    if (extension === '.dsf') {
+      return 'audio/x-dsf';
+    }
+    if (extension === '.dff') {
+      return 'audio/x-dff';
+    }
     return 'audio/mpeg';
   }
 
@@ -1426,6 +1553,8 @@ ${items}
           'http-get:*:audio/wav:*',
           'http-get:*:audio/mp4:*',
           'http-get:*:audio/ogg:*',
+          'http-get:*:audio/x-dsf:*',
+          'http-get:*:audio/x-dff:*',
         ].join(',');
         const payload = [
           `<Source>${this.escapeXml(sourceProtocols)}</Source>`,
@@ -1475,6 +1604,20 @@ ${actionBody}
       return '';
     }
     return String(match[1] || '');
+  }
+
+  private static parseDlnaTimeToSeconds(value: string): number | undefined {
+    const match = String(value || '').trim().match(/^(\d{2,}):(\d{2}):(\d{2})(?:\.\d+)?$/);
+    if (!match) {
+      return undefined;
+    }
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const seconds = Number(match[3]);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+      return undefined;
+    }
+    return (hours * 3600) + (minutes * 60) + seconds;
   }
 
   private static decodeXmlEntities(value: string) {

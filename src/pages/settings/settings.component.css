@@ -337,9 +337,41 @@
   color: var(--text-light-color);
 }
 
+.dap-progress-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dap-progress-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dap-progress-cancel-button {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--stage-overlay-outline-color);
+  background-color: color-mix(in srgb, var(--stage-overlay-bg-color) 84%, var(--stage-content-bg-color));
+  color: var(--text-light-color);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--selectable-item-transition);
+}
+
+.dap-progress-cancel-button:hover {
+  background-color: color-mix(in srgb, var(--button-primary-bg-color) 45%, var(--stage-overlay-bg-color));
+  color: #fff;
+  border-color: color-mix(in srgb, var(--button-primary-bg-color) 62%, var(--stage-overlay-outline-color));
+}
+
 .dap-progress-track {
   width: 100%;
-  height: 8px;
+  height: 12px;
   border-radius: 999px;
   background-color: var(--loader-track-color);
   overflow: hidden;

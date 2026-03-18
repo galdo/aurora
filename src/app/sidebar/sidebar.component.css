@@ -65,6 +65,7 @@
   font-size: 46px;
   font-family: 'Meow Script', cursive;
   line-height: 1;
+  color: var(--button-primary-bg-color);
 }
 
 .sidebar-navigation-list {

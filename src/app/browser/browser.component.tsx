@@ -6,6 +6,7 @@ import React, {
 } from 'react';
 import classNames from 'classnames/bind';
 import _ from 'lodash';
+import { useSelector } from 'react-redux';
 import { useHistory, useLocation } from 'react-router-dom';
 
 import routes from '../app.routes';
@@ -14,6 +15,7 @@ import {
   BrowserNavigation,
   Button,
   Icon,
+  MediaLibraryStatsModal,
   MediaPlaylistWizardModal,
   MediaPodcastSubscribeModal,
   TextInput,
@@ -22,6 +24,7 @@ import {
 import { useModal } from '../../contexts';
 import { IMediaTrack } from '../../interfaces';
 import { usePersistentScroll } from '../../hooks';
+import { RootState } from '../../reducers';
 import {
   AppService,
   I18nService,
@@ -239,6 +242,8 @@ function BrowserSearch() {
 }
 
 function BrowserHeader() {
+  const mediaAlbumsCount = useSelector((state: RootState) => state.mediaLibrary.mediaAlbums.length);
+  const mediaPlaylistsCount = useSelector((state: RootState) => state.mediaLibrary.mediaPlaylists.length);
   const [isSyncRunning, setIsSyncRunning] = useState(false);
   const [windowsControlsSafeWidth, setWindowsControlsSafeWidth] = useState(getWindowsControlsSafeWidth());
   const [windowsControlsSafeHeight, setWindowsControlsSafeHeight] = useState(getWindowsControlsSafeHeight());
@@ -332,6 +337,20 @@ function BrowserHeader() {
           }}
         >
           <Icon name={Icons.PlayerShuffle}/>
+        </Button>
+        <Button
+          variant={['rounded', 'outline']}
+          tooltip="Lokale Bibliotheksstatistiken anzeigen"
+          onButtonSubmit={() => {
+            showModal(MediaLibraryStatsModal, {
+              albumsCount: mediaAlbumsCount,
+              playlistsCount: mediaPlaylistsCount,
+            }, {
+              dialogClassName: 'library-stats-modal-dialog',
+            });
+          }}
+        >
+          <Icon name={Icons.Info}/>
         </Button>
         <Button
           variant={['rounded', 'outline']}

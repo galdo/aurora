@@ -24,3 +24,7 @@
   padding: 10px;
   flex: 1 1 280px;
 }
+
+.playlist-liked-tracks-collection-item :global(.media-cover-placeholder-icon) {
+  color: var(--button-primary-bg-color);
+}

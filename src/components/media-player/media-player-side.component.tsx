@@ -196,7 +196,11 @@ export function MediaPlayerSide() {
                 connected: dlnaState.outputMode === 'remote' && !!dlnaState.selectedRendererId,
               })}
               onButtonSubmit={() => {
-                setShowOutputMenu(!showOutputMenu);
+                const nextShowOutputMenu = !showOutputMenu;
+                setShowOutputMenu(nextShowOutputMenu);
+                if (nextShowOutputMenu) {
+                  DlnaService.refreshRendererDevices().catch(console.error);
+                }
               }}
             >
               <Icon name={Icons.PlayerCast}/>

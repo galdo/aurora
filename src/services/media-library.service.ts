@@ -1,4 +1,5 @@
 import _ from 'lodash';
+import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -49,6 +50,10 @@ interface IDapSyncCheckpoint {
 interface IDapSyncStateEntry {
   sourceSize: number;
   sourceMtimeMs: number;
+  sourceHash?: string;
+  destinationSize?: number;
+  destinationMtimeMs?: number;
+  destinationHash?: string;
 }
 
 interface IDapSyncState {
@@ -56,6 +61,11 @@ interface IDapSyncState {
   syncRootPath: string;
   entries: Record<string, IDapSyncStateEntry>;
   updatedAt: number;
+}
+
+interface IDapDestinationCheckResult {
+  isCurrent: boolean;
+  syncStateEntry?: IDapSyncStateEntry;
 }
 
 export interface IDapSyncProgressSnapshot {
@@ -523,6 +533,7 @@ export class MediaLibraryService {
         albumDiscNumbersByAlbumId.set(albumId, existingDiscNumbers);
       });
 
+      const usedRelativePathCounts = new Map<string, number>();
       const trackItems = tracksWithPaths.map((mediaTrack) => {
         const sourcePath = String((mediaTrack.extra as any)?.file_path || '');
         const sourceExtension = path.extname(sourcePath) || '.flac';
@@ -544,10 +555,15 @@ export class MediaLibraryService {
         const isMultiDiscAlbum = !!albumDiscNumbers && albumDiscNumbers.size > 1;
         const discDirectoryName = (isMultiDiscAlbum && discNumber > 0) ? `CD${discNumber}` : '';
         const fileName = this.truncatePathPart(`${baseFileName} [${uniqueSuffix}]${sourceExtension}`, 160);
-        const relativePath = path
+        const baseRelativePath = path
           .join(artistName, albumDirectoryName, discDirectoryName, fileName)
           .split(path.sep)
           .join('/');
+        const relativePathUsageCount = Number(usedRelativePathCounts.get(baseRelativePath) || 0);
+        usedRelativePathCounts.set(baseRelativePath, relativePathUsageCount + 1);
+        const relativePath = relativePathUsageCount > 0
+          ? this.disambiguateRelativePath(baseRelativePath, sourcePath, relativePathUsageCount)
+          : baseRelativePath;
         const legacyRelativePaths = discDirectoryName
           ? [path.join(artistName, albumDirectoryName, fileName).split(path.sep).join('/')]
           : [];
@@ -569,32 +585,17 @@ export class MediaLibraryService {
       const expectedPodcastFilesCount = PodcastService.getExpectedDapSyncFileCount();
       const totalExpectedMusicItems = trackItems.length + expectedPodcastFilesCount;
       const resumeValidation = await Promise.all(trackItems.map(async (trackItem) => {
-        if (!completedRelativePathSet.has(trackItem.relativePath)) {
-          return {
-            ...trackItem,
-            alreadyCompleted: false,
-          };
-        }
-
-        const stateEntry = syncStateEntries.get(trackItem.relativePath);
-        if (stateEntry
-          && trackItem.sourceSize
-          && trackItem.sourceMtimeMs
-          && stateEntry.sourceSize === trackItem.sourceSize
-          && stateEntry.sourceMtimeMs === trackItem.sourceMtimeMs) {
-          const destinationStats = await fs.promises.stat(trackItem.destinationPath).catch(() => undefined);
-          return {
-            ...trackItem,
-            alreadyCompleted: !!destinationStats,
-          };
-        }
-        const destinationIsCurrent = await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
+        const destinationCheck = await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
           sourceSize: trackItem.sourceSize,
           sourceMtimeMs: trackItem.sourceMtimeMs,
+          syncStateEntry: syncStateEntries.get(trackItem.relativePath),
         });
+        if (destinationCheck.isCurrent && destinationCheck.syncStateEntry) {
+          syncStateEntries.set(trackItem.relativePath, destinationCheck.syncStateEntry);
+        }
         return {
           ...trackItem,
-          alreadyCompleted: destinationIsCurrent,
+          alreadyCompleted: destinationCheck.isCurrent,
         };
       }));
       const resumedValidRelativePaths = resumeValidation
@@ -632,21 +633,27 @@ export class MediaLibraryService {
         }
 
         let trackSynchronized = false;
+        let trackSyncCheck: IDapDestinationCheckResult | undefined;
         try {
           await fs.promises.mkdir(path.dirname(trackItem.destinationPath), { recursive: true });
           await this.tryMigrateLegacyDapFile(trackItem);
-          const shouldCopy = !(await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
+          const preCopyCheck = await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
             sourceSize: trackItem.sourceSize,
             sourceMtimeMs: trackItem.sourceMtimeMs,
-          }));
+            syncStateEntry: syncStateEntries.get(trackItem.relativePath),
+          });
+          const shouldCopy = !preCopyCheck.isCurrent;
           if (shouldCopy) {
             await fs.promises.copyFile(trackItem.sourcePath, trackItem.destinationPath);
             copiedFiles += 1;
-            trackSynchronized = await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
+            trackSyncCheck = await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
               sourceSize: trackItem.sourceSize,
               sourceMtimeMs: trackItem.sourceMtimeMs,
+              syncStateEntry: syncStateEntries.get(trackItem.relativePath),
             });
+            trackSynchronized = trackSyncCheck.isCurrent;
           } else {
+            trackSyncCheck = preCopyCheck;
             trackSynchronized = true;
           }
         } catch (error) {
@@ -683,13 +690,9 @@ export class MediaLibraryService {
         }
 
         resumedValidRelativePathSet.add(trackItem.relativePath);
-        const syncStateSourceSize = trackItem.sourceSize || Number((await fs.promises.stat(trackItem.sourcePath).catch(() => undefined))?.size || 0);
-        const syncStateSourceMtimeMs = trackItem.sourceMtimeMs || Number((await fs.promises.stat(trackItem.sourcePath).catch(() => undefined))?.mtimeMs || 0);
-        if (syncStateSourceSize > 0 && syncStateSourceMtimeMs > 0) {
-          syncStateEntries.set(trackItem.relativePath, {
-            sourceSize: syncStateSourceSize,
-            sourceMtimeMs: syncStateSourceMtimeMs,
-          });
+        const syncStateEntry = trackSyncCheck?.syncStateEntry;
+        if (syncStateEntry) {
+          syncStateEntries.set(trackItem.relativePath, syncStateEntry);
         }
         this.persistDapSyncCheckpoint({
           targetDirectory: dapTargetDirectory,
@@ -931,6 +934,18 @@ export class MediaLibraryService {
     return value.slice(0, Math.max(8, maxLength)).trim();
   }
 
+  private static disambiguateRelativePath(relativePath: string, sourcePath: string, duplicateIndex: number): string {
+    const extension = path.extname(relativePath);
+    const filePathWithoutExtension = extension
+      ? relativePath.slice(0, -extension.length)
+      : relativePath;
+    const fingerprint = createHash('sha1')
+      .update(`${sourcePath}|${duplicateIndex}`)
+      .digest('hex')
+      .slice(0, 8);
+    return `${filePathWithoutExtension} [${fingerprint}]${extension}`;
+  }
+
   private static async getFilesRecursive(directoryPath: string): Promise<string[]> {
     const directoryEntries = await fs.promises.readdir(directoryPath, { withFileTypes: true }).catch(() => []);
     const filePaths = await Promise.all(directoryEntries.map(async (directoryEntry) => {
@@ -1030,8 +1045,9 @@ export class MediaLibraryService {
       const legacyCurrent = await this.checkDestinationCurrent(trackItem.sourcePath, legacyDestinationPath, {
         sourceSize: trackItem.sourceSize,
         sourceMtimeMs: trackItem.sourceMtimeMs,
+        syncStateEntry: undefined,
       });
-      if (!legacyCurrent) {
+      if (!legacyCurrent.isCurrent) {
         return tryAtIndex(index + 1);
       }
 
@@ -1149,11 +1165,13 @@ export class MediaLibraryService {
   private static async checkDestinationCurrent(
     sourcePath: string,
     destinationPath: string,
-    sourceMeta?: { sourceSize?: number; sourceMtimeMs?: number },
-  ): Promise<boolean> {
+    sourceMeta?: { sourceSize?: number; sourceMtimeMs?: number; syncStateEntry?: IDapSyncStateEntry },
+  ): Promise<IDapDestinationCheckResult> {
     const destinationStats = await fs.promises.stat(destinationPath).catch(() => undefined);
     if (!destinationStats) {
-      return false;
+      return {
+        isCurrent: false,
+      };
     }
 
     const sourceStats = (!sourceMeta?.sourceSize || !sourceMeta?.sourceMtimeMs)
@@ -1161,16 +1179,80 @@ export class MediaLibraryService {
       : undefined;
     const sourceSize = Number(sourceMeta?.sourceSize || sourceStats?.size || 0);
     const sourceMtimeMs = Number(sourceMeta?.sourceMtimeMs || sourceStats?.mtimeMs || 0);
-    if (!sourceSize || destinationStats.size !== sourceSize) {
-      return false;
+    if (!Number.isFinite(sourceSize) || sourceSize < 0 || destinationStats.size !== sourceSize) {
+      return {
+        isCurrent: false,
+      };
     }
 
-    if (!sourceMtimeMs) {
-      return true;
+    if (sourceSize === 0) {
+      return {
+        isCurrent: true,
+        syncStateEntry: {
+          sourceSize,
+          sourceMtimeMs,
+          destinationSize: destinationStats.size,
+          destinationMtimeMs: Number(destinationStats.mtimeMs || 0),
+        },
+      };
     }
 
-    return destinationStats.mtimeMs >= sourceMtimeMs
-      || Math.abs(destinationStats.mtimeMs - sourceMtimeMs) <= 5000;
+    const cachedEntry = sourceMeta?.syncStateEntry;
+    if (cachedEntry
+      && cachedEntry.sourceSize === sourceSize
+      && cachedEntry.sourceMtimeMs === sourceMtimeMs
+      && cachedEntry.destinationSize === destinationStats.size
+      && Number(cachedEntry.destinationMtimeMs || 0) === Number(destinationStats.mtimeMs || 0)
+      && !!cachedEntry.sourceHash
+      && cachedEntry.sourceHash === cachedEntry.destinationHash) {
+      return {
+        isCurrent: true,
+        syncStateEntry: cachedEntry,
+      };
+    }
+
+    const sourceHash = (cachedEntry
+      && cachedEntry.sourceSize === sourceSize
+      && cachedEntry.sourceMtimeMs === sourceMtimeMs
+      && cachedEntry.sourceHash)
+      ? cachedEntry.sourceHash
+      : await this.hashFileSha1(sourcePath);
+    const destinationHash = (cachedEntry
+      && cachedEntry.destinationSize === destinationStats.size
+      && Number(cachedEntry.destinationMtimeMs || 0) === Number(destinationStats.mtimeMs || 0)
+      && cachedEntry.destinationHash)
+      ? cachedEntry.destinationHash
+      : await this.hashFileSha1(destinationPath);
+
+    return {
+      isCurrent: !!sourceHash && sourceHash === destinationHash,
+      syncStateEntry: {
+        sourceSize,
+        sourceMtimeMs,
+        sourceHash,
+        destinationSize: destinationStats.size,
+        destinationMtimeMs: Number(destinationStats.mtimeMs || 0),
+        destinationHash,
+      },
+    };
+  }
+
+  private static hashFileSha1(filePath: string): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const hash = createHash('sha1');
+      const stream = fs.createReadStream(filePath);
+
+      stream.on('error', () => resolve(undefined));
+      stream.on('data', (chunk) => {
+        const hashChunk = typeof chunk === 'string'
+          ? new TextEncoder().encode(chunk)
+          : Uint8Array.from(chunk as unknown as ArrayLike<number>);
+        hash.update(hashChunk);
+      });
+      stream.on('end', () => {
+        resolve(hash.digest('hex'));
+      });
+    });
   }
 
   private static async deleteUnsyncMedia(mediaProviderIdentifier: string, mediaSyncStartTimestamp: number): Promise<void> {
