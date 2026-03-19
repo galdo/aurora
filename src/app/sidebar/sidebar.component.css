@@ -31,9 +31,13 @@
 
 .sidebar-branding {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  padding: 10px 20px 6px;
-  margin-bottom: 10px;
+  padding: 4px 10px 0;
+  margin-bottom: 4px;
+  min-height: 132px;
+  gap: 8px;
 }
 
 .sidebar-app-name {
@@ -41,42 +45,54 @@
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   color: var(--text-light-color);
-  letter-spacing: -0.5px;
+  letter-spacing: -0.03em;
   width: 100%;
   text-align: center;
+  white-space: nowrap;
+  text-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
 }
 
 .sidebar-app-name-logo-bg {
   position: absolute;
   left: 50%;
-  top: -10px;
-  width: 128px;
-  height: 128px;
+  top: -64px;
+  width: 186px;
+  height: 186px;
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
   transform: translateX(-50%);
-  opacity: 0.1;
+  opacity: 0.13;
   z-index: 0;
   pointer-events: none;
 }
 
 .sidebar-app-name-aurora {
-  font-size: 20px;
+  font-size: 32px;
   font-weight: 700;
+  letter-spacing: -0.035em;
   position: relative;
   z-index: 1;
 }
 
 .sidebar-app-name-pulse {
-  font-size: 46px;
+  font-size: 54px;
   font-family: 'Meow Script', cursive;
   line-height: 1;
   color: var(--button-primary-bg-color);
+  transform: translateY(2px);
   position: relative;
   z-index: 1;
+}
+
+.sidebar-branding-loader {
+  width: 104px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(20, 184, 116, 0), rgba(20, 184, 116, 0.9), rgba(20, 184, 116, 0));
+  animation: app-splash-pulse 1.65s ease-in-out infinite;
 }
 
 .sidebar-navigation-list {

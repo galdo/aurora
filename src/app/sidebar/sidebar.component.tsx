@@ -44,6 +44,7 @@ function SidebarBrandingLogo() {
         <span className={cx('sidebar-app-name-aurora')}>{auroraLabel}</span>
         <span className={cx('sidebar-app-name-pulse')}>{pulseLabel}</span>
       </div>
+      <div className={cx('sidebar-branding-loader')}/>
     </div>
   );
 }

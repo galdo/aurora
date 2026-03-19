@@ -50,6 +50,8 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   private syncPostProcessingPromise: Promise<void> | null = null;
   private syncFilesQueuedCount = 0;
   private syncFilesProcessedQueueCount = 0;
+  private pendingAlbumSyncIds: Set<string> = new Set();
+  private pendingArtistSyncIds: Set<string> = new Set();
   private playlistCoversRefreshedThisSession = false;
   private playlistCoversRefreshPromise: Promise<void> | null = null;
 
@@ -113,6 +115,8 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         // start
         this.syncFilesQueuedCount = 0;
         this.syncFilesProcessedQueueCount = 0;
+        this.pendingAlbumSyncIds.clear();
+        this.pendingArtistSyncIds.clear();
         mediaLocalStore.dispatch({ type: MediaLocalStateActionType.StartSync });
         await MediaLibraryService.startMediaTrackSync(MediaLocalConstants.Provider);
         const settings: IMediaLocalSettings = settingsOverride || await MediaProviderService.getMediaProviderSettings(MediaLocalConstants.Provider);
@@ -131,6 +135,8 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           debug('syncMediaTracks - operation aborted');
           return;
         }
+
+        await this.flushPendingAlbumAndArtistSyncMarks(Date.now());
 
         const syncDuration = performance.now() - syncStart;
         await MediaLibraryService.finishMediaTrackSync(MediaLocalConstants.Provider);
@@ -204,6 +210,54 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       };
       setTimeout(tick, 250);
     });
+  }
+
+  private markTrackRelationsAsSeen(mediaTrack: any): void {
+    const albumId = String(mediaTrack?.track_album_id || '').trim();
+    if (albumId) {
+      this.pendingAlbumSyncIds.add(albumId);
+    }
+
+    const albumArtistId = String(mediaTrack?.track_album?.album_artist_id || '').trim();
+    if (albumArtistId) {
+      this.pendingArtistSyncIds.add(albumArtistId);
+    }
+
+    const trackArtistIds = Array.isArray(mediaTrack?.track_artists)
+      ? mediaTrack.track_artists.map((artist: any) => String(artist?.id || '').trim()).filter(Boolean)
+      : [];
+    trackArtistIds.forEach((artistId: string) => {
+      this.pendingArtistSyncIds.add(artistId);
+    });
+  }
+
+  private async flushPendingAlbumAndArtistSyncMarks(scanTimestamp: number): Promise<void> {
+    const albumIds = Array.from(this.pendingAlbumSyncIds);
+    const artistIds = Array.from(this.pendingArtistSyncIds);
+    this.pendingAlbumSyncIds.clear();
+    this.pendingArtistSyncIds.clear();
+
+    if (albumIds.length > 0) {
+      const albumIdChunks = _.chunk(albumIds, 300);
+      await Promise.map(albumIdChunks, albumIdChunk => MediaAlbumService.updateMediaAlbums({
+        id: {
+          $in: albumIdChunk,
+        },
+      }, {
+        sync_timestamp: scanTimestamp,
+      }), { concurrency: 1 });
+    }
+
+    if (artistIds.length > 0) {
+      const artistIdChunks = _.chunk(artistIds, 500);
+      await Promise.map(artistIdChunks, artistIdChunk => MediaArtistService.updateMediaArtists({
+        id: {
+          $in: artistIdChunk,
+        },
+      }, {
+        sync_timestamp: scanTimestamp,
+      }), { concurrency: 1 });
+    }
   }
 
   private runSyncPostProcessing(settings: IMediaLocalSettings, signal: AbortSignal): void {
@@ -416,60 +470,12 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           if (!isGrouped) {
             debug('addTrackFromFile - track %s needs grouping update, falling back to full scan', file.path);
           } else {
-            await MediaAlbumService.updateMediaAlbum({
-              id: mediaTrack.track_album_id,
-            }, {
-              sync_timestamp: scanTimestamp,
-              album_name_normalized: MediaLocalLibraryService.normalizeSearchValue(mediaTrack.track_album.album_name),
-            });
-
-            await MediaTrackService.updateMediaTrack({
-              id: mediaTrack.id,
-            }, {
-              track_name_normalized: MediaLocalLibraryService.normalizeSearchValue(mediaTrack.track_name),
-              sync_timestamp: scanTimestamp,
-            } as any);
-
-            await MediaArtistService.updateMediaArtists({
-              id: {
-                $in: [
-                  mediaTrack.track_album.album_artist_id,
-                  ...mediaTrack.track_artists.map(artist => artist.id),
-                ],
-              },
-            }, {
-              sync_timestamp: scanTimestamp,
-            });
-
+            this.markTrackRelationsAsSeen(mediaTrack);
             debug('addTrackFromFile - track at path %s already added %s, skipping...', file.path, mediaTrack.id);
             return mediaTrack;
           }
         } else {
-          await MediaAlbumService.updateMediaAlbum({
-            id: mediaTrack.track_album_id,
-          }, {
-            sync_timestamp: scanTimestamp,
-            album_name_normalized: MediaLocalLibraryService.normalizeSearchValue(mediaTrack.track_album.album_name),
-          });
-
-          await MediaTrackService.updateMediaTrack({
-            id: mediaTrack.id,
-          }, {
-            track_name_normalized: MediaLocalLibraryService.normalizeSearchValue(mediaTrack.track_name),
-            sync_timestamp: scanTimestamp,
-          } as any);
-
-          await MediaArtistService.updateMediaArtists({
-            id: {
-              $in: [
-                mediaTrack.track_album.album_artist_id,
-                ...mediaTrack.track_artists.map(artist => artist.id),
-              ],
-            },
-          }, {
-            sync_timestamp: scanTimestamp,
-          });
-
+          this.markTrackRelationsAsSeen(mediaTrack);
           debug('addTrackFromFile - track at path %s already added %s, skipping...', file.path, mediaTrack.id);
           return mediaTrack;
         }
@@ -679,15 +685,6 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
   private static getMediaId(...mediaInput: string[]): string {
     return CryptoService.sha256(...mediaInput);
-  }
-
-  private static normalizeSearchValue(value: string): string {
-    return String(value || '')
-      .normalize('NFKD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, ' ');
   }
 
   private static readAudioMetadataFromFile(filePath: string): Promise<IAudioMetadata> {

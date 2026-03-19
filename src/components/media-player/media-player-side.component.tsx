@@ -103,10 +103,6 @@ export function MediaPlayerSide() {
     mediaVolumeButtonIcon = Icons.PlayerVolumeMuted;
   }
 
-  if (!mediaPlaybackCurrentPlayingInstance) {
-    return (<></>);
-  }
-
   const getAudioDetailsLabel = (mediaTrack: any): string => {
     const format = (mediaTrack?.format || {}) as {
       sampleRate?: number;
@@ -160,11 +156,18 @@ export function MediaPlayerSide() {
     <Row className={cx('media-player-side-container')}>
       <div className={cx('media-player-side-controls-column')}>
         <div className={cx('media-player-side-controls-row')}>
-          {mediaPlaybackCurrentMediaTrack && (
+          {mediaPlaybackCurrentMediaTrack ? (
             <MediaTrackLikeButton
               mediaTrack={mediaPlaybackCurrentMediaTrack}
               className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-like-button')}
             />
+          ) : (
+            <Button
+              disabled
+              className={cx('media-player-control', 'media-player-control-sm', 'media-player-like-button', 'disabled')}
+            >
+              <Icon name={Icons.MediaLike}/>
+            </Button>
           )}
           <RouterLinkToggle
             to={Routes.PlayerQueue}
@@ -243,7 +246,7 @@ export function MediaPlayerSide() {
             )}
           </div>
         </div>
-        {!!audioDetailsLabel && (
+        {!!mediaPlaybackCurrentPlayingInstance && !!audioDetailsLabel && (
           <div className={cx('media-player-side-audio-details')}>
             {audioDetailsLabel}
           </div>

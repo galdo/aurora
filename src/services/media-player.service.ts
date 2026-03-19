@@ -553,6 +553,14 @@ class MediaPlayerService {
     if (this.outputSwitchInProgress) {
       return;
     }
+    const dlnaState = DlnaService.getState();
+    const normalizedOutputDeviceId = String(outputDeviceId || 'local').trim() || 'local';
+    const currentOutputDeviceId = dlnaState.outputMode === 'remote' && dlnaState.selectedRendererId
+      ? dlnaState.selectedRendererId
+      : 'local';
+    if (normalizedOutputDeviceId === currentOutputDeviceId) {
+      return;
+    }
     this.outputSwitchInProgress = true;
     try {
       const { mediaPlayer } = store.getState();
@@ -575,15 +583,17 @@ class MediaPlayerService {
         await mediaPlaybackCurrentPlayingInstance.stopPlayback().catch(() => false);
       }
 
-      await DlnaService.setOutputDevice(outputDeviceId).catch(async (error) => {
-        if (outputDeviceId === 'local') {
+      await DlnaService.setOutputDevice(normalizedOutputDeviceId).catch(async (error) => {
+        if (normalizedOutputDeviceId === 'local') {
           throw error;
         }
         await DlnaService.refreshRendererDevices();
-        await DlnaService.setOutputDevice(outputDeviceId);
+        await DlnaService.setOutputDevice(normalizedOutputDeviceId);
       });
-      if (outputDeviceId !== 'local') {
-        await this.syncPlaybackVolumeFromSelectedRenderer();
+      if (normalizedOutputDeviceId !== 'local') {
+        this.syncPlaybackVolumeFromSelectedRenderer().catch((error) => {
+          debug('switchOutputDevice - failed to sync renderer output state - %o', error);
+        });
       }
 
       if (!mediaPlaybackCurrentMediaTrack) {
@@ -593,7 +603,7 @@ class MediaPlayerService {
       const mediaPlayback = this.loadMediaTrack(mediaPlaybackCurrentMediaTrack);
       if (wasPlaying) {
         let mediaPlayed = await mediaPlayback.play();
-        if (!mediaPlayed && outputDeviceId !== 'local') {
+        if (!mediaPlayed && normalizedOutputDeviceId !== 'local') {
           await DlnaService.stopSelectedRenderer().catch(() => undefined);
           await new Promise((resolve) => {
             setTimeout(resolve, 250);

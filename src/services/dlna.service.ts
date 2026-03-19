@@ -107,6 +107,8 @@ export type DlnaRendererSnapshot = {
   muted?: boolean;
 };
 
+type DlnaRendererMetadataMode = 'full' | 'compatibility' | 'empty';
+
 const debug = require('debug')('aurora:service:dlna');
 
 export class DlnaService {
@@ -165,7 +167,10 @@ export class DlnaService {
   private static rendererDevices: Map<string, DlnaRendererDevice> = new Map();
   private static rendererOutputStateByRendererId: Map<string, { volumePercent?: number; muted?: boolean }> = new Map();
   private static rendererOutputStateLastRefreshAtByRendererId: Map<string, number> = new Map();
+  private static preferredTransportMetadataModeByRendererId: Map<string, DlnaRendererMetadataMode> = new Map();
+  private static preferredNextMetadataModeByRendererId: Map<string, DlnaRendererMetadataMode> = new Map();
   private static rendererMuteControlUnsupportedIds: Set<string> = new Set();
+  private static rendererStoppedAtByRendererId: Map<string, number> = new Map();
   private static selectedRendererSnapshotFailureCount = 0;
   private static selectedRendererSnapshotFailureRendererId?: string;
   private static rendererDiscoverySocket?: dgram.Socket;
@@ -291,7 +296,9 @@ export class DlnaService {
         || normalizedOutputDeviceId === 'local'
         || normalizedOutputDeviceId !== previousRenderer.id
       );
-    if (shouldStopPreviousRenderer && previousRenderer) {
+    const previousRendererStopRecent = !!previousRenderer
+      && (Date.now() - Number(this.rendererStoppedAtByRendererId.get(previousRenderer.id) || 0)) <= 1200;
+    if (shouldStopPreviousRenderer && previousRenderer && !previousRendererStopRecent) {
       await this.stopRenderer(previousRenderer).catch((error) => {
         debug('setOutputDevice - failed to stop previous renderer %s - %o', previousRenderer.id, error);
       });
@@ -763,6 +770,7 @@ export class DlnaService {
         InstanceID: '0',
       },
     );
+    this.rendererStoppedAtByRendererId.set(renderer.id, Date.now());
   }
 
   static async seekSelectedRenderer(seekPositionSeconds: number): Promise<boolean> {
@@ -1368,7 +1376,7 @@ ${actionBody}
       const nextPosition = hasPosition
         ? Math.max(lastKnownPositionSeconds, snapshotPositionSeconds)
         : lastKnownPositionSeconds;
-      await this.wait(250);
+      await this.wait(160);
       return resolveAttempt(attempt + 1, nextPosition, nextConsecutivePlayingSnapshots);
     };
     return resolveAttempt(0, -1, 0);
@@ -1430,56 +1438,68 @@ ${actionBody}
     compatibilityMetadata: string,
     phase: 'primary' | 'retry',
   ): Promise<void> {
-    const payload = {
-      InstanceID: '0',
-      CurrentURI: streamUrl,
-      CurrentURIMetaData: metadata,
+    const payloadByMode: Record<DlnaRendererMetadataMode, Record<string, string>> = {
+      full: {
+        InstanceID: '0',
+        CurrentURI: streamUrl,
+        CurrentURIMetaData: metadata,
+      },
+      compatibility: {
+        InstanceID: '0',
+        CurrentURI: streamUrl,
+        CurrentURIMetaData: compatibilityMetadata,
+      },
+      empty: {
+        InstanceID: '0',
+        CurrentURI: streamUrl,
+        CurrentURIMetaData: '',
+      },
     };
-    const compatibilityPayload = {
-      InstanceID: '0',
-      CurrentURI: streamUrl,
-      CurrentURIMetaData: compatibilityMetadata,
+    const preferredMode = this.preferredTransportMetadataModeByRendererId.get(renderer.id) || 'full';
+    const attemptModes = [
+      preferredMode,
+      ...(['full', 'compatibility', 'empty'] as DlnaRendererMetadataMode[]).filter(mode => mode !== preferredMode),
+    ];
+    let applied = false;
+    const applyMode = async (modeIndex: number): Promise<void> => {
+      const mode = attemptModes[modeIndex];
+      if (!mode) {
+        return;
+      }
+      try {
+        await this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'SetAVTransportURI',
+          payloadByMode[mode],
+          this.transportSetupSoapRequestTimeoutMs,
+        );
+        this.preferredTransportMetadataModeByRendererId.set(renderer.id, mode);
+        applied = true;
+      } catch (_error) {
+        if (mode === 'full') {
+          this.writeDlnaLog('warn', 'set_av_transport_uri_fallback_compatibility', {
+            rendererId: renderer.id,
+            phase,
+          });
+        } else if (mode === 'compatibility') {
+          this.writeDlnaLog('warn', 'set_av_transport_uri_fallback_empty_metadata', {
+            rendererId: renderer.id,
+            phase,
+          });
+        }
+        await applyMode(modeIndex + 1);
+      }
     };
-    const emptyMetadataPayload = {
-      InstanceID: '0',
-      CurrentURI: streamUrl,
-      CurrentURIMetaData: '',
-    };
-    try {
-      await this.sendSoapRequest(
-        renderer.avTransportControlUrl,
-        renderer.avTransportServiceType,
-        'SetAVTransportURI',
-        payload,
-        this.transportSetupSoapRequestTimeoutMs,
-      );
+    await applyMode(0);
+    if (applied) {
       return;
-    } catch (_error) {
-      this.writeDlnaLog('warn', 'set_av_transport_uri_fallback_compatibility', {
-        rendererId: renderer.id,
-        phase,
-      });
-    }
-    try {
-      await this.sendSoapRequest(
-        renderer.avTransportControlUrl,
-        renderer.avTransportServiceType,
-        'SetAVTransportURI',
-        compatibilityPayload,
-        this.transportSetupSoapRequestTimeoutMs,
-      );
-      return;
-    } catch (_error) {
-      this.writeDlnaLog('warn', 'set_av_transport_uri_fallback_empty_metadata', {
-        rendererId: renderer.id,
-        phase,
-      });
     }
     await this.sendSoapRequest(
       renderer.avTransportControlUrl,
       renderer.avTransportServiceType,
       'SetAVTransportURI',
-      emptyMetadataPayload,
+      payloadByMode.empty,
       this.transportSetupSoapRequestTimeoutMs,
     );
   }
@@ -1490,57 +1510,69 @@ ${actionBody}
     metadata: string,
     compatibilityMetadata: string,
   ): Promise<boolean> {
-    const payload = {
-      InstanceID: '0',
-      NextURI: streamUrl,
-      NextURIMetaData: metadata,
+    const payloadByMode: Record<DlnaRendererMetadataMode, Record<string, string>> = {
+      full: {
+        InstanceID: '0',
+        NextURI: streamUrl,
+        NextURIMetaData: metadata,
+      },
+      compatibility: {
+        InstanceID: '0',
+        NextURI: streamUrl,
+        NextURIMetaData: compatibilityMetadata,
+      },
+      empty: {
+        InstanceID: '0',
+        NextURI: streamUrl,
+        NextURIMetaData: '',
+      },
     };
-    const compatibilityPayload = {
-      InstanceID: '0',
-      NextURI: streamUrl,
-      NextURIMetaData: compatibilityMetadata,
+    const preferredMode = this.preferredNextMetadataModeByRendererId.get(renderer.id) || 'full';
+    const attemptModes = [
+      preferredMode,
+      ...(['full', 'compatibility', 'empty'] as DlnaRendererMetadataMode[]).filter(mode => mode !== preferredMode),
+    ];
+    const applyMode = async (modeIndex: number): Promise<boolean> => {
+      const mode = attemptModes[modeIndex];
+      if (!mode) {
+        return false;
+      }
+      try {
+        await this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'SetNextAVTransportURI',
+          payloadByMode[mode],
+          this.transportSetupSoapRequestTimeoutMs,
+        );
+        this.preferredNextMetadataModeByRendererId.set(renderer.id, mode);
+        return true;
+      } catch (_error) {
+        if (mode === 'full') {
+          this.writeDlnaLog('warn', 'set_next_uri_fallback_compatibility', {
+            rendererId: renderer.id,
+          });
+        } else if (mode === 'compatibility') {
+          this.writeDlnaLog('warn', 'set_next_uri_fallback_empty_metadata', {
+            rendererId: renderer.id,
+          });
+        }
+        return applyMode(modeIndex + 1);
+      }
     };
-    const emptyMetadataPayload = {
-      InstanceID: '0',
-      NextURI: streamUrl,
-      NextURIMetaData: '',
-    };
-    try {
-      await this.sendSoapRequest(
-        renderer.avTransportControlUrl,
-        renderer.avTransportServiceType,
-        'SetNextAVTransportURI',
-        payload,
-        this.transportSetupSoapRequestTimeoutMs,
-      );
+    const applied = await applyMode(0);
+    if (applied) {
       return true;
-    } catch (_error) {
-      this.writeDlnaLog('warn', 'set_next_uri_fallback_compatibility', {
-        rendererId: renderer.id,
-      });
     }
     try {
       await this.sendSoapRequest(
         renderer.avTransportControlUrl,
         renderer.avTransportServiceType,
         'SetNextAVTransportURI',
-        compatibilityPayload,
+        payloadByMode.empty,
         this.transportSetupSoapRequestTimeoutMs,
       );
-      return true;
-    } catch (_error) {
-      this.writeDlnaLog('warn', 'set_next_uri_fallback_empty_metadata', {
-        rendererId: renderer.id,
-      });
-    }
-    try {
-      await this.sendSoapRequest(
-        renderer.avTransportControlUrl,
-        renderer.avTransportServiceType,
-        'SetNextAVTransportURI',
-        emptyMetadataPayload,
-        this.transportSetupSoapRequestTimeoutMs,
-      );
+      this.preferredNextMetadataModeByRendererId.set(renderer.id, 'empty');
       return true;
     } catch (error: any) {
       this.writeDlnaLog('error', 'set_next_uri_failed', {

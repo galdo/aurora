@@ -105,6 +105,16 @@ export class MediaAlbumService {
     return this.buildMediaAlbum(mediaAlbumData, true);
   }
 
+  static async updateMediaAlbums(mediaAlbumFilterData: DataStoreFilterData<IMediaAlbumData>, mediaAlbumUpdateData: DataStoreUpdateData<IMediaAlbumData>): Promise<IMediaAlbum[]> {
+    const mediaAlbumDataList = await MediaAlbumDatastore.updateMediaAlbums(mediaAlbumFilterData, {
+      ...mediaAlbumUpdateData,
+      ...(mediaAlbumUpdateData.album_name ? {
+        album_name_normalized: this.normalizeSearchValue(mediaAlbumUpdateData.album_name),
+      } : {}),
+    });
+    return this.buildMediaAlbums(mediaAlbumDataList, true);
+  }
+
   static loadMediaAlbums(): void {
     this
       .getMediaAlbums()

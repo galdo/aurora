@@ -56,10 +56,6 @@ export function MediaPlayerProgress() {
     };
   }, []);
 
-  if (!mediaPlaybackCurrentMediaTrack && !isPodcastMode) {
-    return (<></>);
-  }
-
   const preparationProgress = Math.max(0, Math.min(100, mediaPlaybackPreparationStatus?.progress || 0));
   const isPreparingPlayback = !isPodcastMode && !!mediaPlaybackPreparationStatus;
   const mediaProgressValue = isPodcastMode
@@ -92,7 +88,9 @@ export function MediaPlayerProgress() {
         </div>
         <div className={cx('media-player-progress-bar-container')}>
           <Slider
-            disabled={isPreparingPlayback || mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading}
+            disabled={
+              ((!isPodcastMode && !mediaPlaybackCurrentMediaTrack) || isPreparingPlayback || mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading)
+            }
             value={sliderValue}
             maxValue={sliderMaxValue}
             onDragUpdate={handleProgressDragUpdate}
