@@ -253,6 +253,23 @@ export function SettingsPage() {
     error: I18nService.getString('label_settings_dap_status_error'),
   };
   const dapProgressStatusLabel = dapProgressStatusLabels[dapSyncProgress.phase] || I18nService.getString('label_settings_dap_status_idle');
+  const canStartDapSync = !dapSyncProgress.isRunning && !!String(dapTargetDirectory || '').trim();
+  const handleManualDapSync = React.useCallback(() => {
+    if (!canStartDapSync) {
+      return;
+    }
+    MediaLibraryService.syncDapLibrary({
+      targetDirectory: dapTargetDirectory,
+      deleteMissingOnDevice: dapDeleteMissingOnDevice,
+    }).catch((error) => {
+      console.error('Manual DAP sync failed');
+      console.error(error);
+    });
+  }, [
+    canStartDapSync,
+    dapTargetDirectory,
+    dapDeleteMissingOnDevice,
+  ]);
   const originalRepositoryLink = Links.ProjectOriginal || Links.Project;
   const forkFeatureItems = [
     I18nService.getString('settings_info_feature_cd_import'),
@@ -582,10 +599,10 @@ export function SettingsPage() {
                 <div className={cx('dap-progress-header')}>
                   <span className={cx('dap-progress-header-title')}>
                     <span>{dapProgressStatusLabel}</span>
-                    {dapSyncProgress.isRunning && (
+                    {dapSyncProgress.isRunning ? (
                       <button
                         type="button"
-                        className={cx('dap-progress-cancel-button')}
+                        className={cx('dap-progress-action-button', 'cancel')}
                         onClick={() => {
                           MediaLibraryService.cancelDapLibrarySync();
                         }}
@@ -593,6 +610,18 @@ export function SettingsPage() {
                         aria-label="Kopiervorgang abbrechen"
                       >
                         <Icon name={Icons.Close}/>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className={cx('dap-progress-action-button', 'sync')}
+                        disabled={!canStartDapSync}
+                        onClick={handleManualDapSync}
+                        title="DAP synchronisieren"
+                        aria-label="DAP synchronisieren"
+                      >
+                        <Icon name={Icons.Refresh}/>
+                        <span>Sync</span>
                       </button>
                     )}
                   </span>

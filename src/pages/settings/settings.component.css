@@ -349,7 +349,7 @@
   gap: 6px;
 }
 
-.dap-progress-cancel-button {
+.dap-progress-action-button {
   width: 20px;
   height: 20px;
   border-radius: 999px;
@@ -363,10 +363,29 @@
   transition: var(--selectable-item-transition);
 }
 
-.dap-progress-cancel-button:hover {
+.dap-progress-action-button.cancel:hover {
   background-color: color-mix(in srgb, var(--button-primary-bg-color) 45%, var(--stage-overlay-bg-color));
   color: #fff;
   border-color: color-mix(in srgb, var(--button-primary-bg-color) 62%, var(--stage-overlay-outline-color));
+}
+
+.dap-progress-action-button.sync {
+  width: auto;
+  padding: 0 8px;
+  gap: 6px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.dap-progress-action-button.sync:hover:not(.disabled):not(:disabled) {
+  background-color: color-mix(in srgb, var(--button-primary-bg-color) 45%, var(--stage-overlay-bg-color));
+  color: #fff;
+  border-color: color-mix(in srgb, var(--button-primary-bg-color) 62%, var(--stage-overlay-outline-color));
+}
+
+.dap-progress-action-button.sync:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .dap-progress-track {

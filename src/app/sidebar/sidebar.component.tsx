@@ -39,8 +39,8 @@ function SidebarBrandingLogo() {
 
   return (
     <div className={cx('sidebar-branding')}>
+      <div className={cx('sidebar-app-logo')} style={{ backgroundImage: `url(${AppLogo})` }}/>
       <div className={cx('sidebar-app-name')}>
-        <div className={cx('sidebar-app-name-logo-bg')} style={{ backgroundImage: `url(${AppLogo})` }}/>
         <span className={cx('sidebar-app-name-aurora')}>{auroraLabel}</span>
         <span className={cx('sidebar-app-name-pulse')}>{pulseLabel}</span>
       </div>

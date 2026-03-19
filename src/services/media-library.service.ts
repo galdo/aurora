@@ -478,6 +478,14 @@ export class MediaLibraryService {
     const abortController = new AbortController();
     this.dapSyncAbortController = abortController;
     const { signal } = abortController;
+    const dapTargetAvailabilityMonitor = setInterval(() => {
+      if (this.dapSyncAbortController !== abortController) {
+        return;
+      }
+      if (!fs.existsSync(dapTargetDirectory)) {
+        abortController.abort();
+      }
+    }, 1000);
 
     const syncPromise = (async () => {
       const deleteMissingOnDevice = options?.deleteMissingOnDevice ?? settings.deleteMissingOnDevice;
@@ -875,6 +883,7 @@ export class MediaLibraryService {
         throw error;
       })
       .finally(() => {
+        clearInterval(dapTargetAvailabilityMonitor);
         if (this.dapSyncAbortController === abortController) {
           this.dapSyncAbortController = null;
         }

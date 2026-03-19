@@ -34,57 +34,47 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4px 10px 0;
-  margin-bottom: 4px;
-  min-height: 132px;
-  gap: 8px;
+  padding: 0 10px;
+  margin-bottom: 2px;
+  min-height: 160px;
+  gap: 6px;
+}
+
+.sidebar-app-logo {
+  width: 186px;
+  height: 186px;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  opacity: 0.14;
+  margin-bottom: -96px;
+  pointer-events: none;
 }
 
 .sidebar-app-name {
-  position: relative;
   display: flex;
   align-items: baseline;
   justify-content: center;
   gap: 10px;
   color: var(--text-light-color);
-  letter-spacing: -0.03em;
-  width: 100%;
-  text-align: center;
   white-space: nowrap;
-  text-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
-}
-
-.sidebar-app-name-logo-bg {
-  position: absolute;
-  left: 50%;
-  top: -64px;
-  width: 186px;
-  height: 186px;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  transform: translateX(-50%);
-  opacity: 0.13;
+  text-shadow: 0 8px 26px rgba(0, 0, 0, 0.42);
   z-index: 0;
-  pointer-events: none;
 }
 
 .sidebar-app-name-aurora {
-  font-size: 32px;
+  font-size: 42px;
   font-weight: 700;
   letter-spacing: -0.035em;
-  position: relative;
-  z-index: 1;
+  color: #f7fbff;
 }
 
 .sidebar-app-name-pulse {
-  font-size: 54px;
+  font-size: 62px;
   font-family: 'Meow Script', cursive;
   line-height: 1;
-  color: var(--button-primary-bg-color);
+  color: #10b85a;
   transform: translateY(2px);
-  position: relative;
-  z-index: 1;
 }
 
 .sidebar-branding-loader {
