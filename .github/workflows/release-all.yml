@@ -285,45 +285,43 @@ jobs:
           name: Release ${{ needs.meta.outputs.tag }}
           prerelease: ${{ needs.meta.outputs.prerelease }}
           body: |
-            ## AuroraPulse 1.5.0
+            ## AuroraPulse 1.5.1-beta2
 
-            ### Highlights
-            - Unified collection controls across Albums, Artists, Playlists, and Podcasts.
-            - Improved playback stack with Bit-Perfect mode and smoother album playback flow.
-            - Full DLNA experience for both serving and controlling playback devices.
-            - Integrated auto-update workflow and broader platform packaging support.
-            - Improved app structure and navigation with consistent side view behavior.
+            ### Scope
+            - This prerelease includes all technical changes from **1.5.1-beta1** and the follow-up hardening shipped in **1.5.1-beta2**.
+            - Baseline comparison: **1.5.0 → 1.5.1-beta2**.
 
-            ### Added
-            - Shared view controls for cover size and sorting across core library pages.
-            - DLNA media server support for tracks, albums, artists, playlists, and podcasts.
-            - DLNA output control for compatible speakers, TVs, and network renderers.
-            - Automatic Most Played playlist generation.
-            - Gapless playback behavior for album listening.
-            - Flatpak distribution support for Linux (x86_64).
-            - Broader language coverage, including Chinese (Simplified), Hindi, Portuguese, Turkish, and more.
+            ### Core Playback & Platform
+            - Improved local playback stability and queue behavior for continuous sessions.
+            - Refined app lifecycle handling on desktop startup/shutdown paths.
+            - Updated UI shell behavior for splash and root layout sizing consistency.
+            - Refined sidebar app branding asset handling.
 
-            ### Improved
-            - Equalizer workflow with stronger preset/profile usability and tuning flow.
-            - Podcast browsing and layout consistency with the rest of the library.
-            - Player and side view transitions for cleaner and more predictable navigation.
-            - Search and import responsiveness in larger libraries.
-            - Settings and action styling for clearer primary/secondary interaction patterns.
+            ### DLNA (Server + Renderer Control) — Major Technical Update
+            - Reworked DLNA control flow for Play/Pause/Resume/Stop with stronger state reconciliation.
+            - Added defensive handling for unstable renderer transport states (`TRANSITIONING`, intermittent `STOPPED`, delayed state convergence).
+            - Strengthened next-track synchronization (`SetNextAVTransportURI`) and reduced transition latency between tracks.
+            - Added fallback/retry behavior around transport URI setup and transition windows.
+            - Reduced control-plane pressure by tuning snapshot strategy and throttling expensive renderer-output polling.
+            - Improved discovery behavior for devices appearing after app startup and during runtime.
+            - Expanded DLNA diagnostics with structured request/response/timing logs for SOAP actions and HTTP media requests.
+            - Improved remote volume and mute synchronization behavior with renderer capability fallbacks.
 
-            ### Fixed
-            - Stability issues in side view handling.
-            - Reliability issues in DLNA playback control scenarios.
-            - Auto-update edge cases.
-            - Playback and sync edge cases around connected devices.
-            - Playlist behavior issues around Most Played counting and flow.
+            ### DLNA Metadata & Artwork Delivery
+            - Revised DIDL metadata generation for renderer compatibility across strict and tolerant devices.
+            - Hardened album-art URI/res metadata handling for broader renderer acceptance.
+            - Improved cover delivery endpoint behavior, including byte-range response support for artwork requests.
+            - Added safer cover conversion/serving fallback behavior to preserve playback stability.
+
+            ### Library Insights / Dashboard
+            - Redesigned the Top section into paged views (Top Songs / Top Albums) with explicit left/right navigation.
+            - Improved dashboard card and toplist rendering behavior.
+            - Migrated dashboard copy to i18n and added translation keys across all bundled locales.
 
             ### Installation Notes
             - **macOS:** Open the DMG, move AuroraPulse to Applications, then launch from Applications. If Gatekeeper blocks first launch, right-click AuroraPulse.app and choose Open.
             - **Windows:** Download the `.exe` installer and run it. If SmartScreen appears, choose More info > Run anyway.
             - **Linux (Flatpak):** Install the provided `.flatpak` package using your Flatpak manager or `flatpak install`.
-
-            ### Notes
-            - This release represents the functional 1.5.0 milestone and includes cumulative improvements made throughout the 1.5 cycle.
           files: |
             release/macos-arm64/*.dmg
             release/macos-arm64/*.zip

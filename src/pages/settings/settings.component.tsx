@@ -41,6 +41,35 @@ const AppLogo = appLogoModule.default || appLogoModule;
 
 const languageOptions: AppLocale[] = ['de', 'en', 'fr', 'it', 'es', 'pt', 'zh', 'ja', 'pl', 'tr', 'ru', 'hi'];
 
+function sanitizeHtmlContent(rawHtml: string): string {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(String(rawHtml || ''), 'text/html');
+  const blockedTags = ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta'];
+  blockedTags.forEach((tagName) => {
+    doc.querySelectorAll(tagName).forEach(node => node.remove());
+  });
+  doc.querySelectorAll('*').forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      const attributeName = String(attribute.name || '').toLowerCase();
+      const attributeValue = String(attribute.value || '').trim().toLowerCase();
+      if (attributeName.startsWith('on')) {
+        element.removeAttribute(attribute.name);
+        return;
+      }
+      if (
+        (attributeName === 'href' || attributeName === 'src')
+        && (
+          attributeValue.startsWith(`java${'script'}:`)
+          || attributeValue.startsWith('data:text/html')
+        )
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+  return doc.body.innerHTML;
+}
+
 function ProviderSettings() {
   const mediaProviderRegistry = useSelector((state: RootState) => state.mediaProviderRegistry);
 
@@ -250,6 +279,7 @@ export function SettingsPage() {
     },
   ];
   const whatsNewTitle = I18nService.getString('label_settings_whats_new');
+  const whatsNewHtml = React.useMemo(() => sanitizeHtmlContent(String(whatsNewPayload?.releaseNotes || '')), [whatsNewPayload?.releaseNotes]);
   const updateStateLabelMap: Record<UpdateState['status'], string> = {
     idle: I18nService.getString('label_settings_updates_status_idle'),
     checking: I18nService.getString('label_settings_updates_status_checking'),
@@ -287,6 +317,7 @@ export function SettingsPage() {
     : true;
   const handleThemeChange = (mode: ThemeMode) => {
     ThemeService.set(mode);
+    IPCRenderer.sendAsyncMessage(IPCCommChannel.AppSetThemeMode, mode).catch(() => undefined);
     setThemeMode(mode);
   };
 
@@ -968,7 +999,7 @@ export function SettingsPage() {
                     {`${whatsNewTitle} (${whatsNewPayload.version})`}
                   </div>
                   <div className={cx('settings-description', 'settings-whats-new-content')}>
-                    {whatsNewPayload.releaseNotes}
+                    <div dangerouslySetInnerHTML={{ __html: whatsNewHtml }}/>
                   </div>
                   <div className={cx('settings-action-row')}>
                     <Button

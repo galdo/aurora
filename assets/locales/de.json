@@ -326,5 +326,22 @@
   "label_settings_audio_cd_import_heading": "Audio-CD Import",
   "label_settings_sync_progress_x_of_y": "{processed} von {found} Titeln gescannt",
   "label_player_output_local": "Lokale Audioausgabe",
-  "label_player_output_device_none": "Keine entfernten DLNA-Geräte gefunden"
+  "label_player_output_device_none": "Keine entfernten DLNA-Geräte gefunden",
+  "label_dashboard_insights_title": "Bibliotheks-Insights",
+  "label_dashboard_insights_subtitle": "Dashboard-Überblick über deine lokale Musiksammlung",
+  "label_dashboard_hero_title": "Lokales Bibliotheks-Dashboard",
+  "label_dashboard_hero_loading": "Aktuelle Statistiken werden geladen…",
+  "label_dashboard_hero_based_on_tracks": "Basierend auf {trackCount} lokalen Titeln",
+  "label_dashboard_collection": "Sammlung",
+  "label_dashboard_catalog": "Katalog",
+  "label_dashboard_listened": "Gehört",
+  "label_dashboard_top": "Top",
+  "label_dashboard_top_songs": "Top-Songs",
+  "label_dashboard_top_albums": "Top-Alben",
+  "label_dashboard_no_plays": "Keine Wiedergaben",
+  "label_dashboard_albums_count": "{count} Alben",
+  "label_dashboard_hours_suffix": "h",
+  "label_dashboard_top_page_aria": "Toplisten-Seite {pageNumber}",
+  "tooltip_dashboard_prev_page": "Vorherige Seite anzeigen",
+  "tooltip_dashboard_next_page": "Nächste Seite anzeigen"
 }

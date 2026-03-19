@@ -1,9 +1,14 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import http, { IncomingMessage, ServerResponse } from 'http';
 import dgram from 'dgram';
+import sharp from 'sharp';
 
+import {
+  MediaTrackCoverPictureImageDataType,
+} from '../enums';
 import {
   IMediaAlbum,
   IMediaArtist,
@@ -19,6 +24,7 @@ import {
   MediaTrackDatastore,
 } from '../datastores';
 import { MediaAlbumService } from './media-album.service';
+import { AppService } from './app.service';
 import { ArtistViewMode, MediaArtistService } from './media-artist.service';
 import { MediaLikedTrackService } from './media-liked-track.service';
 import { PodcastService } from './podcast.service';
@@ -123,10 +129,21 @@ export class DlnaService {
   private static readonly trackLimit = 200;
   private static readonly ssdpMaxAgeSeconds = 1800;
   private static readonly controlSettingsStorageKey = 'aurora:dlna-control-settings';
-  private static readonly rendererDiscoveryIntervalMs = 30000;
-  private static readonly rendererMaxAgeMs = 120000;
+  private static readonly rendererDiscoveryNoDeviceIntervalMs = 8000;
+  private static readonly rendererDiscoveryWithDeviceIntervalMs = 12000;
+  private static readonly rendererDiscoverySelectedRemoteIntervalMs = 4000;
+  private static readonly rendererDiscoveryStartupProbeDelaysMs = [1500, 4000, 9000];
+  private static readonly rendererMaxAgeMs = 15000;
   private static readonly avTransportServiceType = 'urn:schemas-upnp-org:service:AVTransport:1';
   private static readonly renderingControlServiceType = 'urn:schemas-upnp-org:service:RenderingControl:1';
+  private static readonly soapRequestTimeoutMs = 4000;
+  private static readonly transportSetupSoapRequestTimeoutMs = 5000;
+  private static readonly snapshotTransportSoapRequestTimeoutMs = 1800;
+  private static readonly snapshotPositionSoapRequestTimeoutMs = 2200;
+  private static readonly snapshotOutputSoapRequestTimeoutMs = 1400;
+  private static readonly snapshotOutputRefreshIntervalMs = 8000;
+  private static readonly dlnaLogFileName = 'dlna.log';
+  private static readonly dlnaArtworkCacheDirName = 'dlna-artwork-cache';
 
   private static enabled = false;
   private static port = this.defaultPort;
@@ -146,8 +163,16 @@ export class DlnaService {
   private static outputMode: 'local' | 'remote' = 'local';
   private static selectedRendererId?: string;
   private static rendererDevices: Map<string, DlnaRendererDevice> = new Map();
+  private static rendererOutputStateByRendererId: Map<string, { volumePercent?: number; muted?: boolean }> = new Map();
+  private static rendererOutputStateLastRefreshAtByRendererId: Map<string, number> = new Map();
+  private static rendererMuteControlUnsupportedIds: Set<string> = new Set();
+  private static selectedRendererSnapshotFailureCount = 0;
+  private static selectedRendererSnapshotFailureRendererId?: string;
   private static rendererDiscoverySocket?: dgram.Socket;
-  private static rendererDiscoveryInterval?: ReturnType<typeof setInterval>;
+  private static rendererDiscoveryInterval?: ReturnType<typeof setTimeout>;
+  private static rendererDiscoveryStartupProbes: Array<ReturnType<typeof setTimeout>> = [];
+  private static dlnaLogPathCache?: string;
+  private static dlnaArtworkCachePath?: string;
 
   static initialize() {
     if (this.initialized) {
@@ -213,6 +238,21 @@ export class DlnaService {
     };
   }
 
+  static getSelectedRendererOutputState(): { volumePercent?: number; muted?: boolean } | undefined {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return undefined;
+    }
+    const outputState = this.rendererOutputStateByRendererId.get(renderer.id);
+    if (!outputState) {
+      return undefined;
+    }
+    return {
+      volumePercent: outputState.volumePercent,
+      muted: outputState.muted,
+    };
+  }
+
   static async setEnabled(enabled: boolean): Promise<void> {
     this.enabled = enabled;
     this.persistSettings();
@@ -259,6 +299,8 @@ export class DlnaService {
     if (!normalizedOutputDeviceId || normalizedOutputDeviceId === 'local') {
       this.outputMode = 'local';
       this.selectedRendererId = undefined;
+      this.selectedRendererSnapshotFailureCount = 0;
+      this.selectedRendererSnapshotFailureRendererId = undefined;
       this.persistControlSettings();
       this.emitState();
       return;
@@ -272,6 +314,8 @@ export class DlnaService {
     await this.startServer();
     this.outputMode = 'remote';
     this.selectedRendererId = renderer.id;
+    this.selectedRendererSnapshotFailureCount = 0;
+    this.selectedRendererSnapshotFailureRendererId = renderer.id;
     this.persistControlSettings();
     this.emitState();
   }
@@ -306,8 +350,53 @@ export class DlnaService {
     }
 
     const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
-    const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl);
+    const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full');
+    const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility');
+    this.writeDlnaLog('info', 'play_track_requested', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+      mediaTrackId,
+      streamUrl,
+    });
 
+    const transportUriWasSet = await this.setRendererTransportUri(
+      renderer,
+      streamUrl,
+      metadata,
+      compatibilityMetadata,
+      'primary',
+    )
+      .then(() => true)
+      .catch(() => false);
+    if (!transportUriWasSet) {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'Stop',
+        {
+          InstanceID: '0',
+        },
+      ).catch(() => undefined);
+      await this.setRendererTransportUri(
+        renderer,
+        streamUrl,
+        metadata,
+        compatibilityMetadata,
+        'retry',
+      );
+    }
+
+    const playbackStarted = await this.startRendererPlayback(renderer, seekPositionSeconds);
+    this.applyRendererOutputState(renderer, options).catch((error: any) => {
+      this.writeDlnaLog('warn', 'apply_output_state_failed', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        error: String(error?.message || error || ''),
+      });
+    });
+    if (playbackStarted) {
+      return true;
+    }
     await this.sendSoapRequest(
       renderer.avTransportControlUrl,
       renderer.avTransportServiceType,
@@ -316,50 +405,42 @@ export class DlnaService {
         InstanceID: '0',
       },
     ).catch(() => undefined);
-    await this.sendSoapRequest(
-      renderer.avTransportControlUrl,
-      renderer.avTransportServiceType,
-      'SetAVTransportURI',
-      {
-        InstanceID: '0',
-        CurrentURI: streamUrl,
-        CurrentURIMetaData: metadata,
-      },
-    ).catch(async () => this.sendSoapRequest(
-      renderer.avTransportControlUrl,
-      renderer.avTransportServiceType,
-      'SetAVTransportURI',
-      {
-        InstanceID: '0',
-        CurrentURI: streamUrl,
-        CurrentURIMetaData: '',
-      },
-    ));
+    await this.setRendererTransportUri(renderer, streamUrl, metadata, compatibilityMetadata, 'retry');
+    return this.startRendererPlayback(renderer, seekPositionSeconds);
+  }
 
-    if (seekPositionSeconds > 0) {
-      await this.seekSelectedRenderer(seekPositionSeconds);
+  static async setNextMediaTrackOnSelectedRenderer(mediaTrack?: IMediaTrack): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
     }
-
-    if (options && Number.isFinite(options.mediaPlaybackVolume)) {
-      await this.setSelectedRendererVolume(Number(options.mediaPlaybackVolume), Number(options.mediaPlaybackMaxVolume || 100));
+    await this.startServer();
+    if (!mediaTrack) {
+      return this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'SetNextAVTransportURI',
+        {
+          InstanceID: '0',
+          NextURI: '',
+          NextURIMetaData: '',
+        },
+      )
+        .then(() => true)
+        .catch(() => false);
     }
-
-    if (options?.muted) {
-      await this.muteSelectedRenderer();
-    } else {
-      await this.unmuteSelectedRenderer();
+    const filePath = String((mediaTrack.extra as any)?.file_path || '').trim();
+    if (filePath && fs.existsSync(filePath)) {
+      this.registerTrackFromMediaTrack(mediaTrack, filePath);
     }
-
-    await this.sendSoapRequest(
-      renderer.avTransportControlUrl,
-      renderer.avTransportServiceType,
-      'Play',
-      {
-        InstanceID: '0',
-        Speed: '1',
-      },
-    );
-    return true;
+    const mediaTrackId = String(mediaTrack.id || mediaTrack.provider_id || '').trim();
+    if (!mediaTrackId) {
+      return false;
+    }
+    const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
+    const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full');
+    const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility');
+    return this.setRendererNextTransportUri(renderer, streamUrl, metadata, compatibilityMetadata);
   }
 
   static async pauseSelectedRenderer(): Promise<boolean> {
@@ -367,6 +448,10 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
+    this.writeDlnaLog('info', 'pause_requested', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+    });
     const paused = await this.sendSoapRequest(
       renderer.avTransportControlUrl,
       renderer.avTransportServiceType,
@@ -378,11 +463,61 @@ export class DlnaService {
       .then(() => true)
       .catch(() => false);
     if (paused) {
+      this.writeDlnaLog('info', 'pause_acknowledged', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        source: 'soap_response',
+      });
       return true;
     }
     const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
     const transportState = String(snapshot?.transportState || '').toUpperCase();
-    return transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED';
+    if (transportState === 'TRANSITIONING') {
+      const stableState = await this.waitForSelectedRendererTransportState({
+        allowedStates: ['PAUSED_PLAYBACK', 'PAUSED', 'STOPPED', 'NO_MEDIA_PRESENT', 'PLAYING'],
+        timeoutMs: 2400,
+      });
+      if (stableState === 'PAUSED_PLAYBACK'
+        || stableState === 'PAUSED'
+        || stableState === 'STOPPED'
+        || stableState === 'NO_MEDIA_PRESENT') {
+        this.writeDlnaLog('info', 'pause_delayed_acknowledged', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          transportState: stableState,
+        });
+        return true;
+      }
+      if (stableState === 'PLAYING') {
+        const retriedPause = await this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'Pause',
+          {
+            InstanceID: '0',
+          },
+        )
+          .then(() => true)
+          .catch(() => false);
+        if (retriedPause) {
+          this.writeDlnaLog('info', 'pause_acknowledged', {
+            rendererId: renderer.id,
+            rendererName: renderer.friendlyName,
+            source: 'soap_retry_after_transition',
+          });
+          return true;
+        }
+      }
+    }
+    this.writeDlnaLog('info', 'pause_snapshot_check', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+      transportState,
+    });
+    return transportState === 'PAUSED_PLAYBACK'
+      || transportState === 'PAUSED'
+      || transportState === 'STOPPED'
+      || transportState === 'NO_MEDIA_PRESENT';
   }
 
   static async resumeSelectedRenderer(): Promise<boolean> {
@@ -390,6 +525,10 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
+    this.writeDlnaLog('info', 'resume_requested', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+    });
     const resumed = await this.sendSoapRequest(
       renderer.avTransportControlUrl,
       renderer.avTransportServiceType,
@@ -402,10 +541,58 @@ export class DlnaService {
       .then(() => true)
       .catch(() => false);
     if (resumed) {
+      this.writeDlnaLog('info', 'resume_acknowledged', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        source: 'soap_response',
+      });
       return true;
     }
     const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
     const transportState = String(snapshot?.transportState || '').toUpperCase();
+    if (transportState === 'TRANSITIONING') {
+      const stableState = await this.waitForSelectedRendererTransportState({
+        allowedStates: ['PLAYING', 'PAUSED_PLAYBACK', 'PAUSED', 'STOPPED', 'NO_MEDIA_PRESENT'],
+        timeoutMs: 2400,
+      });
+      if (stableState === 'PLAYING') {
+        this.writeDlnaLog('info', 'resume_delayed_acknowledged', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          transportState: stableState,
+        });
+        return true;
+      }
+      if (stableState === 'PAUSED_PLAYBACK'
+        || stableState === 'PAUSED'
+        || stableState === 'STOPPED'
+        || stableState === 'NO_MEDIA_PRESENT') {
+        const retriedPlay = await this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'Play',
+          {
+            InstanceID: '0',
+            Speed: '1',
+          },
+        )
+          .then(() => true)
+          .catch(() => false);
+        if (retriedPlay) {
+          this.writeDlnaLog('info', 'resume_acknowledged', {
+            rendererId: renderer.id,
+            rendererName: renderer.friendlyName,
+            source: 'soap_retry_after_transition',
+          });
+          return true;
+        }
+      }
+    }
+    this.writeDlnaLog('info', 'resume_snapshot_check', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+      transportState,
+    });
     return transportState === 'PLAYING';
   }
 
@@ -414,7 +601,29 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
+    this.writeDlnaLog('info', 'stop_requested', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+    });
     await this.stopRenderer(renderer);
+    const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+    const transportState = String(snapshot?.transportState || '').toUpperCase();
+    if (transportState === 'TRANSITIONING') {
+      const stableState = await this.waitForSelectedRendererTransportState({
+        allowedStates: ['STOPPED', 'NO_MEDIA_PRESENT', 'PAUSED_PLAYBACK', 'PAUSED', 'PLAYING'],
+        timeoutMs: 2400,
+      });
+      this.writeDlnaLog('info', 'stop_delayed_snapshot_check', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        transportState: stableState || transportState,
+      });
+    }
+    this.writeDlnaLog('info', 'stop_snapshot_check', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+      transportState,
+    });
     return true;
   }
 
@@ -424,7 +633,7 @@ export class DlnaService {
       return undefined;
     }
 
-    const [transportInfoResponse, positionInfoResponse, volumeResponse, muteResponse] = await Promise.all([
+    const [transportInfoResponse, positionInfoResponse] = await Promise.all([
       this.sendSoapRequest(
         renderer.avTransportControlUrl,
         renderer.avTransportServiceType,
@@ -432,6 +641,7 @@ export class DlnaService {
         {
           InstanceID: '0',
         },
+        this.snapshotTransportSoapRequestTimeoutMs,
       ).catch(() => ''),
       this.sendSoapRequest(
         renderer.avTransportControlUrl,
@@ -440,37 +650,107 @@ export class DlnaService {
         {
           InstanceID: '0',
         },
-      ).catch(() => ''),
-      this.sendSoapRequest(
-        renderer.renderingControlUrl,
-        renderer.renderingControlServiceType,
-        'GetVolume',
-        {
-          InstanceID: '0',
-          Channel: 'Master',
-        },
-      ).catch(() => ''),
-      this.sendSoapRequest(
-        renderer.renderingControlUrl,
-        renderer.renderingControlServiceType,
-        'GetMute',
-        {
-          InstanceID: '0',
-          Channel: 'Master',
-        },
+        this.snapshotPositionSoapRequestTimeoutMs,
       ).catch(() => ''),
     ]);
+    let volumeResponse = '';
+    let muteResponse = '';
+    const now = Date.now();
+    const lastOutputRefreshAt = Number(this.rendererOutputStateLastRefreshAtByRendererId.get(renderer.id) || 0);
+    const shouldRefreshOutputState = (now - lastOutputRefreshAt) >= this.snapshotOutputRefreshIntervalMs;
+    if (shouldRefreshOutputState) {
+      const [volumeStateResponse, muteStateResponse] = await Promise.all([
+        this.sendSoapRequest(
+          renderer.renderingControlUrl,
+          renderer.renderingControlServiceType,
+          'GetVolume',
+          {
+            InstanceID: '0',
+            Channel: 'Master',
+          },
+          this.snapshotOutputSoapRequestTimeoutMs,
+        ).catch(() => ''),
+        (this.rendererMuteControlUnsupportedIds.has(renderer.id)
+          ? Promise.resolve('')
+          : this.sendSoapRequest(
+            renderer.renderingControlUrl,
+            renderer.renderingControlServiceType,
+            'GetMute',
+            {
+              InstanceID: '0',
+              Channel: 'Master',
+            },
+            this.snapshotOutputSoapRequestTimeoutMs,
+          ).catch((error: any) => {
+            if (this.isSoapHttp500Error(error)) {
+              this.rendererMuteControlUnsupportedIds.add(renderer.id);
+              this.writeDlnaLog('warn', 'renderer_mute_control_unsupported', {
+                rendererId: renderer.id,
+                rendererName: renderer.friendlyName,
+                actionName: 'GetMute',
+              });
+            }
+            return '';
+          })),
+      ]);
+      volumeResponse = volumeStateResponse;
+      muteResponse = muteStateResponse;
+      this.rendererOutputStateLastRefreshAtByRendererId.set(renderer.id, now);
+    }
+    const hasAnySnapshotPayload = [
+      transportInfoResponse,
+      positionInfoResponse,
+      volumeResponse,
+      muteResponse,
+    ].some(responsePayload => String(responsePayload || '').trim().length > 0);
+    if (!hasAnySnapshotPayload) {
+      const currentRendererId = renderer.id;
+      if (this.selectedRendererSnapshotFailureRendererId !== currentRendererId) {
+        this.selectedRendererSnapshotFailureRendererId = currentRendererId;
+        this.selectedRendererSnapshotFailureCount = 0;
+      }
+      this.selectedRendererSnapshotFailureCount += 1;
+      this.writeDlnaLog('warn', 'snapshot_empty_payload', {
+        rendererId: currentRendererId,
+        rendererName: renderer.friendlyName,
+        failureCount: this.selectedRendererSnapshotFailureCount,
+      });
+      return undefined;
+    }
+    this.selectedRendererSnapshotFailureCount = 0;
+    this.selectedRendererSnapshotFailureRendererId = renderer.id;
+    renderer.lastSeenAt = Date.now();
+    this.rendererDevices.set(renderer.id, renderer);
 
     const currentTransportState = String(this.extractXmlTagValue(transportInfoResponse, 'CurrentTransportState') || '').trim();
     const relativeTimePosition = String(this.extractXmlTagValue(positionInfoResponse, 'RelTime') || '').trim();
     const currentVolume = Number(this.extractXmlTagValue(volumeResponse, 'CurrentVolume') || NaN);
     const currentMute = String(this.extractXmlTagValue(muteResponse, 'CurrentMute') || '').trim();
+    if (Number.isFinite(currentVolume)) {
+      this.updateRendererOutputCache(renderer.id, {
+        volumePercent: Math.max(0, Math.min(100, Math.floor(currentVolume))),
+      });
+    }
+    if (currentMute === '1' || currentMute === '0') {
+      this.updateRendererOutputCache(renderer.id, {
+        muted: currentMute === '1',
+      });
+    }
 
+    const mutedFromCache = this.rendererOutputStateByRendererId.get(renderer.id)?.muted;
+    let mutedState = mutedFromCache;
+    if (currentMute === '1') {
+      mutedState = true;
+    } else if (currentMute === '0') {
+      mutedState = false;
+    }
     return {
       transportState: currentTransportState || undefined,
       positionSeconds: this.parseDlnaTimeToSeconds(relativeTimePosition),
-      volumePercent: Number.isFinite(currentVolume) ? Math.max(0, Math.min(100, Math.floor(currentVolume))) : undefined,
-      muted: currentMute === '1',
+      volumePercent: Number.isFinite(currentVolume)
+        ? Math.max(0, Math.min(100, Math.floor(currentVolume)))
+        : this.rendererOutputStateByRendererId.get(renderer.id)?.volumePercent,
+      muted: mutedState,
     };
   }
 
@@ -522,6 +802,9 @@ export class DlnaService {
         DesiredVolume: String(volume),
       },
     );
+    this.updateRendererOutputCache(renderer.id, {
+      volumePercent: volume,
+    });
     return true;
   }
 
@@ -529,6 +812,9 @@ export class DlnaService {
     const renderer = this.getSelectedRenderer();
     if (!renderer) {
       return false;
+    }
+    if (this.rendererMuteControlUnsupportedIds.has(renderer.id)) {
+      return true;
     }
     await this.sendSoapRequest(
       renderer.renderingControlUrl,
@@ -540,6 +826,9 @@ export class DlnaService {
         DesiredMute: '1',
       },
     );
+    this.updateRendererOutputCache(renderer.id, {
+      muted: true,
+    });
     return true;
   }
 
@@ -547,6 +836,9 @@ export class DlnaService {
     const renderer = this.getSelectedRenderer();
     if (!renderer) {
       return false;
+    }
+    if (this.rendererMuteControlUnsupportedIds.has(renderer.id)) {
+      return true;
     }
     await this.sendSoapRequest(
       renderer.renderingControlUrl,
@@ -558,6 +850,9 @@ export class DlnaService {
         DesiredMute: '0',
       },
     );
+    this.updateRendererOutputCache(renderer.id, {
+      muted: false,
+    });
     return true;
   }
 
@@ -568,6 +863,7 @@ export class DlnaService {
 
     const fileStats = fs.statSync(filePath);
     const trackId = String(mediaTrack.id || mediaTrack.provider_id || filePath);
+    const coverPath = this.getTrackCoverPathFromMediaTrack(mediaTrack);
     const track: DlnaTrack = {
       id: trackId,
       providerId: String(mediaTrack.provider_id || ''),
@@ -580,6 +876,8 @@ export class DlnaService {
       filePath,
       mimeType: this.getMimeType(filePath),
       fileSize: Number(fileStats.size || 0),
+      coverPath: coverPath || undefined,
+      coverMimeType: coverPath ? this.getImageMimeType(coverPath) : undefined,
     };
     this.trackMap.set(trackId, track);
     this.trackOrder = this.trackOrder.filter(existingId => existingId !== trackId);
@@ -671,13 +969,19 @@ export class DlnaService {
       debug('renderer discovery socket error - %o', error);
     });
     await new Promise<void>((resolve) => {
-      this.rendererDiscoverySocket?.bind(0, () => resolve());
+      this.rendererDiscoverySocket?.bind(0, () => {
+        try {
+          this.rendererDiscoverySocket?.addMembership(this.multicastIp);
+        } catch (error) {
+          debug('startRendererDiscovery addMembership failed - %o', error);
+        }
+        resolve();
+      });
     });
     this.sendRendererDiscoveryProbe();
-    this.rendererDiscoveryInterval = setInterval(() => {
-      this.sendRendererDiscoveryProbe();
-      this.pruneInactiveRenderers();
-    }, this.rendererDiscoveryIntervalMs);
+    this.pruneInactiveRenderers();
+    this.scheduleRendererDiscoveryTick();
+    this.scheduleRendererDiscoveryStartupProbes();
   }
 
   private static sendRendererDiscoveryProbe() {
@@ -712,11 +1016,7 @@ export class DlnaService {
       return;
     }
     const location = this.extractSsdpHeaderValue(message, 'LOCATION');
-    const searchTarget = String(this.extractSsdpHeaderValue(message, 'ST') || this.extractSsdpHeaderValue(message, 'NT')).toLowerCase();
-    const looksLikeRenderer = searchTarget.includes('mediarenderer')
-      || searchTarget.includes('avtransport')
-      || searchTarget.includes('renderingcontrol');
-    if (!location || !looksLikeRenderer) {
+    if (!location) {
       return;
     }
     this.fetchAndStoreRendererDescription(location).catch((error) => {
@@ -769,18 +1069,55 @@ export class DlnaService {
 
   private static pruneInactiveRenderers() {
     const now = Date.now();
-    const selectedRenderer = this.selectedRendererId
-      ? this.rendererDevices.get(this.selectedRendererId)
-      : undefined;
-    const activeRenderers = Array.from(this.rendererDevices.entries()).filter(([, renderer]) => (now - renderer.lastSeenAt) < this.rendererMaxAgeMs);
-    if (selectedRenderer) {
-      const selectedRendererPresent = activeRenderers.some(([rendererId]) => rendererId === selectedRenderer.id);
-      if (!selectedRendererPresent) {
-        activeRenderers.push([selectedRenderer.id, selectedRenderer]);
+    const { selectedRendererId } = this;
+    const activeRenderers = Array.from(this.rendererDevices.entries()).filter(([rendererId, renderer]) => {
+      if (selectedRendererId && rendererId === selectedRendererId && this.outputMode === 'remote') {
+        return true;
       }
-    }
+      return (now - renderer.lastSeenAt) < this.rendererMaxAgeMs;
+    });
+    const selectedRendererStillActive = !!this.selectedRendererId
+      && activeRenderers.some(([rendererId]) => rendererId === this.selectedRendererId);
     this.rendererDevices = new Map(activeRenderers);
+    if (this.outputMode === 'remote' && this.selectedRendererId && !selectedRendererStillActive) {
+      this.outputMode = 'local';
+      this.selectedRendererId = undefined;
+      this.persistControlSettings();
+    }
     this.emitState();
+  }
+
+  private static scheduleRendererDiscoveryTick() {
+    if (this.rendererDiscoveryInterval) {
+      clearTimeout(this.rendererDiscoveryInterval);
+    }
+    const remoteRendererSelected = this.outputMode === 'remote' && !!this.selectedRendererId;
+    const hasActiveRenderers = this.rendererDevices.size > 0;
+    let nextProbeDelayMs = this.rendererDiscoveryNoDeviceIntervalMs;
+    if (remoteRendererSelected) {
+      nextProbeDelayMs = this.rendererDiscoverySelectedRemoteIntervalMs;
+    } else if (hasActiveRenderers) {
+      nextProbeDelayMs = this.rendererDiscoveryWithDeviceIntervalMs;
+    }
+    this.rendererDiscoveryInterval = setTimeout(() => {
+      if (remoteRendererSelected) {
+        this.getSelectedRendererSnapshot().catch(() => undefined);
+      }
+      this.sendRendererDiscoveryProbe();
+      this.pruneInactiveRenderers();
+      this.scheduleRendererDiscoveryTick();
+    }, nextProbeDelayMs);
+  }
+
+  private static scheduleRendererDiscoveryStartupProbes() {
+    if (this.rendererDiscoveryStartupProbes.length > 0) {
+      return;
+    }
+    this.rendererDiscoveryStartupProbes = this.rendererDiscoveryStartupProbeDelaysMs.map(delayMs => setTimeout(() => {
+      this.sendRendererDiscoveryProbe();
+      this.pruneInactiveRenderers();
+      this.scheduleRendererDiscoveryTick();
+    }, delayMs));
   }
 
   private static extractXmlServiceBlocks(xml: string): Array<{ serviceType: string; controlURL: string }> {
@@ -822,14 +1159,27 @@ export class DlnaService {
     return `http://${servingIp}:${this.port}/cover/${encodeURIComponent(mediaTrackId)}`;
   }
 
-  private static buildRendererTrackMetadata(mediaTrack: IMediaTrack, streamUrl: string): string {
+  private static buildRendererTrackMetadata(
+    mediaTrack: IMediaTrack,
+    streamUrl: string,
+    metadataMode: 'full' | 'compatibility' = 'full',
+  ): string {
     const title = this.escapeXml(String(mediaTrack.track_name || 'Track'));
     const artist = this.escapeXml(String(mediaTrack.track_artists?.map(trackArtist => trackArtist.artist_name).join(', ') || ''));
     const album = this.escapeXml(String(mediaTrack.track_album?.album_name || ''));
     const mimeType = this.getMimeType(String((mediaTrack.extra as any)?.file_path || ''));
     const coverPath = this.getTrackCoverPathFromMediaTrack(mediaTrack);
-    const coverMimeType = this.getImageMimeType(coverPath);
-    const coverUrl = coverPath ? this.getTrackCoverUrlForRenderer(this.getSelectedRenderer() as DlnaRendererDevice, String(mediaTrack.id || mediaTrack.provider_id || '')) : '';
+    const coverMimeType = coverPath ? 'image/jpeg' : '';
+    const coverUrl = coverPath
+      ? this.getTrackCoverUrlForRenderer(this.getSelectedRenderer() as DlnaRendererDevice, String(mediaTrack.id || mediaTrack.provider_id || ''))
+      : '';
+    const coverProfile = this.getDlnaImageProfileForMimeType();
+    const albumArtAttributes = coverProfile
+      ? ` dlna:profileID="${coverProfile}"`
+      : '';
+    const coverProtocolInfo = coverProfile
+      ? `http-get:*:${coverMimeType}:DLNA.ORG_PN=${coverProfile}`
+      : `http-get:*:${coverMimeType}:*`;
     const duration = this.formatSecondsAsDlnaTime(Number(mediaTrack.track_duration || 0));
     return `<?xml version="1.0" encoding="utf-8"?>
 ${this.getDidlRootStart()}
@@ -838,11 +1188,15 @@ ${this.getDidlRootStart()}
 <upnp:artist>${artist}</upnp:artist>
 <upnp:album>${album}</upnp:album>
 <upnp:class>object.item.audioItem.musicTrack</upnp:class>
-${coverUrl ? `<upnp:albumArtURI dlna:profileID="JPEG_TN">${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
-${coverUrl && coverMimeType ? `<res protocolInfo="http-get:*:${coverMimeType}:DLNA.ORG_PN=JPEG_TN">${this.escapeXml(coverUrl)}</res>` : ''}
+${coverUrl ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl && coverMimeType && metadataMode === 'full' ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${mimeType}:*" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>
 </DIDL-Lite>`;
+  }
+
+  private static getDlnaImageProfileForMimeType(): string {
+    return '';
   }
 
   private static formatSecondsAsDlnaTime(seconds: number): string {
@@ -858,7 +1212,9 @@ ${coverUrl && coverMimeType ? `<res protocolInfo="http-get:*:${coverMimeType}:DL
     serviceType: string,
     actionName: string,
     params: Record<string, string>,
+    timeoutMs: number = this.soapRequestTimeoutMs,
   ): Promise<string> {
+    const startedAt = Date.now();
     const actionBody = Object.entries(params)
       .map(([key, value]) => `<${key}>${this.escapeXml(String(value || ''))}</${key}>`)
       .join('');
@@ -870,23 +1226,339 @@ ${actionBody}
 </u:${actionName}>
 </s:Body>
 </s:Envelope>`;
-
-    const response = await fetch(controlUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/xml; charset="utf-8"',
-        SOAPACTION: `"${serviceType}#${actionName}"`,
-      },
-      body,
+    this.writeDlnaLog('info', 'soap_request', {
+      actionName,
+      serviceType,
+      controlUrl,
+      timeoutMs,
+      params,
+      requestBody: this.getLogSnippet(body),
     });
-    const responseBody = await response.text().catch(() => '');
-    if (!response.ok) {
-      throw new Error(`DLNA SOAP ${actionName} failed: HTTP ${response.status}`);
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, timeoutMs);
+    try {
+      const response = await fetch(controlUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset="utf-8"',
+          SOAPACTION: `"${serviceType}#${actionName}"`,
+        },
+        body,
+        signal: abortController.signal,
+      });
+      const responseBody = await response.text().catch(() => '');
+      this.writeDlnaLog('info', 'soap_response', {
+        actionName,
+        serviceType,
+        controlUrl,
+        elapsedMs: Date.now() - startedAt,
+        status: response.status,
+        ok: response.ok,
+        responseBody: this.getLogSnippet(responseBody),
+      });
+      if (!response.ok) {
+        throw new Error(`DLNA SOAP ${actionName} failed: HTTP ${response.status}`);
+      }
+      if (/<(?:\w+:)?Fault>/i.test(responseBody)) {
+        this.writeDlnaLog('warn', 'soap_fault_response', {
+          actionName,
+          serviceType,
+          controlUrl,
+          elapsedMs: Date.now() - startedAt,
+          responseBody: this.getLogSnippet(responseBody),
+        });
+        throw new Error(`DLNA SOAP ${actionName} fault response`);
+      }
+      return responseBody;
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        this.writeDlnaLog('error', 'soap_request_timeout', {
+          actionName,
+          serviceType,
+          controlUrl,
+          elapsedMs: Date.now() - startedAt,
+        });
+        throw new Error(`DLNA SOAP ${actionName} timeout`);
+      }
+      this.writeDlnaLog('error', 'soap_request_failed', {
+        actionName,
+        serviceType,
+        controlUrl,
+        elapsedMs: Date.now() - startedAt,
+        error: String(error?.message || error || ''),
+      });
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
-    if (/<(?:\w+:)?Fault>/i.test(responseBody)) {
-      throw new Error(`DLNA SOAP ${actionName} fault response`);
+  }
+
+  private static isSoapHttp500Error(error: any): boolean {
+    const errorMessage = String(error?.message || error || '');
+    return errorMessage.includes('HTTP 500');
+  }
+
+  private static async startRendererPlayback(renderer: DlnaRendererDevice, seekPositionSeconds: number): Promise<boolean> {
+    let playSucceeded = await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'Play',
+      {
+        InstanceID: '0',
+        Speed: '1',
+      },
+    )
+      .then(() => true)
+      .catch(() => false);
+    if (!playSucceeded) {
+      const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+      const transportState = String(snapshot?.transportState || '').toUpperCase();
+      playSucceeded = transportState === 'PLAYING' || transportState === 'TRANSITIONING';
     }
-    return responseBody;
+    if (!playSucceeded) {
+      return false;
+    }
+    if (seekPositionSeconds > 0) {
+      await this.seekSelectedRenderer(seekPositionSeconds).catch(() => false);
+    }
+    return this.waitForRendererPlaybackStart(seekPositionSeconds);
+  }
+
+  private static async waitForRendererPlaybackStart(seekPositionSeconds: number): Promise<boolean> {
+    const minPositionSeconds = Math.max(0, Number(seekPositionSeconds || 0) - 1);
+    const resolveAttempt = async (
+      attempt: number,
+      lastKnownPositionSeconds: number,
+      consecutivePlayingSnapshots: number,
+    ): Promise<boolean> => {
+      if (attempt >= 4) {
+        this.writeDlnaLog('warn', 'playback_start_verification_timeout', {
+          seekPositionSeconds,
+          selectedRendererId: this.selectedRendererId,
+        });
+        return true;
+      }
+      const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+      const transportState = String(snapshot?.transportState || '').toUpperCase();
+      const snapshotPositionSeconds = Number(snapshot?.positionSeconds || 0);
+      const hasPosition = Number.isFinite(snapshotPositionSeconds) && snapshotPositionSeconds >= 0;
+      const hasForwardProgress = hasPosition && snapshotPositionSeconds > (lastKnownPositionSeconds + 0.25);
+      const nextConsecutivePlayingSnapshots = transportState === 'PLAYING'
+        || transportState === 'TRANSITIONING'
+        ? consecutivePlayingSnapshots + 1
+        : 0;
+      if (transportState === 'PLAYING' || transportState === 'TRANSITIONING') {
+        if (hasPosition && snapshotPositionSeconds >= minPositionSeconds) {
+          return true;
+        }
+        if (hasForwardProgress) {
+          return true;
+        }
+        if (!hasPosition && nextConsecutivePlayingSnapshots >= 2) {
+          return true;
+        }
+      }
+      const nextPosition = hasPosition
+        ? Math.max(lastKnownPositionSeconds, snapshotPositionSeconds)
+        : lastKnownPositionSeconds;
+      await this.wait(250);
+      return resolveAttempt(attempt + 1, nextPosition, nextConsecutivePlayingSnapshots);
+    };
+    return resolveAttempt(0, -1, 0);
+  }
+
+  private static async applyRendererOutputState(
+    renderer: DlnaRendererDevice,
+    options?: {
+      mediaPlaybackVolume?: number;
+      mediaPlaybackMaxVolume?: number;
+      muted?: boolean;
+    },
+  ): Promise<void> {
+    const cachedOutputState = this.rendererOutputStateByRendererId.get(renderer.id) || {};
+    const nextOutputState = { ...cachedOutputState };
+    if (options && Number.isFinite(options.mediaPlaybackVolume)) {
+      const maxVolume = Math.max(1, Number(options.mediaPlaybackMaxVolume || 100));
+      const targetVolumePercent = Math.max(0, Math.min(100, Math.round((Number(options.mediaPlaybackVolume || 0) / maxVolume) * 100)));
+      if (cachedOutputState.volumePercent !== targetVolumePercent) {
+        await this.setSelectedRendererVolume(Number(options.mediaPlaybackVolume), maxVolume).catch((error: any) => {
+          this.writeDlnaLog('warn', 'set_volume_failed', {
+            rendererId: renderer.id,
+            rendererName: renderer.friendlyName,
+            error: String(error?.message || error || ''),
+          });
+        });
+      }
+      nextOutputState.volumePercent = targetVolumePercent;
+    }
+    if (typeof options?.muted === 'boolean') {
+      if (cachedOutputState.muted !== options.muted) {
+        if (options.muted) {
+          await this.muteSelectedRenderer().catch((error: any) => {
+            this.writeDlnaLog('warn', 'mute_failed', {
+              rendererId: renderer.id,
+              rendererName: renderer.friendlyName,
+              error: String(error?.message || error || ''),
+            });
+          });
+        } else {
+          await this.unmuteSelectedRenderer().catch((error: any) => {
+            this.writeDlnaLog('warn', 'unmute_failed', {
+              rendererId: renderer.id,
+              rendererName: renderer.friendlyName,
+              error: String(error?.message || error || ''),
+            });
+          });
+        }
+      }
+      nextOutputState.muted = options.muted;
+    }
+    this.rendererOutputStateByRendererId.set(renderer.id, nextOutputState);
+  }
+
+  private static async setRendererTransportUri(
+    renderer: DlnaRendererDevice,
+    streamUrl: string,
+    metadata: string,
+    compatibilityMetadata: string,
+    phase: 'primary' | 'retry',
+  ): Promise<void> {
+    const payload = {
+      InstanceID: '0',
+      CurrentURI: streamUrl,
+      CurrentURIMetaData: metadata,
+    };
+    const compatibilityPayload = {
+      InstanceID: '0',
+      CurrentURI: streamUrl,
+      CurrentURIMetaData: compatibilityMetadata,
+    };
+    const emptyMetadataPayload = {
+      InstanceID: '0',
+      CurrentURI: streamUrl,
+      CurrentURIMetaData: '',
+    };
+    try {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'SetAVTransportURI',
+        payload,
+        this.transportSetupSoapRequestTimeoutMs,
+      );
+      return;
+    } catch (_error) {
+      this.writeDlnaLog('warn', 'set_av_transport_uri_fallback_compatibility', {
+        rendererId: renderer.id,
+        phase,
+      });
+    }
+    try {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'SetAVTransportURI',
+        compatibilityPayload,
+        this.transportSetupSoapRequestTimeoutMs,
+      );
+      return;
+    } catch (_error) {
+      this.writeDlnaLog('warn', 'set_av_transport_uri_fallback_empty_metadata', {
+        rendererId: renderer.id,
+        phase,
+      });
+    }
+    await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'SetAVTransportURI',
+      emptyMetadataPayload,
+      this.transportSetupSoapRequestTimeoutMs,
+    );
+  }
+
+  private static async setRendererNextTransportUri(
+    renderer: DlnaRendererDevice,
+    streamUrl: string,
+    metadata: string,
+    compatibilityMetadata: string,
+  ): Promise<boolean> {
+    const payload = {
+      InstanceID: '0',
+      NextURI: streamUrl,
+      NextURIMetaData: metadata,
+    };
+    const compatibilityPayload = {
+      InstanceID: '0',
+      NextURI: streamUrl,
+      NextURIMetaData: compatibilityMetadata,
+    };
+    const emptyMetadataPayload = {
+      InstanceID: '0',
+      NextURI: streamUrl,
+      NextURIMetaData: '',
+    };
+    try {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'SetNextAVTransportURI',
+        payload,
+        this.transportSetupSoapRequestTimeoutMs,
+      );
+      return true;
+    } catch (_error) {
+      this.writeDlnaLog('warn', 'set_next_uri_fallback_compatibility', {
+        rendererId: renderer.id,
+      });
+    }
+    try {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'SetNextAVTransportURI',
+        compatibilityPayload,
+        this.transportSetupSoapRequestTimeoutMs,
+      );
+      return true;
+    } catch (_error) {
+      this.writeDlnaLog('warn', 'set_next_uri_fallback_empty_metadata', {
+        rendererId: renderer.id,
+      });
+    }
+    try {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'SetNextAVTransportURI',
+        emptyMetadataPayload,
+        this.transportSetupSoapRequestTimeoutMs,
+      );
+      return true;
+    } catch (error: any) {
+      this.writeDlnaLog('error', 'set_next_uri_failed', {
+        rendererId: renderer.id,
+        error: String(error?.message || error || ''),
+      });
+      return false;
+    }
+  }
+
+  private static updateRendererOutputCache(rendererId: string, outputState: { volumePercent?: number; muted?: boolean }) {
+    const cachedOutputState = this.rendererOutputStateByRendererId.get(rendererId) || {};
+    this.rendererOutputStateByRendererId.set(rendererId, {
+      ...cachedOutputState,
+      ...outputState,
+    });
+  }
+
+  private static wait(waitMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, waitMs);
+    });
   }
 
   private static registerUiSettingsListener() {
@@ -1142,6 +1814,14 @@ ${actionBody}
   private static handleHttpRequest(request: IncomingMessage, response: ServerResponse) {
     const requestUrl = String(request.url || '/');
     const requestPath = this.getRequestPath(requestUrl);
+    this.writeDlnaLog('info', 'http_request_received', {
+      method: String(request.method || 'GET').toUpperCase(),
+      path: requestPath,
+      rawUrl: requestUrl,
+      userAgent: String(request.headers['user-agent'] || ''),
+      range: String(request.headers.range || ''),
+      host: String(request.headers.host || ''),
+    });
     if (requestPath === '/description.xml') {
       this.writeXml(response, this.getDescriptionXml());
       return;
@@ -1184,7 +1864,7 @@ ${actionBody}
     }
     if (requestPath.startsWith('/cover/')) {
       const trackId = decodeURIComponent(requestPath.replace('/cover/', ''));
-      this.streamTrackCover(response, trackId === 'current' ? this.currentTrackId : trackId).catch((error) => {
+      this.streamTrackCover(response, request, trackId === 'current' ? this.currentTrackId : trackId).catch((error) => {
         debug('streamTrackCover failed - %o', error);
         if (!response.headersSent) {
           response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -1262,7 +1942,7 @@ ${actionBody}
     stream.pipe(response);
   }
 
-  private static async streamTrackCover(response: ServerResponse, trackId?: string) {
+  private static async streamTrackCover(response: ServerResponse, request: IncomingMessage, trackId?: string) {
     if (!trackId) {
       response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       response.end('No track selected');
@@ -1271,17 +1951,157 @@ ${actionBody}
     const track = await this.resolveStreamTrack(trackId);
     const coverPath = String(track?.coverPath || '').trim();
     if (!coverPath || !fs.existsSync(coverPath)) {
+      this.writeDlnaLog('warn', 'cover_not_available', {
+        trackId,
+        hasTrack: !!track,
+      });
       response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       response.end('Cover not available');
       return;
     }
-    const coverBuffer = fs.readFileSync(coverPath);
-    response.writeHead(200, {
-      'Content-Type': track?.coverMimeType || this.getImageMimeType(coverPath),
-      'Content-Length': coverBuffer.byteLength,
+    let coverBuffer = fs.readFileSync(coverPath);
+    let coverMimeType = track?.coverMimeType || this.getImageMimeType(coverPath);
+    if (coverMimeType !== 'image/jpeg' && coverMimeType !== 'image/jpg') {
+      try {
+        coverBuffer = await sharp(coverBuffer)
+          .jpeg({
+            quality: 88,
+            mozjpeg: true,
+          })
+          .toBuffer();
+        coverMimeType = 'image/jpeg';
+      } catch (error) {
+        debug('streamTrackCover sharp conversion failed - %o', error);
+        this.writeDlnaLog('error', 'cover_sharp_conversion_failed', {
+          trackId,
+          coverPath,
+          error: String((error as any)?.message || error || ''),
+        });
+      }
+    }
+    const coverProfile = this.getDlnaImageProfileForMimeType();
+    const coverContentFeatures = coverProfile
+      ? `DLNA.ORG_PN=${coverProfile};DLNA.ORG_OP=01`
+      : 'DLNA.ORG_OP=01';
+    const rangeHeader = String(request.headers.range || '');
+    const totalLength = coverBuffer.byteLength;
+    let startByte = 0;
+    let endByte = Math.max(0, totalLength - 1);
+    if (rangeHeader.startsWith('bytes=')) {
+      const [rangeStart, rangeEnd] = rangeHeader.replace('bytes=', '').split('-');
+      const parsedStart = Number(rangeStart);
+      const parsedEnd = Number(rangeEnd);
+      if (Number.isFinite(parsedStart) && parsedStart >= 0) {
+        startByte = Math.floor(parsedStart);
+      }
+      if (Number.isFinite(parsedEnd) && parsedEnd >= startByte) {
+        endByte = Math.floor(parsedEnd);
+      }
+      endByte = Math.min(endByte, Math.max(0, totalLength - 1));
+    }
+    const partial = rangeHeader.startsWith('bytes=');
+    const contentLength = Math.max(0, (endByte - startByte) + 1);
+    response.writeHead(partial ? 206 : 200, {
+      'Content-Type': coverMimeType,
+      'Content-Length': contentLength,
+      'Accept-Ranges': 'bytes',
+      ...(partial ? { 'Content-Range': `bytes ${startByte}-${endByte}/${totalLength}` } : {}),
+      'transferMode.dlna.org': 'Streaming',
+      'contentFeatures.dlna.org': coverContentFeatures,
       'Cache-Control': 'public, max-age=3600',
     });
-    response.end(coverBuffer);
+    if (String(request.method || 'GET').toUpperCase() === 'HEAD') {
+      response.end();
+      return;
+    }
+    response.end(coverBuffer.subarray(startByte, endByte + 1));
+  }
+
+  private static getDlnaLogPath(): string | undefined {
+    if (this.dlnaLogPathCache) {
+      return this.dlnaLogPathCache;
+    }
+    try {
+      const rendererLogPath = String(AppService.details.logs_path || '').trim();
+      const logsDir = rendererLogPath ? path.dirname(rendererLogPath) : '';
+      if (!logsDir) {
+        return undefined;
+      }
+      fs.mkdirSync(logsDir, { recursive: true });
+      this.dlnaLogPathCache = path.join(logsDir, this.dlnaLogFileName);
+      return this.dlnaLogPathCache;
+    } catch (_error) {
+      return undefined;
+    }
+  }
+
+  private static writeDlnaLog(level: 'info' | 'warn' | 'error', event: string, details?: Record<string, any>) {
+    try {
+      const logPath = this.getDlnaLogPath();
+      if (!logPath) {
+        return;
+      }
+      const logLine = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level,
+        event,
+        outputMode: this.outputMode,
+        selectedRendererId: this.selectedRendererId,
+        details: details || {},
+      });
+      fs.appendFileSync(logPath, `${logLine}\n`, {
+        encoding: 'utf8',
+      });
+    } catch (error) {
+      debug('writeDlnaLog failed - %o', error);
+    }
+  }
+
+  private static getLogSnippet(value: any, maxLength: number = 1800): string {
+    const normalizedValue = String(value || '');
+    if (normalizedValue.length <= maxLength) {
+      return normalizedValue;
+    }
+    return `${normalizedValue.slice(0, maxLength)}…(truncated)`;
+  }
+
+  private static async waitForSelectedRendererTransportState(options: {
+    allowedStates: string[];
+    timeoutMs?: number;
+    pollMs?: number;
+  }): Promise<string | undefined> {
+    const timeoutMs = Math.max(250, Number(options.timeoutMs || 2000));
+    const pollMs = Math.max(100, Number(options.pollMs || 250));
+    const allowedStates = new Set((options.allowedStates || []).map(state => String(state || '').toUpperCase()));
+    const stopAt = Date.now() + timeoutMs;
+    const poll = async (): Promise<string | undefined> => {
+      if (Date.now() > stopAt) {
+        return undefined;
+      }
+      const transportState = await this.getSelectedRendererTransportState().catch(() => '');
+      if (allowedStates.has(transportState)) {
+        return transportState;
+      }
+      await this.wait(pollMs);
+      return poll();
+    };
+    return poll();
+  }
+
+  private static async getSelectedRendererTransportState(): Promise<string> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return '';
+    }
+    const transportInfoResponse = await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'GetTransportInfo',
+      {
+        InstanceID: '0',
+      },
+    ).catch(() => '');
+    return String(this.extractXmlTagValue(transportInfoResponse, 'CurrentTransportState') || '').toUpperCase();
   }
 
   private static getDescriptionXml() {
@@ -1794,13 +2614,26 @@ ${this.buildTrackDidlItem(track, 'tracks', clientAddress)}
     const duration = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.000`;
     const streamUrl = `${baseUrl}/stream/${encodeURIComponent(track.id)}`;
     const coverUrl = track.coverPath ? `${baseUrl}/cover/${encodeURIComponent(track.id)}` : '';
+    const coverMimeType = coverUrl ? 'image/jpeg' : '';
+    const coverProfile = this.getDlnaImageProfileForMimeType();
+    let coverProtocolInfo = '';
+    if (coverMimeType) {
+      if (coverProfile) {
+        coverProtocolInfo = `http-get:*:${coverMimeType}:DLNA.ORG_PN=${coverProfile}`;
+      } else {
+        coverProtocolInfo = `http-get:*:${coverMimeType}:*`;
+      }
+    }
+    const albumArtAttributes = coverProfile
+      ? ` dlna:profileID="${coverProfile}"`
+      : '';
     return `<item id="${this.escapeXml(track.id)}" parentID="${this.escapeXml(parentId)}" restricted="1">
 <dc:title>${this.escapeXml(track.title)}</dc:title>
 <upnp:class>object.item.audioItem.musicTrack</upnp:class>
 <upnp:artist>${this.escapeXml(track.artist)}</upnp:artist>
 <upnp:album>${this.escapeXml(track.album)}</upnp:album>
-${coverUrl ? `<upnp:albumArtURI dlna:profileID="JPEG_TN">${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
-${coverUrl && track.coverMimeType ? `<res protocolInfo="http-get:*:${track.coverMimeType}:DLNA.ORG_PN=JPEG_TN">${this.escapeXml(coverUrl)}</res>` : ''}
+${coverUrl ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl && coverProtocolInfo ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${track.mimeType}:*" size="${track.fileSize}" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>`;
   }
@@ -1918,7 +2751,7 @@ ${itemsXml}
     );
     const albumCoverByAlbumId = new Map<string, string>(
       albumsRaw.map((album) => {
-        const albumCoverPath = this.normalizePicturePath(album.album_cover_picture?.image_data);
+        const albumCoverPath = this.resolvePicturePath(album.album_cover_picture);
         return [String(album.id), albumCoverPath];
       }),
     );
@@ -1991,7 +2824,7 @@ ${itemsXml}
       .filter(Boolean) as string[];
     const albumId = String(track.track_album_id || '');
     const albumName = String(albumById.get(albumId) || '');
-    const coverPathFromTrack = this.normalizePicturePath(track.track_cover_picture?.image_data);
+    const coverPathFromTrack = this.resolvePicturePath(track.track_cover_picture);
     const coverPath = coverPathFromTrack || String(albumCoverByAlbumId.get(albumId) || '');
     return {
       id: String(track.id || track.provider_id || filePath),
@@ -2011,11 +2844,21 @@ ${itemsXml}
   }
 
   private static getTrackCoverPathFromMediaTrack(mediaTrack: IMediaTrack): string {
-    const coverFromTrack = this.normalizePicturePath(mediaTrack.track_cover_picture?.image_data);
+    const coverFromTrack = this.resolvePicturePath(mediaTrack.track_cover_picture);
     if (coverFromTrack) {
       return coverFromTrack;
     }
-    return this.normalizePicturePath(mediaTrack.track_album?.album_cover_picture?.image_data);
+    return this.resolvePicturePath(mediaTrack.track_album?.album_cover_picture);
+  }
+
+  private static resolvePicturePath(picture?: { image_data?: any; image_data_type?: MediaTrackCoverPictureImageDataType }): string {
+    if (!picture) {
+      return '';
+    }
+    if (picture.image_data_type === MediaTrackCoverPictureImageDataType.Buffer) {
+      return this.materializePictureBufferToPath(picture.image_data);
+    }
+    return this.normalizePicturePath(picture.image_data);
   }
 
   private static normalizePicturePath(imageData?: any): string {
@@ -2037,15 +2880,95 @@ ${itemsXml}
     return 'image/jpeg';
   }
 
+  private static materializePictureBufferToPath(imageData?: any): string {
+    if (!imageData) {
+      return '';
+    }
+    let imageBuffer: Buffer | undefined;
+    if (Buffer.isBuffer(imageData)) {
+      imageBuffer = imageData;
+    } else if (Array.isArray(imageData)) {
+      imageBuffer = Buffer.from(imageData);
+    } else if (typeof imageData === 'string') {
+      const dataUrlMatch = imageData.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
+      const base64Payload = dataUrlMatch ? dataUrlMatch[1] : imageData;
+      try {
+        imageBuffer = Buffer.from(base64Payload, 'base64');
+      } catch (_error) {
+        imageBuffer = undefined;
+      }
+    } else if (typeof imageData === 'object' && imageData?.type === 'Buffer' && Array.isArray(imageData?.data)) {
+      imageBuffer = Buffer.from(imageData.data);
+    }
+    if (!imageBuffer || imageBuffer.byteLength === 0) {
+      return '';
+    }
+    const artworkCachePath = this.getDlnaArtworkCachePath();
+    if (!artworkCachePath) {
+      return '';
+    }
+    const imageHash = crypto.createHash('sha1').update(imageBuffer.toString('base64')).digest('hex');
+    const pictureExtension = this.getImageExtensionFromBuffer(imageBuffer);
+    const picturePath = path.join(artworkCachePath, `${imageHash}${pictureExtension}`);
+    if (!fs.existsSync(picturePath)) {
+      fs.writeFileSync(picturePath, Uint8Array.from(imageBuffer));
+    }
+    return picturePath;
+  }
+
+  private static getImageExtensionFromBuffer(imageBuffer: Buffer): string {
+    if (imageBuffer.byteLength >= 8
+      && imageBuffer[0] === 0x89
+      && imageBuffer[1] === 0x50
+      && imageBuffer[2] === 0x4E
+      && imageBuffer[3] === 0x47) {
+      return '.png';
+    }
+    if (imageBuffer.byteLength >= 4
+      && imageBuffer[0] === 0x52
+      && imageBuffer[1] === 0x49
+      && imageBuffer[2] === 0x46
+      && imageBuffer[3] === 0x46) {
+      return '.webp';
+    }
+    return '.jpg';
+  }
+
+  private static getDlnaArtworkCachePath(): string | undefined {
+    if (this.dlnaArtworkCachePath) {
+      return this.dlnaArtworkCachePath;
+    }
+    try {
+      const rendererLogPath = String(AppService.details.logs_path || '').trim();
+      const logsDir = rendererLogPath ? path.dirname(rendererLogPath) : '';
+      if (!logsDir) {
+        return undefined;
+      }
+      const artworkCachePath = path.join(logsDir, this.dlnaArtworkCacheDirName);
+      fs.mkdirSync(artworkCachePath, { recursive: true });
+      this.dlnaArtworkCachePath = artworkCachePath;
+      return artworkCachePath;
+    } catch (_error) {
+      return undefined;
+    }
+  }
+
   private static async resolveStreamTrack(trackId: string): Promise<DlnaTrack | undefined> {
     const liveTrack = this.trackMap.get(trackId);
-    if (liveTrack) {
-      return liveTrack;
-    }
     const browseLibrary = await this.getBrowseLibrary();
     const track = browseLibrary.trackById.get(trackId);
     if (track) {
+      if (liveTrack) {
+        return {
+          ...liveTrack,
+          coverPath: liveTrack.coverPath || track.coverPath,
+          coverMimeType: liveTrack.coverMimeType || track.coverMimeType,
+        };
+      }
       return track;
+    }
+    if (liveTrack) {
+      return liveTrack;
     }
     const mediaTrackData = await MediaTrackDatastore.findMediaTrack({
       id: trackId,

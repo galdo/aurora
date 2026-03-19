@@ -10,6 +10,7 @@ import { useSelector } from 'react-redux';
 import { useHistory, useLocation } from 'react-router-dom';
 
 import routes from '../app.routes';
+import { MediaTrackDatastore } from '../../datastores';
 
 import {
   BrowserNavigation,
@@ -244,6 +245,7 @@ function BrowserSearch() {
 function BrowserHeader() {
   const mediaAlbumsCount = useSelector((state: RootState) => state.mediaLibrary.mediaAlbums.length);
   const mediaPlaylistsCount = useSelector((state: RootState) => state.mediaLibrary.mediaPlaylists.length);
+  const currentTrackId = useSelector((state: RootState) => state.mediaPlayer.mediaPlaybackCurrentMediaTrack?.id);
   const [isSyncRunning, setIsSyncRunning] = useState(false);
   const [windowsControlsSafeWidth, setWindowsControlsSafeWidth] = useState(getWindowsControlsSafeWidth());
   const [windowsControlsSafeHeight, setWindowsControlsSafeHeight] = useState(getWindowsControlsSafeHeight());
@@ -330,9 +332,20 @@ function BrowserHeader() {
           variant={['rounded', 'outline']}
           tooltip={I18nService.getString('tooltip_global_shuffle') || 'Alle Titel zufällig wiedergeben'}
           onButtonSubmit={async () => {
-            const tracks = await MediaTrackService.searchTracksByName('');
+            const trackDataList = await MediaTrackDatastore.findMediaTracks({});
+            const tracks = await MediaTrackService.buildMediaTracks(trackDataList);
             if (tracks && tracks.length > 0) {
-              MediaPlayerService.playMediaTracks(_.shuffle(tracks));
+              const shuffledTracks = _.shuffle(tracks);
+              if (currentTrackId && shuffledTracks.length > 1 && shuffledTracks[0].id === currentTrackId) {
+                const replacementTrackPointer = shuffledTracks.findIndex(mediaTrack => mediaTrack.id !== currentTrackId);
+                if (replacementTrackPointer > 0) {
+                  [shuffledTracks[0], shuffledTracks[replacementTrackPointer]] = [
+                    shuffledTracks[replacementTrackPointer],
+                    shuffledTracks[0],
+                  ];
+                }
+              }
+              MediaPlayerService.playMediaTracks(shuffledTracks);
             }
           }}
         >

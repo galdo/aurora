@@ -36,6 +36,7 @@ import {
   screen,
   globalShortcut,
   systemPreferences,
+  nativeTheme,
 } from 'electron';
 
 import {
@@ -83,6 +84,7 @@ type AppUpdateState = {
   canDownload: boolean;
   canInstall: boolean;
 };
+type AppThemeMode = 'light' | 'dark' | 'auto';
 
 type AppWhatsNewPayload = {
   version: string;
@@ -132,6 +134,7 @@ class App implements IAppMain {
   private mediaHardwareShortcutLastAttemptAt = 0;
   private mediaHardwareShortcutsRegistered = false;
   private readonly updateSettingsFileName = 'update.settings.json';
+  private readonly themeSettingsFileName = 'theme.settings.json';
   private readonly whatsNewFileName = 'update.whats-new.json';
   private readonly updateCheckTimeoutMs = 45000;
   private updateSettings: AppUpdateSettings = {
@@ -153,7 +156,9 @@ class App implements IAppMain {
   private pendingWhatsNew?: AppWhatsNewPayload;
   private autoUpdaterRegistered = false;
   private rendererEventsRegistered = false;
+  private nativeThemeListenerRegistered = false;
   private latestUpdateInfo?: any;
+  private themeMode: AppThemeMode = 'auto';
 
   constructor() {
     this.env = process.env.NODE_ENV;
@@ -172,6 +177,7 @@ class App implements IAppMain {
     this.migrateLegacyUserDataPath();
     this.configureLogger();
     this.loadUpdateSettings();
+    this.loadThemeSettings();
     this.loadPendingWhatsNew();
     this.configureApp();
     this.installSourceMapSupport();
@@ -621,6 +627,10 @@ class App implements IAppMain {
     return this.getDataPath(this.whatsNewFileName);
   }
 
+  private getThemeSettingsPath() {
+    return this.getDataPath(this.themeSettingsFileName);
+  }
+
   private loadUpdateSettings() {
     try {
       const filePath = this.getUpdateSettingsPath();
@@ -671,6 +681,74 @@ class App implements IAppMain {
       }
     }
     return this.updateSettings;
+  }
+
+  private loadThemeSettings() {
+    try {
+      const filePath = this.getThemeSettingsPath();
+      if (!fs.existsSync(filePath)) {
+        return;
+      }
+      const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const mode = String(payload?.mode || '').trim();
+      if (mode === 'light' || mode === 'dark' || mode === 'auto') {
+        this.themeMode = mode;
+      }
+    } catch (_error) {
+      this.themeMode = 'auto';
+    }
+  }
+
+  private saveThemeSettings(nextMode: AppThemeMode): AppThemeMode {
+    const safeMode: AppThemeMode = nextMode === 'light' || nextMode === 'dark' ? nextMode : 'auto';
+    this.themeMode = safeMode;
+    const themeSettingsPath = this.getThemeSettingsPath();
+    fs.mkdirSync(path.dirname(themeSettingsPath), { recursive: true });
+    fs.writeFileSync(themeSettingsPath, JSON.stringify({ mode: safeMode }), 'utf8');
+    return safeMode;
+  }
+
+  private resolveSplashThemeVariant(): 'light' | 'dark' {
+    if (this.themeMode === 'light' || this.themeMode === 'dark') {
+      return this.themeMode;
+    }
+    return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  }
+
+  private getMainWindowThemeColors(): {
+    mode: 'light' | 'dark';
+    backgroundColor: string;
+    titleBarSymbolColor: string;
+  } {
+    const mode = this.resolveSplashThemeVariant();
+    if (mode === 'light') {
+      return {
+        mode,
+        backgroundColor: '#ffffff',
+        titleBarSymbolColor: '#1a1f24',
+      };
+    }
+    return {
+      mode,
+      backgroundColor: '#141414',
+      titleBarSymbolColor: '#f3f5f7',
+    };
+  }
+
+  private applyMainWindowTheme(mainWindow?: BrowserWindow): void {
+    const targetWindow = mainWindow || this.mainWindow;
+    if (!targetWindow || targetWindow.isDestroyed()) {
+      return;
+    }
+    const themeColors = this.getMainWindowThemeColors();
+    targetWindow.setBackgroundColor(themeColors.backgroundColor);
+    if (this.platform !== PlatformOS.Darwin && typeof (targetWindow as any).setTitleBarOverlay === 'function') {
+      (targetWindow as any).setTitleBarOverlay({
+        color: themeColors.backgroundColor,
+        symbolColor: themeColors.titleBarSymbolColor,
+        height: 54,
+      });
+    }
   }
 
   private loadPendingWhatsNew() {
@@ -940,6 +1018,7 @@ class App implements IAppMain {
     });
     splashWindow.loadURL(this.getSplashDataURL());
 
+    const themeColors = this.getMainWindowThemeColors();
     const mainWindow = new BrowserWindow({
       show: false,
       width: defaultWidth,
@@ -951,8 +1030,8 @@ class App implements IAppMain {
       titleBarStyle: isDarwin ? 'hiddenInset' : 'hidden',
       ...(!isDarwin ? {
         titleBarOverlay: {
-          color: '#141414',
-          symbolColor: '#f3f5f7',
+          color: themeColors.backgroundColor,
+          symbolColor: themeColors.titleBarSymbolColor,
           height: 54,
         },
       } : {}),
@@ -962,9 +1041,10 @@ class App implements IAppMain {
         contextIsolation: false,
         nodeIntegrationInWorker: true,
       },
-      backgroundColor: '#141414',
+      backgroundColor: themeColors.backgroundColor,
     });
     this.mainWindow = mainWindow;
+    this.applyMainWindowTheme(mainWindow);
 
     this.registerRendererEvents();
 
@@ -978,6 +1058,9 @@ class App implements IAppMain {
       if (this.startMinimized) {
         mainWindow.minimize();
       } else {
+        if (!mainWindow.isFullScreen()) {
+          mainWindow.setFullScreen(true);
+        }
         mainWindow.show();
         mainWindow.focus();
       }
@@ -1002,6 +1085,14 @@ class App implements IAppMain {
       this.closeSplashWindow();
       this.mainWindow = undefined;
     });
+    if (!this.nativeThemeListenerRegistered) {
+      this.nativeThemeListenerRegistered = true;
+      nativeTheme.on('updated', () => {
+        if (this.themeMode === 'auto') {
+          this.applyMainWindowTheme();
+        }
+      });
+    }
 
     mainWindow.on('close', (event) => {
       // let the app quit if requested by user
@@ -1057,6 +1148,7 @@ class App implements IAppMain {
   }
 
   private createSplashWindow(): BrowserWindow {
+    const splashTheme = this.resolveSplashThemeVariant();
     return new BrowserWindow({
       width: 420,
       height: 240,
@@ -1064,11 +1156,12 @@ class App implements IAppMain {
       frame: false,
       alwaysOnTop: true,
       center: true,
-      transparent: true,
+      transparent: false,
       resizable: false,
       movable: false,
       fullscreenable: false,
       skipTaskbar: true,
+      backgroundColor: splashTheme === 'dark' ? '#0d1014' : '#f2f6f8',
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -1077,17 +1170,38 @@ class App implements IAppMain {
   }
 
   private getSplashDataURL(): string {
+    const splashTheme = this.resolveSplashThemeVariant();
+    const isDark = splashTheme === 'dark';
+    const splashLogoPath = this.getAssetPath('icons', 'icon-squircle-no-background.png');
+    const splashLogoBase64 = fs.existsSync(splashLogoPath)
+      ? fs.readFileSync(splashLogoPath).toString('base64')
+      : '';
+    const splashLogoUrl = splashLogoBase64 ? `data:image/png;base64,${splashLogoBase64}` : '';
+    const wrapBackground = isDark
+      ? 'radial-gradient(circle at top, #22303c 0%, #141b22 55%, #0d1014 100%)'
+      : 'radial-gradient(circle at top, #ffffff 0%, #edf3f6 58%, #e6eef2 100%)';
+    const auroraColor = isDark ? '#f7fbff' : '#0f1720';
+    const pulseColor = isDark ? '#10b85a' : '#0a9a49';
+    const logoOpacity = isDark ? '0.14' : '0.12';
+    const titleShadow = isDark ? '0 8px 26px rgba(0, 0, 0, 0.42)' : '0 8px 22px rgba(22, 45, 66, 0.14)';
+    const borderColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(32,58,78,0.14)';
+    const lineColor = isDark
+      ? 'linear-gradient(90deg, rgba(20, 184, 116, 0), rgba(20, 184, 116, 0.9), rgba(20, 184, 116, 0))'
+      : 'linear-gradient(90deg, rgba(16, 185, 129, 0), rgba(10, 154, 73, 0.85), rgba(16, 185, 129, 0))';
     const splashHtml = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Meow+Script&display=swap" rel="stylesheet">
   <style>
     html, body {
       margin: 0;
       width: 100%;
       height: 100%;
-      background: transparent;
+      background: ${isDark ? '#0d1014' : '#f2f6f8'};
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -1097,41 +1211,76 @@ class App implements IAppMain {
       display: flex;
       align-items: center;
       justify-content: center;
-      background: radial-gradient(circle at top, #282828 0%, #151515 56%, #0e0e0e 100%);
-      color: #f5f5f5;
-      border-radius: 16px;
+      background: ${wrapBackground};
+      color: ${auroraColor};
+      border: 1px solid ${borderColor};
+      box-sizing: border-box;
     }
     .inner {
+      position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 14px;
+      gap: 6px;
       letter-spacing: 0.03em;
+      text-shadow: ${titleShadow};
+    }
+    .logo-bg {
+      position: absolute;
+      top: -56px;
+      width: 170px;
+      height: 170px;
+      background-image: url("${splashLogoUrl}");
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+      opacity: ${logoOpacity};
+      pointer-events: none;
     }
     .title {
-      font-size: 30px;
+      position: relative;
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 8px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .title-aurora {
+      font-size: 44px;
       font-weight: 700;
-      color: #fff;
+      color: ${auroraColor};
+      letter-spacing: -0.035em;
+    }
+    .title-pulse {
+      font-size: 62px;
+      font-family: "Meow Script", cursive;
+      color: ${pulseColor};
+      transform: translateY(2px);
     }
     .pulse {
-      width: 56px;
-      height: 4px;
+      width: 104px;
+      height: 3px;
       border-radius: 8px;
-      background: linear-gradient(90deg, #7f5af0, #2cb67d, #7f5af0);
-      background-size: 200% 100%;
-      animation: pulse 1.5s linear infinite;
+      background: ${lineColor};
+      opacity: 0.9;
+      animation: pulse 1.65s ease-in-out infinite;
     }
     @keyframes pulse {
-      0% { background-position: 0% 50%; opacity: 0.5; }
+      0% { transform: scaleX(0.72); opacity: 0.45; }
       50% { opacity: 1; }
-      100% { background-position: 100% 50%; opacity: 0.5; }
+      100% { transform: scaleX(1.06); opacity: 0.45; }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="inner">
-      <div class="title">${APP_DISPLAY_NAME}</div>
+      <div class="logo-bg"></div>
+      <div class="title">
+        <span class="title-aurora">Aurora</span>
+        <span class="title-pulse">Pulse</span>
+      </div>
       <div class="pulse"></div>
     </div>
   </div>
@@ -1314,6 +1463,11 @@ class App implements IAppMain {
     IPCMain.addAsyncMessageHandler(IPCCommChannel.AppCheckForUpdates, () => this.checkForUpdates());
     IPCMain.addAsyncMessageHandler(IPCCommChannel.AppDownloadUpdate, () => this.downloadAvailableUpdate());
     IPCMain.addAsyncMessageHandler(IPCCommChannel.AppInstallUpdate, () => this.installDownloadedUpdate());
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.AppSetThemeMode, (mode: AppThemeMode) => {
+      const savedMode = this.saveThemeSettings(mode);
+      this.applyMainWindowTheme();
+      return Promise.resolve(savedMode);
+    });
   }
 
   private registerMediaHardwareShortcuts() {

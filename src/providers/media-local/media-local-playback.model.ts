@@ -37,6 +37,11 @@ export class MediaLocalPlayback implements IMediaPlayback {
   private remotePlaybackStartedAt = 0;
   private remotePlaybackPausedProgress = 0;
   private remotePlaybackLastSnapshotSeconds = 0;
+  private remotePlaybackLastTransportState = '';
+  private remotePlaybackLastSnapshotAt = 0;
+  private remotePlaybackLastPlayingStateAt = 0;
+  private remotePlaybackTransitionSince = 0;
+  private remotePlaybackStoppedSnapshots = 0;
   private remotePlaybackStatePollInterval?: ReturnType<typeof setInterval>;
   private preparationStatusListener?: (status?: IMediaPlaybackPreparationStatus) => void;
   private nativeBitPerfectDsdSession = false;
@@ -94,9 +99,15 @@ export class MediaLocalPlayback implements IMediaPlayback {
         return false;
       }
       this.remotePlaybackSession = true;
-      this.remotePlaybackActive = true;
-      this.remotePlaybackStartedAt = Date.now();
+      this.remotePlaybackActive = false;
+      this.remotePlaybackStartedAt = 0;
       this.remotePlaybackLastSnapshotSeconds = this.remotePlaybackPausedProgress;
+      this.remotePlaybackLastTransportState = 'TRANSITIONING';
+      this.remotePlaybackLastSnapshotAt = Date.now();
+      this.remotePlaybackLastPlayingStateAt = 0;
+      this.remotePlaybackTransitionSince = 0;
+      this.remotePlaybackStoppedSnapshots = 0;
+      this.remotePlaybackStoppedSnapshots = 0;
       this.mediaPlaybackEnded = false;
       this.startRemotePlaybackStatePolling();
       return true;
@@ -205,6 +216,11 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
   checkIfLoading(): boolean {
     if (this.remotePlaybackSession) {
+      const snapshotAgeMs = Date.now() - this.remotePlaybackLastSnapshotAt;
+      return this.remotePlaybackLastTransportState === 'TRANSITIONING'
+        && snapshotAgeMs <= 6000;
+    }
+    if (this.nativeBitPerfectDsdSession) {
       return false;
     }
     if (!this.mediaPlaybackLocalAudio) {
@@ -216,13 +232,23 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
   checkIfPlaying(): boolean {
     if (this.remotePlaybackSession) {
-      if (!this.remotePlaybackActive) {
-        return false;
+      if (this.remotePlaybackLastTransportState === 'PLAYING') {
+        this.remotePlaybackActive = true;
       }
-      const trackDuration = Number(this.mediaTrack.track_duration || 0);
-      if (trackDuration > 0 && this.getPlaybackProgress() >= trackDuration) {
-        this.remotePlaybackActive = false;
-        this.mediaPlaybackEnded = true;
+      if (this.remotePlaybackLastTransportState === 'TRANSITIONING') {
+        const transitionAgeMs = this.remotePlaybackTransitionSince > 0
+          ? Date.now() - this.remotePlaybackTransitionSince
+          : Number.POSITIVE_INFINITY;
+        const playingStateAgeMs = this.remotePlaybackLastPlayingStateAt > 0
+          ? Date.now() - this.remotePlaybackLastPlayingStateAt
+          : Number.POSITIVE_INFINITY;
+        if (playingStateAgeMs <= 2200 && transitionAgeMs <= 5500) {
+          this.remotePlaybackActive = true;
+        } else {
+          this.remotePlaybackActive = false;
+        }
+      }
+      if (!this.remotePlaybackActive) {
         return false;
       }
       return true;
@@ -264,6 +290,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
 
   getPlaybackProgress(): number {
     if (this.remotePlaybackSession) {
+      if (this.remotePlaybackLastTransportState === 'PLAYING') {
+        this.remotePlaybackActive = true;
+      }
       if (!this.remotePlaybackActive) {
         return this.remotePlaybackPausedProgress;
       }
@@ -349,6 +378,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.remotePlaybackPausedProgress = this.getPlaybackProgress();
         this.remotePlaybackLastSnapshotSeconds = this.remotePlaybackPausedProgress;
         this.remotePlaybackActive = false;
+        this.remotePlaybackLastTransportState = 'PAUSED_PLAYBACK';
+        this.remotePlaybackLastSnapshotAt = Date.now();
+        this.remotePlaybackStoppedSnapshots = 0;
         this.stopRemotePlaybackStatePolling();
         return true;
       });
@@ -386,6 +418,10 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.remotePlaybackActive = true;
         this.remotePlaybackStartedAt = Date.now();
         this.remotePlaybackLastSnapshotSeconds = this.remotePlaybackPausedProgress;
+        this.remotePlaybackLastTransportState = 'PLAYING';
+        this.remotePlaybackLastSnapshotAt = Date.now();
+        this.remotePlaybackLastPlayingStateAt = Date.now();
+        this.remotePlaybackStoppedSnapshots = 0;
         this.startRemotePlaybackStatePolling();
         return true;
       });
@@ -403,6 +439,10 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.remotePlaybackLastSnapshotSeconds = 0;
         this.remotePlaybackActive = false;
         this.remotePlaybackSession = false;
+        this.remotePlaybackLastTransportState = 'STOPPED';
+        this.remotePlaybackLastSnapshotAt = Date.now();
+        this.remotePlaybackLastPlayingStateAt = 0;
+        this.remotePlaybackStoppedSnapshots = 0;
         this.mediaPlaybackEnded = false;
         this.stopRemotePlaybackStatePolling();
         return true;
@@ -673,33 +713,80 @@ export class MediaLocalPlayback implements IMediaPlayback {
     if (!snapshot) {
       return;
     }
+    this.remotePlaybackLastSnapshotAt = Date.now();
+    this.remotePlaybackLastTransportState = String(snapshot.transportState || '').toUpperCase();
     if (Number.isFinite(snapshot.positionSeconds)) {
       const snapshotSeconds = Math.max(0, Number(snapshot.positionSeconds || 0));
       const hasForwardProgress = snapshotSeconds > (this.remotePlaybackLastSnapshotSeconds + 0.35);
-      if (!this.remotePlaybackActive || hasForwardProgress) {
+      const hasBackwardJump = snapshotSeconds < Math.max(0, this.remotePlaybackPausedProgress - 1.5);
+      if (!this.remotePlaybackActive || hasForwardProgress || hasBackwardJump) {
         this.remotePlaybackPausedProgress = snapshotSeconds;
         this.remotePlaybackLastSnapshotSeconds = snapshotSeconds;
         this.remotePlaybackStartedAt = Date.now();
+        if (hasBackwardJump) {
+          this.remotePlaybackStoppedSnapshots = 0;
+          this.mediaPlaybackEnded = false;
+          this.remotePlaybackTransitionSince = Date.now();
+        }
+      }
+      if (hasForwardProgress || hasBackwardJump) {
+        this.remotePlaybackActive = true;
+        this.remotePlaybackLastPlayingStateAt = Date.now();
+        this.remotePlaybackTransitionSince = 0;
+        this.mediaPlaybackEnded = false;
       }
     }
-    const transportState = String(snapshot.transportState || '').toUpperCase();
+    const transportState = this.remotePlaybackLastTransportState;
     const trackDuration = Number(this.mediaTrack.track_duration || 0);
     if (transportState === 'PLAYING') {
+      this.remotePlaybackStoppedSnapshots = 0;
+      if (!this.remotePlaybackActive) {
+        this.remotePlaybackStartedAt = Date.now();
+      }
       this.remotePlaybackActive = true;
+      this.remotePlaybackLastPlayingStateAt = Date.now();
+      this.remotePlaybackTransitionSince = 0;
       this.mediaPlaybackEnded = false;
       return;
     }
-    const reachedTrackEnd = trackDuration > 0
-      && this.remotePlaybackPausedProgress >= Math.max(0, trackDuration - 1);
-    if (transportState === 'STOPPED'
-      || transportState === 'NO_MEDIA_PRESENT'
-      || reachedTrackEnd) {
-      this.remotePlaybackActive = false;
-      this.mediaPlaybackEnded = true;
-      this.stopRemotePlaybackStatePolling();
+    if (transportState === 'TRANSITIONING') {
+      this.remotePlaybackStoppedSnapshots = 0;
+      if (this.remotePlaybackTransitionSince <= 0) {
+        this.remotePlaybackTransitionSince = Date.now();
+      }
+      const playingStateAgeMs = this.remotePlaybackLastPlayingStateAt > 0
+        ? Date.now() - this.remotePlaybackLastPlayingStateAt
+        : Number.POSITIVE_INFINITY;
+      if (playingStateAgeMs > 2200) {
+        this.remotePlaybackActive = false;
+      }
+      this.mediaPlaybackEnded = false;
+      return;
+    }
+    if (transportState === 'STOPPED' || transportState === 'NO_MEDIA_PRESENT') {
+      this.remotePlaybackTransitionSince = 0;
+      const reachedTrackEnd = trackDuration > 0
+        && this.remotePlaybackPausedProgress >= Math.max(0, trackDuration - 1);
+      if (reachedTrackEnd) {
+        this.remotePlaybackActive = false;
+        this.mediaPlaybackEnded = true;
+        this.stopRemotePlaybackStatePolling();
+        return;
+      }
+      this.remotePlaybackStoppedSnapshots += 1;
+      const playingStateAgeMs = this.remotePlaybackLastPlayingStateAt > 0
+        ? Date.now() - this.remotePlaybackLastPlayingStateAt
+        : Number.POSITIVE_INFINITY;
+      if (this.remotePlaybackStoppedSnapshots >= 3 && playingStateAgeMs >= 3500) {
+        this.remotePlaybackActive = false;
+        this.mediaPlaybackEnded = true;
+        this.stopRemotePlaybackStatePolling();
+      }
       return;
     }
     if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
+      this.remotePlaybackStoppedSnapshots = 0;
+      this.remotePlaybackTransitionSince = 0;
       this.remotePlaybackActive = false;
     }
   }

@@ -28,11 +28,17 @@ class MediaPlayerService {
   private mediaProgressReportRetryCount = 15;
   private mediaProgressReportRetryDelayMS = 150;
   private mediaProgressReportCurrentRetryCount = 0;
+  private remoteVolumeSyncIntervalMs = 1000;
+  private lastRemoteVolumeSyncAt = 0;
+  private remoteVolumeSyncInFlight = false;
   private gaplessPreloadLeadSeconds = 8;
   private preloadedPlaybackByQueueEntryId: Map<string, IMediaPlayback> = new Map();
   private preloadedQueueEntryId?: string;
   private dlnaLastState?: DlnaState;
   private outputSwitchInProgress = false;
+  private dlnaNextTrackSyncIntervalMs = 4000;
+  private lastDlnaNextTrackSyncAt = 0;
+  private lastDlnaNextTrackQueueEntryId?: string;
 
   constructor() {
     DlnaService.initialize();
@@ -69,7 +75,9 @@ class MediaPlayerService {
 
       // pause media player
       debug('playMediaTrack - pausing - media track id - %s', mediaPlaybackCurrentMediaTrack.id);
-      this.pauseMediaPlayer();
+      if (!DlnaService.isRemoteOutputRequested()) {
+        this.pauseMediaPlayer();
+      }
     }
 
     // add track to the queue
@@ -110,7 +118,9 @@ class MediaPlayerService {
 
       // pause media player
       debug('playMediaTrack - pausing - media track id - %s', mediaPlaybackCurrentMediaTrack.id);
-      this.pauseMediaPlayer();
+      if (!DlnaService.isRemoteOutputRequested()) {
+        this.pauseMediaPlayer();
+      }
     }
 
     // add tracks to the queue
@@ -157,7 +167,9 @@ class MediaPlayerService {
 
       // pause media player
       debug('playMediaTrack - pausing - media track id - %s', mediaPlaybackCurrentMediaTrack.id);
-      this.pauseMediaPlayer();
+      if (!DlnaService.isRemoteOutputRequested()) {
+        this.pauseMediaPlayer();
+      }
     }
 
     // add tracks to the queue
@@ -192,7 +204,9 @@ class MediaPlayerService {
     }
 
     // pause current playing instance
-    this.pauseMediaPlayer();
+    if (!DlnaService.isRemoteOutputRequested()) {
+      this.pauseMediaPlayer();
+    }
 
     // load up and play found track from queue
     this.loadAndPlayMediaTrack(mediaQueueTrack);
@@ -455,6 +469,14 @@ class MediaPlayerService {
           const snapshot = await DlnaService.getSelectedRendererSnapshot().catch(() => undefined);
           const transportState = String(snapshot?.transportState || '').toUpperCase();
           paused = transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED';
+          if (!paused && transportState === 'STOPPED') {
+            paused = true;
+          }
+          if (!paused && transportState === 'TRANSITIONING') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.LoadingTrack,
+            });
+          }
         }
         if (!paused) {
           return;
@@ -554,6 +576,9 @@ class MediaPlayerService {
       }
 
       await DlnaService.setOutputDevice(outputDeviceId);
+      if (outputDeviceId !== 'local') {
+        await this.syncPlaybackVolumeFromSelectedRenderer();
+      }
 
       if (!mediaPlaybackCurrentMediaTrack) {
         return;
@@ -575,6 +600,7 @@ class MediaPlayerService {
           },
         });
         this.reportMediaPlaybackProgress();
+        this.syncSelectedRendererNextTrack({ force: true });
       } else if (preserveProgress > 0) {
         await mediaPlayback.seekPlayback(preserveProgress).catch(() => false);
       }
@@ -777,6 +803,18 @@ class MediaPlayerService {
     // - or, action was not forced and the track has progressed for more than 15 seconds
     // otherwise, we will be playing the previous track in queue
 
+    if (DlnaService.isRemoteOutputRequested()) {
+      if (!this.hasPreviousTrack() || (!force
+        && mediaPlaybackCurrentMediaTrack
+        && mediaPlaybackCurrentMediaProgress
+        && mediaPlaybackCurrentMediaProgress > 15)) {
+        this.seekMediaTrack(0);
+      } else {
+        this.playPrevious();
+      }
+      return;
+    }
+
     if (!this.hasPreviousTrack() || (!force
       && mediaPlaybackCurrentMediaTrack
       && mediaPlaybackCurrentMediaProgress
@@ -789,7 +827,9 @@ class MediaPlayerService {
   }
 
   playNextTrack(): void {
-    this.pauseMediaPlayer();
+    if (!DlnaService.isRemoteOutputRequested()) {
+      this.pauseMediaPlayer();
+    }
     this.removeTrackRepeat();
     this.playNext();
   }
@@ -935,6 +975,13 @@ class MediaPlayerService {
       return false;
     }
 
+    if (DlnaService.isRemoteOutputRequested()) {
+      await this.syncPlaybackVolumeFromSelectedRenderer({
+        force: true,
+        fetchSnapshot: true,
+      });
+    }
+
     const mediaPlayback = this.loadMediaTrack(mediaTrackToLoad);
 
     // request media provider to play the track
@@ -943,13 +990,9 @@ class MediaPlayerService {
     const mediaPlayed = await mediaPlayback.play();
     if (!mediaPlayed) {
       if (DlnaService.isRemoteOutputRequested()) {
-        await DlnaService.setOutputDevice('local').catch((error) => {
-          debug('loadAndPlayMediaTrack - failed to fallback output to local - %o', error);
-        });
-        const fallbackPlayback = this.loadMediaTrack(mediaTrackToLoad);
-        const fallbackPlayed = await fallbackPlayback.play();
-        if (fallbackPlayed) {
-          NotificationService.showMessage(I18nService.getString('label_player_output_device_none'));
+        const snapshot = await DlnaService.getSelectedRendererSnapshot().catch(() => undefined);
+        const transportState = String(snapshot?.transportState || '').toUpperCase();
+        if (transportState === 'PLAYING' || transportState === 'TRANSITIONING') {
           store.dispatch({
             type: MediaEnums.MediaPlayerActions.Play,
             data: {
@@ -959,6 +1002,7 @@ class MediaPlayerService {
           this.reportMediaPlaybackProgress();
           return true;
         }
+        NotificationService.showMessage(I18nService.getString('label_player_output_device_none'));
       }
       this.setPlaybackPreparationStatus(undefined);
       return false;
@@ -972,6 +1016,7 @@ class MediaPlayerService {
     });
 
     this.reportMediaPlaybackProgress();
+    this.syncSelectedRendererNextTrack({ force: true });
     return true;
   }
 
@@ -1140,10 +1185,19 @@ class MediaPlayerService {
     }
 
     const mediaPlaybackProgress = this.getCurrentPlaybackProgress();
-    this.updateMediaPlaybackProgress(mediaPlaybackProgress);
+    if (DlnaService.isRemoteOutputRequested()) {
+      this.syncPlaybackVolumeFromSelectedRenderer({
+        fetchSnapshot: false,
+      }).catch(() => undefined);
+    }
 
     if (mediaPlaybackCurrentPlayingInstance.checkIfPlaying()) {
+      this.updateMediaPlaybackProgress(mediaPlaybackProgress);
       this.preloadNextTrackForGapless(mediaPlaybackCurrentMediaTrack, mediaPlaybackProgress);
+      this.syncSelectedRendererNextTrack({
+        currentTrack: mediaPlaybackCurrentMediaTrack,
+        currentProgress: mediaPlaybackProgress,
+      });
       this.startMediaProgressReporting();
     } else if (mediaPlaybackCurrentPlayingInstance.checkIfLoading()) {
       debug('reportMediaPlaybackProgress - media playback loading, waiting...');
@@ -1163,11 +1217,32 @@ class MediaPlayerService {
         mediaPlaybackCurrentMediaTrack,
         mediaTrackNextInQueue,
       );
-      if (!shouldUseGaplessTransition) {
+      if (!shouldUseGaplessTransition && !DlnaService.isRemoteOutputRequested()) {
         this.pauseMediaPlayer();
       }
       this.playNext();
     } else if (!this.retryMediaProgressReporting()) {
+      if (DlnaService.isRemoteOutputRequested()) {
+        DlnaService.getSelectedRendererSnapshot()
+          .then((snapshot) => {
+            const transportState = String(snapshot?.transportState || '').toUpperCase();
+            if (transportState === 'PAUSED_PLAYBACK'
+              || transportState === 'PAUSED'
+              || transportState === 'STOPPED'
+              || transportState === 'NO_MEDIA_PRESENT') {
+              store.dispatch({
+                type: MediaEnums.MediaPlayerActions.PausePlayer,
+              });
+            } else if (transportState === 'TRANSITIONING') {
+              store.dispatch({
+                type: MediaEnums.MediaPlayerActions.LoadingTrack,
+              });
+            }
+          })
+          .catch(() => undefined);
+        this.startMediaProgressReporting();
+        return;
+      }
       debug('reportMediaPlaybackProgress - media instance did not reported valid state, aborting...');
       this.pauseMediaPlayer();
     }
@@ -1400,6 +1475,105 @@ class MediaPlayerService {
     } catch (_error) {
       return 0;
     }
+  }
+
+  private async syncPlaybackVolumeFromSelectedRenderer(
+    options?: {
+      force?: boolean;
+      fetchSnapshot?: boolean;
+    },
+  ) {
+    if (this.remoteVolumeSyncInFlight) {
+      return;
+    }
+    const shouldForce = options?.force === true;
+    const now = Date.now();
+    if (!shouldForce && (now - this.lastRemoteVolumeSyncAt) < this.remoteVolumeSyncIntervalMs) {
+      return;
+    }
+    this.remoteVolumeSyncInFlight = true;
+    this.lastRemoteVolumeSyncAt = now;
+    try {
+      let volumePercent: number | undefined;
+      let muted: boolean | undefined;
+      const cachedOutputState = DlnaService.getSelectedRendererOutputState();
+      if (Number.isFinite(cachedOutputState?.volumePercent)) {
+        volumePercent = Number(cachedOutputState?.volumePercent);
+      }
+      if (typeof cachedOutputState?.muted === 'boolean') {
+        muted = cachedOutputState.muted;
+      }
+      if (options?.fetchSnapshot !== false && (!Number.isFinite(volumePercent) || typeof muted !== 'boolean')) {
+        const snapshot = await DlnaService.getSelectedRendererSnapshot().catch(() => undefined);
+        if (!snapshot) {
+          return;
+        }
+        if (Number.isFinite(snapshot.volumePercent)) {
+          volumePercent = Number(snapshot.volumePercent);
+        }
+        if (typeof snapshot.muted === 'boolean') {
+          muted = snapshot.muted;
+        }
+      }
+      const { mediaPlayer } = store.getState();
+      const {
+        mediaPlaybackVolumeCurrent,
+        mediaPlaybackVolumeMuted,
+      } = mediaPlayer;
+      const maxVolume = Math.max(1, Number(mediaPlayer.mediaPlaybackVolumeMaxLimit || 100));
+      if (Number.isFinite(volumePercent)) {
+        const nextVolume = Math.round((Number(volumePercent || 0) / 100) * maxVolume);
+        const clampedVolume = Math.max(0, Math.min(maxVolume, nextVolume));
+        if (clampedVolume !== mediaPlaybackVolumeCurrent) {
+          store.dispatch({
+            type: MediaEnums.MediaPlayerActions.UpdatePlaybackVolume,
+            data: {
+              mediaPlaybackVolume: clampedVolume,
+            },
+          });
+        }
+      }
+      if (muted === true && !mediaPlaybackVolumeMuted) {
+        store.dispatch({
+          type: MediaEnums.MediaPlayerActions.MutePlaybackVolume,
+        });
+      } else if (muted === false && mediaPlaybackVolumeMuted) {
+        store.dispatch({
+          type: MediaEnums.MediaPlayerActions.UnmutePlaybackVolume,
+        });
+      }
+    } finally {
+      this.remoteVolumeSyncInFlight = false;
+    }
+  }
+
+  private syncSelectedRendererNextTrack(options?: {
+    force?: boolean;
+    currentTrack?: IMediaQueueTrack;
+    currentProgress?: number;
+  }) {
+    if (!DlnaService.isRemoteOutputRequested()) {
+      return;
+    }
+    const now = Date.now();
+    const forceSync = !!options?.force;
+    if (!forceSync && (now - this.lastDlnaNextTrackSyncAt) < this.dlnaNextTrackSyncIntervalMs) {
+      return;
+    }
+    const currentTrack = options?.currentTrack;
+    const currentProgress = Number(options?.currentProgress || 0);
+    const nearTrackEnd = !!currentTrack
+      && Number.isFinite(Number(currentTrack.track_duration))
+      && (Number(currentTrack.track_duration || 0) - currentProgress) <= 12;
+    const nextTrack = this.getNextFromList();
+    if (!forceSync && !nearTrackEnd && this.lastDlnaNextTrackQueueEntryId === nextTrack?.queue_entry_id) {
+      return;
+    }
+    this.lastDlnaNextTrackSyncAt = now;
+    this.lastDlnaNextTrackQueueEntryId = nextTrack?.queue_entry_id;
+    DlnaService.setNextMediaTrackOnSelectedRenderer(nextTrack).catch((error) => {
+      debug('syncSelectedRendererNextTrack - failed to set next track on renderer - %o', error);
+    });
   }
 
   private createMediaPlayback(mediaQueueTrack: IMediaQueueTrack, bindPreparationStatus: boolean): IMediaPlayback {

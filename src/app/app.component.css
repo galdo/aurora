@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Meow+Script&display=swap');
+
 .app {
   height: 100%;
   width: 100%;
@@ -9,47 +11,161 @@
 }
 
 .app-splash {
-  width: 100%;
-  height: 100%;
-  background: radial-gradient(circle at top, #282828 0%, #151515 56%, #0e0e0e 100%);
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: radial-gradient(circle at top, #22303c 0%, #141b22 55%, #0d1014 100%);
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  z-index: 10;
+}
+
+:global(html[data-theme='light']) .app-splash {
+  background: radial-gradient(circle at top, #ffffff 0%, #edf3f6 58%, #e6eef2 100%);
+}
+
+:global(html[data-theme='auto']) .app-splash {
+  background: radial-gradient(circle at top, #22303c 0%, #141b22 55%, #0d1014 100%);
+}
+
+@media (prefers-color-scheme: light) {
+  :global(html[data-theme='auto']) .app-splash {
+    background: radial-gradient(circle at top, #ffffff 0%, #edf3f6 58%, #e6eef2 100%);
+  }
 }
 
 .app-splash-content {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  justify-content: center;
+  gap: 6px;
+  min-width: min(80vw, 560px);
+  min-height: min(40vh, 260px);
+}
+
+.app-splash-logo {
+  width: 186px;
+  height: 186px;
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  opacity: 0.14;
+  margin-bottom: -96px;
+  pointer-events: none;
+}
+
+:global(html[data-theme='light']) .app-splash-logo {
+  opacity: 0.12;
+}
+
+:global(html[data-theme='auto']) .app-splash-logo {
+  opacity: 0.14;
+}
+
+@media (prefers-color-scheme: light) {
+  :global(html[data-theme='auto']) .app-splash-logo {
+    opacity: 0.12;
+  }
 }
 
 .app-splash-title {
-  font-size: 36px;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  white-space: nowrap;
+  text-shadow: 0 8px 26px rgba(0, 0, 0, 0.42);
+}
+
+.app-splash-title-aurora {
+  font-size: 46px;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #fff;
+  letter-spacing: -0.035em;
+  color: #f7fbff;
+}
+
+.app-splash-title-pulse {
+  font-size: 66px;
+  font-family: 'Meow Script', cursive;
+  line-height: 1;
+  color: #10b85a;
+  transform: translateY(2px);
+}
+
+:global(html[data-theme='light']) .app-splash-title {
+  text-shadow: 0 8px 22px rgba(22, 45, 66, 0.14);
+}
+
+:global(html[data-theme='light']) .app-splash-title-aurora {
+  color: #0f1720;
+}
+
+:global(html[data-theme='light']) .app-splash-title-pulse {
+  color: #0a9a49;
+}
+
+:global(html[data-theme='auto']) .app-splash-title-aurora {
+  color: #f7fbff;
+}
+
+:global(html[data-theme='auto']) .app-splash-title-pulse {
+  color: #10b85a;
+}
+
+@media (prefers-color-scheme: light) {
+  :global(html[data-theme='auto']) .app-splash-title {
+    text-shadow: 0 8px 22px rgba(22, 45, 66, 0.14);
+  }
+
+  :global(html[data-theme='auto']) .app-splash-title-aurora {
+    color: #0f1720;
+  }
+
+  :global(html[data-theme='auto']) .app-splash-title-pulse {
+    color: #0a9a49;
+  }
 }
 
 .app-splash-loader {
-  width: 84px;
-  height: 4px;
+  width: 104px;
+  height: 3px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #7f5af0, #2cb67d, #7f5af0);
-  background-size: 200% 100%;
-  animation: app-splash-pulse 1.35s linear infinite;
+  background: linear-gradient(90deg, rgba(20, 184, 116, 0), rgba(20, 184, 116, 0.9), rgba(20, 184, 116, 0));
+  animation: app-splash-pulse 1.65s ease-in-out infinite;
+  z-index: 1;
+}
+
+:global(html[data-theme='light']) .app-splash-loader {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0), rgba(10, 154, 73, 0.85), rgba(16, 185, 129, 0));
+}
+
+:global(html[data-theme='auto']) .app-splash-loader {
+  background: linear-gradient(90deg, rgba(20, 184, 116, 0), rgba(20, 184, 116, 0.9), rgba(20, 184, 116, 0));
+}
+
+@media (prefers-color-scheme: light) {
+  :global(html[data-theme='auto']) .app-splash-loader {
+    background: linear-gradient(90deg, rgba(16, 185, 129, 0), rgba(10, 154, 73, 0.85), rgba(16, 185, 129, 0));
+  }
 }
 
 @keyframes app-splash-pulse {
   0% {
-    background-position: 0 50%;
+    transform: scaleX(0.72);
     opacity: 0.45;
   }
   50% {
     opacity: 1;
   }
   100% {
-    background-position: 100% 50%;
+    transform: scaleX(1.06);
     opacity: 0.45;
   }
 }

@@ -14,6 +14,7 @@ import {
   I18nService,
   MediaLibraryService,
   MediaProviderService,
+  MediaPlayerService,
   PodcastService,
   EqualizerService,
   DlnaService,
@@ -35,6 +36,9 @@ import { GlobalMediaSideView } from '../components/media-sideview/media-sideview
 import { openAlbumSideView } from '../components/media-sideview/media-sideview.store';
 
 const cx = classNames.bind(styles);
+const splashLogoModule = require('../../assets/icons/icon-squircle-no-background.png');
+
+const splashLogo = splashLogoModule.default || splashLogoModule;
 
 // app > splash
 
@@ -42,8 +46,10 @@ function Splash() {
   return (
     <div className={cx('app-splash')}>
       <div className={cx('app-splash-content')}>
+        <div className={cx('app-splash-logo')} style={{ backgroundImage: `url(${splashLogo})` }}/>
         <div className={cx('app-splash-title')}>
-          Aurora Pulse
+          <span className={cx('app-splash-title-aurora')}>Aurora</span>
+          <span className={cx('app-splash-title-pulse')}>Pulse</span>
         </div>
         <div className={cx('app-splash-loader')}/>
       </div>
@@ -84,15 +90,19 @@ function Stage() {
   }, []);
 
   useEffect(() => {
-    const stopBitPerfectPlayback = () => {
+    const stopPlaybackOnQuit = () => {
       BitPerfectService.stopPlayback();
+      MediaPlayerService.stopMediaPlayer();
+      DlnaService.stopSelectedRenderer().catch(() => undefined);
     };
-    const quitListener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.UIAppBeforeQuit, stopBitPerfectPlayback);
-    window.addEventListener('beforeunload', stopBitPerfectPlayback);
+    const quitListener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.UIAppBeforeQuit, stopPlaybackOnQuit);
+    window.addEventListener('beforeunload', stopPlaybackOnQuit);
+    window.addEventListener('unload', stopPlaybackOnQuit);
 
     return () => {
       IPCRenderer.removeMessageHandler(IPCRendererCommChannel.UIAppBeforeQuit, quitListener);
-      window.removeEventListener('beforeunload', stopBitPerfectPlayback);
+      window.removeEventListener('beforeunload', stopPlaybackOnQuit);
+      window.removeEventListener('unload', stopPlaybackOnQuit);
     };
   }, []);
 

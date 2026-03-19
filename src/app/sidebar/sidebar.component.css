@@ -31,34 +31,43 @@
 
 .sidebar-branding {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  padding: 10px 20px;
+  justify-content: center;
+  padding: 10px 20px 6px;
   margin-bottom: 10px;
-  gap: 15px;
-}
-
-.sidebar-logo {
-  width: 40px;
-  height: 40px;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  border-radius: 8px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
 }
 
 .sidebar-app-name {
+  position: relative;
   display: flex;
   align-items: baseline;
+  justify-content: center;
   gap: 8px;
   color: var(--text-light-color);
   letter-spacing: -0.5px;
+  width: 100%;
+  text-align: center;
+}
+
+.sidebar-app-name-logo-bg {
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  width: 128px;
+  height: 128px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  transform: translateX(-50%);
+  opacity: 0.1;
+  z-index: 0;
+  pointer-events: none;
 }
 
 .sidebar-app-name-aurora {
   font-size: 20px;
   font-weight: 700;
+  position: relative;
+  z-index: 1;
 }
 
 .sidebar-app-name-pulse {
@@ -66,6 +75,8 @@
   font-family: 'Meow Script', cursive;
   line-height: 1;
   color: var(--button-primary-bg-color);
+  position: relative;
+  z-index: 1;
 }
 
 .sidebar-navigation-list {

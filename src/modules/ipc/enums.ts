@@ -7,6 +7,7 @@ export enum IPCCommChannel {
   AppReadUpdateSettings = 'app:read_update_settings',
   AppSaveUpdateSettings = 'app:save_update_settings',
   AppReadUpdateState = 'app:read_update_state',
+  AppSetThemeMode = 'app:set_theme_mode',
   AppCheckForUpdates = 'app:check_for_updates',
   AppDownloadUpdate = 'app:download_update',
   AppInstallUpdate = 'app:install_update',
