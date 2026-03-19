@@ -345,7 +345,14 @@ export class PodcastService {
   static async syncPodcastsToDap(input: {
     targetDirectory: string,
     deleteMissingOnDevice?: boolean,
+    signal?: AbortSignal,
   }): Promise<PodcastSyncResult> {
+    const { signal } = input;
+    const throwIfAborted = () => {
+      if (signal?.aborted) {
+        throw new Error('DAP_SYNC_ABORTED');
+      }
+    };
     let targetDirectory = String(input.targetDirectory || '').trim();
     if (!targetDirectory) {
       return {
@@ -373,12 +380,14 @@ export class PodcastService {
       await fs.promises.rm(legacySyncRootPath, { recursive: true, force: true }).catch(() => undefined);
     }
 
+    throwIfAborted();
     const subscriptions = await this.refreshSubscriptions();
     const syncRootPath = path.join(targetDirectory, this.podcastDirectoryName);
     await fs.promises.mkdir(syncRootPath, { recursive: true });
 
     const expectedFilePaths = new Set<string>();
     const syncResults = await Promise.all(subscriptions.map(async (subscription) => {
+      throwIfAborted();
       const podcastDirName = this.truncatePathPart(this.sanitizePathPart(subscription.title), 120);
       const podcastDirectory = path.join(syncRootPath, podcastDirName);
       await fs.promises.mkdir(podcastDirectory, { recursive: true });
@@ -388,6 +397,7 @@ export class PodcastService {
         .slice(0, this.podcastSyncEpisodeLimit);
 
       const episodeSyncResult = await Promise.all(episodeCandidates.map(async (episode, episodeIndex) => {
+        throwIfAborted();
         const extension = this.getFileExtensionFromUrl(episode.audioUrl);
         const fileName = this.truncatePathPart(`${String(episodeIndex + 1).padStart(2, '0')} - ${this.sanitizePathPart(episode.title)}${extension}`, 160);
         const destinationPath = path.join(podcastDirectory, fileName);
@@ -395,9 +405,12 @@ export class PodcastService {
 
         const exists = await fs.promises.stat(destinationPath).then(() => true).catch(() => false);
         if (!exists) {
-          const response = await fetch(episode.audioUrl);
+          const response = await fetch(episode.audioUrl, {
+            signal,
+          });
           if (response.ok) {
             const arrayBuffer = await response.arrayBuffer();
+            throwIfAborted();
             await fs.promises.writeFile(destinationPath, new Uint8Array(arrayBuffer));
             return {
               copiedFiles: 1,
@@ -429,6 +442,7 @@ export class PodcastService {
     let deletedFiles = deletedLegacyFiles;
 
     if (input.deleteMissingOnDevice !== false) {
+      throwIfAborted();
       const existingFiles = await this.getFilesRecursive(syncRootPath);
       const deleteResult = await Promise.all(existingFiles.map(async (existingFile) => {
         if (!expectedFilePaths.has(existingFile)) {

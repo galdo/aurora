@@ -2081,6 +2081,21 @@ ${actionBody}
 
   private static writeDlnaLog(level: 'info' | 'warn' | 'error', event: string, details?: Record<string, any>) {
     try {
+      if (level === 'info') {
+        const noisyInfoEvents = new Set([
+          'soap_request',
+          'soap_response',
+          'http_request_received',
+          'play_track_requested',
+          'pause_snapshot_check',
+          'resume_snapshot_check',
+          'stop_snapshot_check',
+          'stop_delayed_snapshot_check',
+        ]);
+        if (noisyInfoEvents.has(event)) {
+          return;
+        }
+      }
       const logPath = this.getDlnaLogPath();
       if (!logPath) {
         return;

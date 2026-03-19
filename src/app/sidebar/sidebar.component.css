@@ -37,17 +37,18 @@
   padding: 0 10px;
   margin-bottom: 2px;
   min-height: 160px;
-  gap: 6px;
+  gap: 4px;
+  transform: translateY(-28px);
 }
 
 .sidebar-app-logo {
-  width: 186px;
-  height: 186px;
+  width: 140px;
+  height: 140px;
   background-repeat: no-repeat;
   background-size: contain;
   background-position: center;
   opacity: 0.14;
-  margin-bottom: -96px;
+  margin-bottom: -84px;
   pointer-events: none;
 }
 
@@ -63,14 +64,28 @@
 }
 
 .sidebar-app-name-aurora {
-  font-size: 42px;
+  font-size: 36px;
   font-weight: 700;
   letter-spacing: -0.035em;
   color: #f7fbff;
 }
 
+:global(html[data-theme='light']) .sidebar-app-name-aurora {
+  color: #0f1720;
+}
+
+:global(html[data-theme='auto']) .sidebar-app-name-aurora {
+  color: #f7fbff;
+}
+
+@media (prefers-color-scheme: light) {
+  :global(html[data-theme='auto']) .sidebar-app-name-aurora {
+    color: #0f1720;
+  }
+}
+
 .sidebar-app-name-pulse {
-  font-size: 62px;
+  font-size: 53px;
   font-family: 'Meow Script', cursive;
   line-height: 1;
   color: #10b85a;
@@ -80,6 +95,7 @@
 .sidebar-branding-loader {
   width: 104px;
   height: 3px;
+  margin-top: -2px;
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(20, 184, 116, 0), rgba(20, 184, 116, 0.9), rgba(20, 184, 116, 0));
   animation: app-splash-pulse 1.65s ease-in-out infinite;

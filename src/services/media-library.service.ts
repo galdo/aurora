@@ -450,6 +450,28 @@ export class MediaLibraryService {
     }
   }
 
+  static abortAndResetDapLibrarySyncState() {
+    this.cancelDapLibrarySync();
+    this.clearDapSyncCheckpoint();
+    this.clearDapSyncState();
+    const settings = this.getDapSyncSettings();
+    const targetDirectory = String(settings.targetDirectory || '').trim();
+    this.updateDapSyncProgress({
+      phase: 'idle',
+      isRunning: false,
+      processedItems: 0,
+      totalItems: 0,
+      copiedFiles: 0,
+      deletedFiles: 0,
+      startedAt: 0,
+      targetDirectory,
+      syncRootPath: targetDirectory ? path.join(targetDirectory, this.dapSyncDirectoryName) : '',
+      canResume: false,
+      resumedFromProcessedItems: 0,
+      errorMessage: undefined,
+    });
+  }
+
   static async syncDapLibrary(options?: {
     targetDirectory?: string;
     deleteMissingOnDevice?: boolean;
@@ -809,6 +831,7 @@ export class MediaLibraryService {
       const podcastSyncResult = await PodcastService.syncPodcastsToDap({
         targetDirectory: dapTargetDirectory,
         deleteMissingOnDevice,
+        signal,
       });
       copiedFiles += podcastSyncResult.copiedFiles;
       deletedFiles += podcastSyncResult.deletedFiles;
@@ -851,7 +874,7 @@ export class MediaLibraryService {
       return result;
     })()
       .catch((error) => {
-        const abortedByUser = error?.message === this.dapSyncAbortErrorCode;
+        const abortedByUser = error?.message === this.dapSyncAbortErrorCode || error?.name === 'AbortError';
         const abortedByDeviceRemoval = error?.message === this.dapSyncDeviceRemovedErrorCode
           || this.isDapDeviceUnavailableError(error);
         if (abortedByUser || abortedByDeviceRemoval) {
@@ -1138,6 +1161,10 @@ export class MediaLibraryService {
 
   private static clearDapSyncCheckpoint() {
     localStorage.removeItem(this.dapSyncCheckpointStorageKey);
+  }
+
+  private static clearDapSyncState() {
+    localStorage.removeItem(this.dapSyncStateStorageKey);
   }
 
   private static loadDapSyncState(targetDirectory: string, syncRootPath: string): IDapSyncState | null {

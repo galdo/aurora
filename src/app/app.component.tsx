@@ -93,6 +93,7 @@ function Stage() {
       BitPerfectService.stopPlayback();
       MediaPlayerService.stopMediaPlayer();
       DlnaService.stopSelectedRenderer().catch(() => undefined);
+      MediaLibraryService.abortAndResetDapLibrarySyncState();
     };
     const quitListener = IPCRenderer.addMessageHandler(IPCRendererCommChannel.UIAppBeforeQuit, stopPlaybackOnQuit);
     window.addEventListener('beforeunload', stopPlaybackOnQuit);
@@ -132,23 +133,17 @@ function Stage() {
   useEffect(() => {
     const wasSyncing = mediaSyncStateRef.current;
     mediaSyncStateRef.current = mediaIsSyncing;
-    if (wasSyncing || mediaIsSyncing) {
-      if (!mediaIsSyncing && wasSyncing) {
-        MediaLibraryService.syncDapLibraryIfEnabled().catch(() => {});
-      }
-      return () => {};
-    }
-
-    const timeoutId = window.setTimeout(() => {
+    if (!mediaIsSyncing && wasSyncing) {
       MediaLibraryService.syncDapLibraryIfEnabled().catch(() => {});
-    }, 1800);
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
+    }
+    return () => {};
   }, [mediaIsSyncing]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      if (mediaSyncStateRef.current) {
+        return;
+      }
       const dapSyncSettings = MediaLibraryService.getDapSyncSettings();
       if (!dapSyncSettings.autoSyncEnabled || !dapSyncSettings.targetDirectory) {
         return;

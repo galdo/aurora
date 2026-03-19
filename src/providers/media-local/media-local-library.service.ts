@@ -47,6 +47,8 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   private readonly syncAddFileQueue = new PQueue({ concurrency: 10, autoStart: true, timeout: 5 * 60 * 1000 }); // timeout 5 minutes / track
   private readonly syncLock = new Semaphore(1);
   private syncAbortController: AbortController | null = null;
+  private syncMediaTracksPromise: Promise<void> | null = null;
+  private pendingSyncRequest: { forceRescan?: boolean, settings?: IMediaLocalSettings } | null = null;
   private syncPostProcessingPromise: Promise<void> | null = null;
   private syncFilesQueuedCount = 0;
   private syncFilesProcessedQueueCount = 0;
@@ -77,100 +79,126 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   }
 
   async syncMediaTracks(options?: { forceRescan?: boolean, settings?: IMediaLocalSettings }) {
-    const { forceRescan, settings: settingsOverride } = options || {};
-    // cancel currently running sync
-    if (this.syncAbortController) {
-      this.syncAbortController.abort();
+    if (this.syncMediaTracksPromise) {
+      if (options?.forceRescan || options?.settings) {
+        this.pendingSyncRequest = this.mergeSyncRequest(this.pendingSyncRequest, options);
+      }
+      return this.syncMediaTracksPromise;
     }
 
-    const abortController = new AbortController();
-    this.syncAbortController = abortController;
+    const runSyncMediaTracks = async (syncOptions?: { forceRescan?: boolean, settings?: IMediaLocalSettings }) => {
+      const { forceRescan, settings: settingsOverride } = syncOptions || {};
+      const abortController = new AbortController();
+      this.syncAbortController = abortController;
 
-    return this.syncLock.runExclusive(async () => {
-      // if we were replaced before acquiring lock, bail
-      if (this.syncAbortController !== abortController) {
-        return;
-      }
-
-      debug('syncMediaTracks - started sync');
-      const syncStart = performance.now();
-      const { signal } = abortController;
-
-      // finalize
-      const finalize = (() => {
-        const onAbort = () => this.syncAddFileQueue.clear();
-
-        signal.addEventListener('abort', onAbort);
-
-        return () => {
-          if (this.syncAbortController === abortController) {
-            this.syncAbortController = null;
-          }
-
-          signal.removeEventListener('abort', onAbort);
-        };
-      })();
-
-      try {
-        // start
-        this.syncFilesQueuedCount = 0;
-        this.syncFilesProcessedQueueCount = 0;
-        this.pendingAlbumSyncIds.clear();
-        this.pendingArtistSyncIds.clear();
-        mediaLocalStore.dispatch({ type: MediaLocalStateActionType.StartSync });
-        await MediaLibraryService.startMediaTrackSync(MediaLocalConstants.Provider);
-        const settings: IMediaLocalSettings = settingsOverride || await MediaProviderService.getMediaProviderSettings(MediaLocalConstants.Provider);
-        await Promise.map(settings.library.directories, directory => this.addTracksFromDirectory(directory, {
-          signal,
-          settings,
-          forceRescan,
-        }));
-        await this.waitForQueueInputToStabilize(signal);
-
-        debug('syncMediaTracks - waiting for queue to drain. Queued: %d, Processed: %d', this.syncFilesQueuedCount, this.syncFilesProcessedQueueCount);
-        await this.syncAddFileQueue.onIdle();
-        await this.waitForQueueProcessingCompletion(signal);
-
-        if (signal.aborted || this.syncAbortController !== abortController) {
-          debug('syncMediaTracks - operation aborted');
+      await this.syncLock.runExclusive(async () => {
+        if (this.syncAbortController !== abortController) {
           return;
         }
 
-        await this.flushPendingAlbumAndArtistSyncMarks(Date.now());
+        debug('syncMediaTracks - started sync');
+        const syncStart = performance.now();
+        const { signal } = abortController;
 
-        const syncDuration = performance.now() - syncStart;
-        await MediaLibraryService.finishMediaTrackSync(MediaLocalConstants.Provider);
+        const finalize = (() => {
+          const onAbort = () => this.syncAddFileQueue.clear();
 
-        mediaLocalStore.dispatch({
-          type: MediaLocalStateActionType.FinishSync,
-          data: {
-            syncDuration,
-          },
-        });
+          signal.addEventListener('abort', onAbort);
 
-        // notification
-        const { syncFilesFoundCount, syncFilesProcessedCount, syncFilesAddedCount } = mediaLocalStore.getState();
-        if (syncFilesAddedCount > 0) {
-          NotificationService.showMessage(I18nService.getString('message_sync_finished', {
-            tracksAddedCount: syncFilesAddedCount,
+          return () => {
+            if (this.syncAbortController === abortController) {
+              this.syncAbortController = null;
+            }
+
+            signal.removeEventListener('abort', onAbort);
+          };
+        })();
+
+        try {
+          this.syncFilesQueuedCount = 0;
+          this.syncFilesProcessedQueueCount = 0;
+          this.pendingAlbumSyncIds.clear();
+          this.pendingArtistSyncIds.clear();
+          mediaLocalStore.dispatch({ type: MediaLocalStateActionType.StartSync });
+          await MediaLibraryService.startMediaTrackSync(MediaLocalConstants.Provider);
+          const settings: IMediaLocalSettings = settingsOverride || await MediaProviderService.getMediaProviderSettings(MediaLocalConstants.Provider);
+          await Promise.map(settings.library.directories, directory => this.addTracksFromDirectory(directory, {
+            signal,
+            settings,
+            forceRescan,
           }));
-        }
-        MediaAlbumService.loadMediaAlbums();
-        MediaArtistService.loadMediaArtists();
-        MediaPlaylistService.loadMediaPlaylists();
-        this.runSyncPostProcessing(settings, signal);
+          await this.waitForQueueInputToStabilize(signal);
 
-        debug(
-          'syncMediaTracks - finished sync, took - %s, found - %d, processed - %d, added - %d',
-          DateTimeUtils.formatDuration(syncDuration),
-          syncFilesFoundCount,
-          syncFilesProcessedCount,
-          syncFilesAddedCount,
-        );
-      } finally {
-        finalize();
+          debug('syncMediaTracks - waiting for queue to drain. Queued: %d, Processed: %d', this.syncFilesQueuedCount, this.syncFilesProcessedQueueCount);
+          await this.syncAddFileQueue.onIdle();
+          await this.waitForQueueProcessingCompletion(signal);
+
+          if (signal.aborted || this.syncAbortController !== abortController) {
+            debug('syncMediaTracks - operation aborted');
+            return;
+          }
+
+          await this.flushPendingAlbumAndArtistSyncMarks(Date.now());
+
+          const syncDuration = performance.now() - syncStart;
+          await MediaLibraryService.finishMediaTrackSync(MediaLocalConstants.Provider);
+
+          mediaLocalStore.dispatch({
+            type: MediaLocalStateActionType.FinishSync,
+            data: {
+              syncDuration,
+            },
+          });
+
+          const { syncFilesFoundCount, syncFilesProcessedCount, syncFilesAddedCount } = mediaLocalStore.getState();
+          if (syncFilesAddedCount > 0) {
+            NotificationService.showMessage(I18nService.getString('message_sync_finished', {
+              tracksAddedCount: syncFilesAddedCount,
+            }));
+          }
+          MediaAlbumService.loadMediaAlbums();
+          MediaArtistService.loadMediaArtists();
+          MediaPlaylistService.loadMediaPlaylists();
+          this.runSyncPostProcessing(settings, signal);
+
+          debug(
+            'syncMediaTracks - finished sync, took - %s, found - %d, processed - %d, added - %d',
+            DateTimeUtils.formatDuration(syncDuration),
+            syncFilesFoundCount,
+            syncFilesProcessedCount,
+            syncFilesAddedCount,
+          );
+        } finally {
+          finalize();
+        }
+      });
+    };
+
+    const runSyncQueue = async (pendingSyncOptions?: { forceRescan?: boolean, settings?: IMediaLocalSettings }): Promise<void> => {
+      if (!pendingSyncOptions) {
+        return;
       }
-    });
+      await runSyncMediaTracks(pendingSyncOptions);
+      const queuedSyncOptions = this.pendingSyncRequest || undefined;
+      this.pendingSyncRequest = null;
+      await runSyncQueue(queuedSyncOptions);
+    };
+
+    this.syncMediaTracksPromise = runSyncQueue(options || {})
+      .finally(() => {
+        this.syncMediaTracksPromise = null;
+      });
+    return this.syncMediaTracksPromise;
+  }
+
+  private mergeSyncRequest(
+    currentRequest: { forceRescan?: boolean, settings?: IMediaLocalSettings } | null,
+    incomingRequest: { forceRescan?: boolean, settings?: IMediaLocalSettings },
+  ): { forceRescan?: boolean, settings?: IMediaLocalSettings } {
+    return {
+      forceRescan: !!(currentRequest?.forceRescan || incomingRequest?.forceRescan),
+      settings: incomingRequest.settings || currentRequest?.settings,
+    };
   }
 
   private async waitForQueueInputToStabilize(signal: AbortSignal): Promise<void> {
