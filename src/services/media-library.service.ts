@@ -614,20 +614,59 @@ export class MediaLibraryService {
       const expectedRelativePaths = new Set(trackItems.map(item => item.relativePath));
       const expectedPodcastFilesCount = PodcastService.getExpectedDapSyncFileCount();
       const totalExpectedMusicItems = trackItems.length + expectedPodcastFilesCount;
-      const resumeValidation = await Promise.all(trackItems.map(async (trackItem) => {
+      this.updateDapSyncProgress({
+        phase: 'planning',
+        isRunning: true,
+        processedItems: 0,
+        totalItems: totalExpectedMusicItems,
+        copiedFiles,
+        deletedFiles,
+        startedAt,
+        targetDirectory: dapTargetDirectory,
+        syncRootPath,
+        canResume: false,
+        resumedFromProcessedItems: completedRelativePathSet.size,
+        errorMessage: undefined,
+      });
+      let planningProcessedItems = 0;
+      let planningLastProgressUpdateAt = 0;
+      const resumeValidation = await Promise.map(trackItems, async (trackItem) => {
+        if (signal.aborted) {
+          throw this.toDapAbortError();
+        }
         const destinationCheck = await this.checkDestinationCurrent(trackItem.sourcePath, trackItem.destinationPath, {
           sourceSize: trackItem.sourceSize,
           sourceMtimeMs: trackItem.sourceMtimeMs,
           syncStateEntry: syncStateEntries.get(trackItem.relativePath),
+          signal,
         });
         if (destinationCheck.isCurrent && destinationCheck.syncStateEntry) {
           syncStateEntries.set(trackItem.relativePath, destinationCheck.syncStateEntry);
+        }
+        planningProcessedItems += 1;
+        const now = Date.now();
+        if (planningProcessedItems % 20 === 0 || (now - planningLastProgressUpdateAt) > 250 || planningProcessedItems >= trackItems.length) {
+          planningLastProgressUpdateAt = now;
+          this.updateDapSyncProgress({
+            phase: 'planning',
+            isRunning: true,
+            processedItems: planningProcessedItems,
+            totalItems: totalExpectedMusicItems,
+            copiedFiles,
+            deletedFiles,
+            startedAt,
+            targetDirectory: dapTargetDirectory,
+            syncRootPath,
+            canResume: false,
+            resumedFromProcessedItems: completedRelativePathSet.size,
+            errorMessage: undefined,
+          });
         }
         return {
           ...trackItem,
           alreadyCompleted: destinationCheck.isCurrent,
         };
-      }));
+      }, { concurrency: 4 });
       const resumedValidRelativePaths = resumeValidation
         .filter(item => item.alreadyCompleted)
         .map(item => item.relativePath);
@@ -657,6 +696,49 @@ export class MediaLibraryService {
         errorMessage: undefined,
       });
 
+      let lastCheckpointPersistAt = 0;
+      let lastProgressUpdateAt = 0;
+      const persistDapProgressState = (force = false) => {
+        const now = Date.now();
+        if (!force && resumedValidRelativePathSet.size > 0 && resumedValidRelativePathSet.size % 20 !== 0 && (now - lastCheckpointPersistAt) < 1200) {
+          return;
+        }
+        lastCheckpointPersistAt = now;
+        this.persistDapSyncCheckpoint({
+          targetDirectory: dapTargetDirectory,
+          syncRootPath,
+          completedRelativePaths: [...resumedValidRelativePathSet],
+          copiedFiles,
+          deletedFiles,
+        });
+        this.persistDapSyncState({
+          targetDirectory: dapTargetDirectory,
+          syncRootPath,
+          entries: Object.fromEntries(syncStateEntries.entries()),
+        });
+      };
+      const publishCopyProgress = (force = false) => {
+        const now = Date.now();
+        if (!force && resumedValidRelativePathSet.size > 0 && resumedValidRelativePathSet.size % 10 !== 0 && (now - lastProgressUpdateAt) < 200) {
+          return;
+        }
+        lastProgressUpdateAt = now;
+        this.updateDapSyncProgress({
+          phase: 'copying',
+          isRunning: true,
+          processedItems: resumedValidRelativePathSet.size,
+          totalItems: totalExpectedMusicItems,
+          copiedFiles,
+          deletedFiles,
+          startedAt,
+          targetDirectory: dapTargetDirectory,
+          syncRootPath,
+          canResume: false,
+          resumedFromProcessedItems: resumedValidRelativePathSet.size,
+          errorMessage: undefined,
+        });
+      };
+
       await Promise.map(pendingTrackItems, async (trackItem) => {
         if (signal.aborted) {
           throw this.toDapAbortError();
@@ -671,6 +753,7 @@ export class MediaLibraryService {
             sourceSize: trackItem.sourceSize,
             sourceMtimeMs: trackItem.sourceMtimeMs,
             syncStateEntry: syncStateEntries.get(trackItem.relativePath),
+            signal,
           });
           const shouldCopy = !preCopyCheck.isCurrent;
           if (shouldCopy) {
@@ -680,6 +763,7 @@ export class MediaLibraryService {
               sourceSize: trackItem.sourceSize,
               sourceMtimeMs: trackItem.sourceMtimeMs,
               syncStateEntry: syncStateEntries.get(trackItem.relativePath),
+              signal,
             });
             trackSynchronized = trackSyncCheck.isCurrent;
           } else {
@@ -702,20 +786,7 @@ export class MediaLibraryService {
         }
 
         if (!trackSynchronized) {
-          this.updateDapSyncProgress({
-            phase: 'copying',
-            isRunning: true,
-            processedItems: resumedValidRelativePathSet.size,
-            totalItems: totalExpectedMusicItems,
-            copiedFiles,
-            deletedFiles,
-            startedAt,
-            targetDirectory: dapTargetDirectory,
-            syncRootPath,
-            canResume: false,
-            resumedFromProcessedItems: resumedValidRelativePathSet.size,
-            errorMessage: undefined,
-          });
+          publishCopyProgress();
           return;
         }
 
@@ -724,33 +795,11 @@ export class MediaLibraryService {
         if (syncStateEntry) {
           syncStateEntries.set(trackItem.relativePath, syncStateEntry);
         }
-        this.persistDapSyncCheckpoint({
-          targetDirectory: dapTargetDirectory,
-          syncRootPath,
-          completedRelativePaths: [...resumedValidRelativePathSet],
-          copiedFiles,
-          deletedFiles,
-        });
-        this.persistDapSyncState({
-          targetDirectory: dapTargetDirectory,
-          syncRootPath,
-          entries: Object.fromEntries(syncStateEntries.entries()),
-        });
-        this.updateDapSyncProgress({
-          phase: 'copying',
-          isRunning: true,
-          processedItems: resumedValidRelativePathSet.size,
-          totalItems: totalExpectedMusicItems,
-          copiedFiles,
-          deletedFiles,
-          startedAt,
-          targetDirectory: dapTargetDirectory,
-          syncRootPath,
-          canResume: false,
-          resumedFromProcessedItems: resumedValidRelativePathSet.size,
-          errorMessage: undefined,
-        });
+        persistDapProgressState();
+        publishCopyProgress();
       }, { concurrency: 1 });
+      persistDapProgressState(true);
+      publishCopyProgress(true);
 
       if (signal.aborted) {
         throw this.toDapAbortError();
@@ -804,13 +853,7 @@ export class MediaLibraryService {
             deletedFiles += 1;
           }
 
-          this.persistDapSyncCheckpoint({
-            targetDirectory: dapTargetDirectory,
-            syncRootPath,
-            completedRelativePaths: [...resumedValidRelativePathSet],
-            copiedFiles,
-            deletedFiles,
-          });
+          persistDapProgressState();
           this.updateDapSyncProgress({
             phase: 'cleaning',
             isRunning: true,
@@ -826,6 +869,7 @@ export class MediaLibraryService {
             errorMessage: undefined,
           });
         }, { concurrency: 1 });
+        persistDapProgressState(true);
       }
 
       const podcastSyncResult = await PodcastService.syncPodcastsToDap({
@@ -1201,8 +1245,11 @@ export class MediaLibraryService {
   private static async checkDestinationCurrent(
     sourcePath: string,
     destinationPath: string,
-    sourceMeta?: { sourceSize?: number; sourceMtimeMs?: number; syncStateEntry?: IDapSyncStateEntry },
+    sourceMeta?: { sourceSize?: number; sourceMtimeMs?: number; syncStateEntry?: IDapSyncStateEntry; signal?: AbortSignal },
   ): Promise<IDapDestinationCheckResult> {
+    if (sourceMeta?.signal?.aborted) {
+      throw this.toDapAbortError();
+    }
     const destinationStats = await fs.promises.stat(destinationPath).catch(() => undefined);
     if (!destinationStats) {
       return {
@@ -1252,13 +1299,13 @@ export class MediaLibraryService {
       && cachedEntry.sourceMtimeMs === sourceMtimeMs
       && cachedEntry.sourceHash)
       ? cachedEntry.sourceHash
-      : await this.hashFileSha1(sourcePath);
+      : await this.hashFileSha1(sourcePath, sourceMeta?.signal);
     const destinationHash = (cachedEntry
       && cachedEntry.destinationSize === destinationStats.size
       && Number(cachedEntry.destinationMtimeMs || 0) === Number(destinationStats.mtimeMs || 0)
       && cachedEntry.destinationHash)
       ? cachedEntry.destinationHash
-      : await this.hashFileSha1(destinationPath);
+      : await this.hashFileSha1(destinationPath, sourceMeta?.signal);
 
     return {
       isCurrent: !!sourceHash && sourceHash === destinationHash,
@@ -1273,20 +1320,42 @@ export class MediaLibraryService {
     };
   }
 
-  private static hashFileSha1(filePath: string): Promise<string | undefined> {
+  private static hashFileSha1(filePath: string, signal?: AbortSignal): Promise<string | undefined> {
     return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve(undefined);
+        return;
+      }
       const hash = createHash('sha1');
       const stream = fs.createReadStream(filePath);
+      const handleAbort = () => {
+        stream.destroy(this.toDapAbortError());
+      };
+      if (signal) {
+        signal.addEventListener('abort', handleAbort, { once: true });
+      }
 
       stream.on('error', () => resolve(undefined));
       stream.on('data', (chunk) => {
+        if (signal?.aborted) {
+          stream.destroy(this.toDapAbortError());
+          return;
+        }
         const hashChunk = typeof chunk === 'string'
           ? new TextEncoder().encode(chunk)
           : Uint8Array.from(chunk as unknown as ArrayLike<number>);
         hash.update(hashChunk);
       });
       stream.on('end', () => {
+        if (signal) {
+          signal.removeEventListener('abort', handleAbort);
+        }
         resolve(hash.digest('hex'));
+      });
+      stream.on('close', () => {
+        if (signal) {
+          signal.removeEventListener('abort', handleAbort);
+        }
       });
     });
   }

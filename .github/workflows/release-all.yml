@@ -288,32 +288,30 @@ jobs:
             ## AuroraPulse 1.5.1-beta2
 
             ### Scope
-            - This prerelease includes all technical changes from **1.5.1-beta1** and the follow-up hardening shipped in **1.5.1-beta2**.
+            - This prerelease includes all technical changes from **1.5.1-beta1** plus the stabilization wave shipped in **1.5.1-beta2**.
             - Baseline comparison: **1.5.0 → 1.5.1-beta2**.
 
-            ### Core Playback & Platform
-            - Improved local playback stability and queue behavior for continuous sessions.
-            - Refined app lifecycle handling on desktop startup/shutdown paths.
-            - Updated UI shell behavior for splash and root layout sizing consistency.
-            - Refined sidebar app branding asset handling.
+            ### DAP Sync & Library Stability (beta2)
+            - Reworked DAP planning progress so the UI reports active work instead of lingering at `0/0`.
+            - Limited heavy planning validation to controlled parallelism to reduce UI stalls during large syncs.
+            - Throttled progress/checkpoint/state persistence updates during copy/cleaning phases to reduce renderer pressure.
+            - Strengthened cancellation behavior so aborts are honored during hash/file verification and long-running checks.
+            - Improved restart behavior after interrupted device syncs and device-removal scenarios.
+            - Reduced sync contention between startup local-library scan and manual topbar-triggered sync flows.
 
-            ### DLNA (Server + Renderer Control) — Major Technical Update
+            ### UI / App Shell (beta2)
+            - Stabilized player surface on initial startup before first track is available.
+            - Refined sidebar branding sizing/positioning to better match splash composition.
+
+            ### DLNA (from 1.5.0 → 1.5.1-beta1, retained in beta2)
             - Reworked DLNA control flow for Play/Pause/Resume/Stop with stronger state reconciliation.
             - Added defensive handling for unstable renderer transport states (`TRANSITIONING`, intermittent `STOPPED`, delayed state convergence).
             - Strengthened next-track synchronization (`SetNextAVTransportURI`) and reduced transition latency between tracks.
             - Added fallback/retry behavior around transport URI setup and transition windows.
-            - Reduced control-plane pressure by tuning snapshot strategy and throttling expensive renderer-output polling.
             - Improved discovery behavior for devices appearing after app startup and during runtime.
-            - Expanded DLNA diagnostics with structured request/response/timing logs for SOAP actions and HTTP media requests.
-            - Improved remote volume and mute synchronization behavior with renderer capability fallbacks.
+            - Revised DIDL metadata and artwork delivery compatibility for stricter renderers.
 
-            ### DLNA Metadata & Artwork Delivery
-            - Revised DIDL metadata generation for renderer compatibility across strict and tolerant devices.
-            - Hardened album-art URI/res metadata handling for broader renderer acceptance.
-            - Improved cover delivery endpoint behavior, including byte-range response support for artwork requests.
-            - Added safer cover conversion/serving fallback behavior to preserve playback stability.
-
-            ### Library Insights / Dashboard
+            ### Library Insights / Dashboard (from 1.5.0 → 1.5.1-beta1)
             - Redesigned the Top section into paged views (Top Songs / Top Albums) with explicit left/right navigation.
             - Improved dashboard card and toplist rendering behavior.
             - Migrated dashboard copy to i18n and added translation keys across all bundled locales.

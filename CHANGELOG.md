@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.5.0] - Unreleased
+## [1.5.1-beta2] - 2026-03-19
+
+### Added
+- DAP-Sync-Planungsphase mit laufendem Fortschritt statt statischem 0/0-Status
+
+### Changed
+- DAP-Sync-Planungsvalidierung parallelisiert und auf kontrollierte Last begrenzt
+- Persistenz von DAP-Checkpoint/State während Sync gedrosselt, um UI-Last zu reduzieren
+- DAP-Copy/Cleaning-Fortschritt zeitlich und nach Schrittzahl gebündelt aktualisiert
+- Auto-DAP-Resume während aktivem Bibliotheks-Sync unterdrückt
+- Sidebar-Branding (Logo/Text/Loader) visuell an Splash-Proportionen und Position angepasst
+- DLNA-Logausgabe auf relevante Kernereignisse reduziert
+
+### Fixed
+- DAP-Abbruch reagiert auch in laufenden Hash- und Dateivergleichsphasen zuverlässig
+- DAP-Sync kann nach Geräte-Trennung sauber abbrechen und Status zurücksetzen
+- Topbar-Sync stört laufenden Initial-Sync nicht mehr durch konkurrierende Trigger
+- Player-Layout bleibt beim ersten Start ohne geladenen Track vollständig stabil
+
+### Included from 1.5.0 → 1.5.1-beta1
+- DLNA-Steuerpfad für Play/Pause/Resume/Stop inkl. Next-Track-Synchronisierung gehärtet
+- Dashboard-Toplisten in paginierte Top Songs/Top Albums-Sichten umgebaut
+- Cover-/Metadatenlieferung für Renderer robuster gemacht
+- DAP- und Podcast-Sync-Grundlagen für Resume, Fortschritt und Bereinigung erweitert
+
+## [1.5.1-beta1] - 2026-03-17
+
+### Changed
+- Prerelease-Basis für 1.5.1 mit Fokus auf DLNA-Härtung, Dashboard-Verhalten und Sync-Resilienz
+
+## [1.5.0] - 2026-03-17
 
 ### Changed
 - Start der Entwicklung für Version 1.5.0
