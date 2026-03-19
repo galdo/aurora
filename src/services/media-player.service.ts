@@ -575,7 +575,13 @@ class MediaPlayerService {
         await mediaPlaybackCurrentPlayingInstance.stopPlayback().catch(() => false);
       }
 
-      await DlnaService.setOutputDevice(outputDeviceId);
+      await DlnaService.setOutputDevice(outputDeviceId).catch(async (error) => {
+        if (outputDeviceId === 'local') {
+          throw error;
+        }
+        await DlnaService.refreshRendererDevices();
+        await DlnaService.setOutputDevice(outputDeviceId);
+      });
       if (outputDeviceId !== 'local') {
         await this.syncPlaybackVolumeFromSelectedRenderer();
       }
@@ -586,7 +592,14 @@ class MediaPlayerService {
 
       const mediaPlayback = this.loadMediaTrack(mediaPlaybackCurrentMediaTrack);
       if (wasPlaying) {
-        const mediaPlayed = await mediaPlayback.play();
+        let mediaPlayed = await mediaPlayback.play();
+        if (!mediaPlayed && outputDeviceId !== 'local') {
+          await DlnaService.stopSelectedRenderer().catch(() => undefined);
+          await new Promise((resolve) => {
+            setTimeout(resolve, 250);
+          });
+          mediaPlayed = await mediaPlayback.play();
+        }
         if (!mediaPlayed) {
           return;
         }

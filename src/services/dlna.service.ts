@@ -1156,7 +1156,7 @@ export class DlnaService {
     const rendererUrl = new URL(renderer.location);
     const rendererAddress = String(rendererUrl.hostname || '').replace(/^::ffff:/, '');
     const servingIp = this.getBestServingIpForClient(rendererAddress);
-    return `http://${servingIp}:${this.port}/cover/${encodeURIComponent(mediaTrackId)}`;
+    return `http://${servingIp}:${this.port}/cover/${encodeURIComponent(mediaTrackId)}.jpg`;
   }
 
   private static buildRendererTrackMetadata(
@@ -1173,7 +1173,10 @@ export class DlnaService {
     const coverUrl = coverPath
       ? this.getTrackCoverUrlForRenderer(this.getSelectedRenderer() as DlnaRendererDevice, String(mediaTrack.id || mediaTrack.provider_id || ''))
       : '';
-    const coverProfile = this.getDlnaImageProfileForMimeType();
+    const shouldUseCompatibility = metadataMode === 'compatibility';
+    const coverProfile = shouldUseCompatibility
+      ? ''
+      : this.getDlnaImageProfileForMimeType();
     const albumArtAttributes = coverProfile
       ? ` dlna:profileID="${coverProfile}"`
       : '';
@@ -1189,14 +1192,15 @@ ${this.getDidlRootStart()}
 <upnp:album>${album}</upnp:album>
 <upnp:class>object.item.audioItem.musicTrack</upnp:class>
 ${coverUrl ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
-${coverUrl && coverMimeType && metadataMode === 'full' ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
+${coverUrl && coverProfile ? `<upnp:albumArtURI>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl && coverMimeType ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${mimeType}:*" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>
 </DIDL-Lite>`;
   }
 
   private static getDlnaImageProfileForMimeType(): string {
-    return '';
+    return 'JPEG_TN';
   }
 
   private static formatSecondsAsDlnaTime(seconds: number): string {
@@ -1863,7 +1867,8 @@ ${actionBody}
       return;
     }
     if (requestPath.startsWith('/cover/')) {
-      const trackId = decodeURIComponent(requestPath.replace('/cover/', ''));
+      const rawTrackId = decodeURIComponent(requestPath.replace('/cover/', ''));
+      const trackId = rawTrackId.replace(/\.(jpg|jpeg|png|webp)$/i, '');
       this.streamTrackCover(response, request, trackId === 'current' ? this.currentTrackId : trackId).catch((error) => {
         debug('streamTrackCover failed - %o', error);
         if (!response.headersSent) {
@@ -1960,24 +1965,31 @@ ${actionBody}
       return;
     }
     let coverBuffer = fs.readFileSync(coverPath);
-    let coverMimeType = track?.coverMimeType || this.getImageMimeType(coverPath);
-    if (coverMimeType !== 'image/jpeg' && coverMimeType !== 'image/jpg') {
-      try {
-        coverBuffer = await sharp(coverBuffer)
-          .jpeg({
-            quality: 88,
-            mozjpeg: true,
-          })
-          .toBuffer();
-        coverMimeType = 'image/jpeg';
-      } catch (error) {
-        debug('streamTrackCover sharp conversion failed - %o', error);
-        this.writeDlnaLog('error', 'cover_sharp_conversion_failed', {
-          trackId,
-          coverPath,
-          error: String((error as any)?.message || error || ''),
-        });
-      }
+    let coverMimeType = 'image/jpeg';
+    try {
+      coverBuffer = await sharp(coverBuffer)
+        .rotate()
+        .resize({
+          width: 640,
+          height: 640,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .jpeg({
+          quality: 86,
+          progressive: false,
+          mozjpeg: true,
+          chromaSubsampling: '4:2:0',
+        })
+        .toBuffer();
+    } catch (error) {
+      coverMimeType = track?.coverMimeType || this.getImageMimeType(coverPath);
+      debug('streamTrackCover sharp conversion failed - %o', error);
+      this.writeDlnaLog('error', 'cover_sharp_conversion_failed', {
+        trackId,
+        coverPath,
+        error: String((error as any)?.message || error || ''),
+      });
     }
     const coverProfile = this.getDlnaImageProfileForMimeType();
     const coverContentFeatures = coverProfile
@@ -2613,7 +2625,7 @@ ${this.buildTrackDidlItem(track, 'tracks', clientAddress)}
     const seconds = durationSeconds % 60;
     const duration = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.000`;
     const streamUrl = `${baseUrl}/stream/${encodeURIComponent(track.id)}`;
-    const coverUrl = track.coverPath ? `${baseUrl}/cover/${encodeURIComponent(track.id)}` : '';
+    const coverUrl = track.coverPath ? `${baseUrl}/cover/${encodeURIComponent(track.id)}.jpg` : '';
     const coverMimeType = coverUrl ? 'image/jpeg' : '';
     const coverProfile = this.getDlnaImageProfileForMimeType();
     let coverProtocolInfo = '';
@@ -2633,6 +2645,7 @@ ${this.buildTrackDidlItem(track, 'tracks', clientAddress)}
 <upnp:artist>${this.escapeXml(track.artist)}</upnp:artist>
 <upnp:album>${this.escapeXml(track.album)}</upnp:album>
 ${coverUrl ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl && coverProfile ? `<upnp:albumArtURI>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
 ${coverUrl && coverProtocolInfo ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${track.mimeType}:*" size="${track.fileSize}" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>`;

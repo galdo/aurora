@@ -15,7 +15,6 @@ import {
   MediaLibraryService,
   MediaProviderService,
   MediaPlayerService,
-  PodcastService,
   EqualizerService,
   DlnaService,
   BitPerfectService,
@@ -195,19 +194,7 @@ function Player({ active = false }: { active: boolean }) {
 // app > stage, player
 
 function Window() {
-  const playerCurrentTrack = useSelector((state: RootState) => state.mediaPlayer.mediaPlaybackCurrentMediaTrack);
-  const [podcastPlayerActive, setPodcastPlayerActive] = useState(() => PodcastService.getPlaybackSnapshot().isActive);
-  const playerIsActive = !!playerCurrentTrack || podcastPlayerActive;
-
-  useEffect(() => {
-    const unsubscribePlayback = PodcastService.subscribePlayback(() => {
-      setPodcastPlayerActive(PodcastService.getPlaybackSnapshot().isActive);
-    });
-    setPodcastPlayerActive(PodcastService.getPlaybackSnapshot().isActive);
-    return () => {
-      unsubscribePlayback();
-    };
-  }, []);
+  const playerIsActive = true;
 
   return (
     <Router>
