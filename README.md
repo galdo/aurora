@@ -4,90 +4,128 @@
 [![downloads](https://img.shields.io/github/downloads/galdo/aurora/total.svg)]()
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Spenden-orange.svg?style=flat-square&logo=buy-me-a-coffee)](https://www.buymeacoffee.com/better_craft)
 
-Aurora Pulse is a local-first desktop audio player for people who value sound quality, true library ownership, and frictionless daily listening. It is built to make serious audio use feel simple: precise control when you want it, fast flow when you need it.
+Aurora Pulse is a local-first, audiophile-focused desktop player for listeners who want complete control over sound quality, metadata, and library ownership without trading that control for cloud lock-in.
 
 ![Aurora Pulse - Main Interface](docs/images/placeholder-main-interface.png)
 
 ---
 
-## Built for Listening, Not for Lock-In
+## Why Aurora Pulse
 
-Aurora Pulse keeps playback local and private while exposing the details that matter to demanding listeners. File type, bitrate, bit depth, and sample rate are visible in the player, so quality is transparent instead of hidden. The equalizer workflow combines a 10-band setup, headroom compensation, and AutoEQ profile support to make tonal shaping accurate and repeatable. CD import is FLAC-focused, metadata-aware, and designed for clean archival outcomes.
+Aurora Pulse is built around a simple idea: your music library should stay yours, your playback chain should remain transparent, and your day-to-day listening should feel fast instead of fragile. The application keeps local playback and local data ownership at the center while exposing the quality details that matter in serious listening scenarios, including file and stream characteristics directly in the player context.
 
-![Aurora Pulse - Playback Focus](docs/images/placeholder-playback.png)
-
----
-
-## Core Experience
-
-### High-Fidelity Playback
-
-Playback is built around speed and clarity. Transport controls, queue actions, and contextual operations are all within immediate reach, so the app supports uninterrupted listening sessions instead of menu chasing. The player surface is optimized for confidence: you can act quickly and still see what is actually being played.
-
-![High-Fidelity Playback](docs/images/placeholder-main-interface.png)
-
-### Equalizer, AutoEQ, and Headroom Control
-
-The EQ stack is designed for real-world tuning. Manual adjustments remain fast for broad shaping, while parametric AutoEQ profiles cover device-specific correction workflows. Headroom compensation helps maintain cleaner gain behavior when boosts are applied, reducing the need for workaround volume habits.
-
-![Equalizer](docs/images/placeholder-equalizer.png)
-
-### CD Import with Metadata Management
-
-CD import focuses on reliable FLAC archiving with practical metadata decisions at import time. Discogs-assisted matching enables better release confidence before files are committed to your library structure, which significantly lowers post-import cleanup.
-
-![CD Import](docs/images/placeholder-cd-import.png)
-
-### Library and Collection Flow
-
-Aurora Pulse is optimized for large, long-lived collections. Source folders, scans, sorting, and collection views are designed to stay predictable as your library grows. Albums, artists, playlists, and search all follow a coherent interaction model, so navigation remains fast without visual inconsistency.
-
-![Library](docs/images/placeholder-library.png)
-
-### Playlists and Device Workflow
-
-Playlists support both straightforward curation and advanced smart collection behavior, with robust cover generation for mixed content. DAP sync extends that workflow to portable devices with explicit progress state, ETA visibility, resume support, and cancellation, making transfer sessions more reliable and less stressful.
-
-![Playlist Management](docs/images/placeholder-playlists.png)
-![DAP Sync](docs/images/placeholder-dap-sync.png)
-
-### Podcasts in the Same Environment
-
-Podcasts are integrated as a first-class listening area with discovery, subscriptions, episode refresh, and sideview details. Music and spoken content share one coherent playback environment, so switching context does not break your rhythm.
-
-![Podcasts](docs/images/placeholder-podcasts.png)
+The project is developed for long-lived collections and real-world usage patterns. That means practical import workflows, reliable metadata handling, stable sync behavior, and UI decisions that reduce context switching when you move between browsing, queuing, and playback control.
 
 ---
 
-## Interface Philosophy
+## Feature Overview
 
-The UI is intentionally structured around continuity. Details open in a right sideview instead of forcing full-page context switches, topbar controls keep search and sorting near your current task, and action placement stays context-aware. The result is a cleaner mental model: fewer jumps, fewer surprises, and faster decisions during playback.
+### Playback and Audio Quality
 
-![UI Workflow](docs/images/placeholder-ui-workflow.png)
+Playback in Aurora Pulse is designed to be immediate and confidence-oriented. Transport controls, queue handling, and player state all prioritize responsiveness, while quality information remains visible so there is no ambiguity about what is actually being played. Recent iterations also improved remote playback reconciliation to keep local UI state and remote renderer state more closely aligned during transitions.
+
+![Aurora Pulse - Playback](docs/images/placeholder-playback.png)
+
+### Equalizer and Sound Tuning
+
+Aurora Pulse includes a practical tuning workflow that combines multi-band equalization, AutoEQ profile support, and headroom compensation. The goal is not just flexibility, but repeatability: you can make broad tonal adjustments quickly and still keep enough structure to reproduce your preferred profile consistently across sessions.
+
+![Aurora Pulse - Equalizer](docs/images/placeholder-equalizer.png)
+
+### Library Management
+
+Library management is optimized for local folder structures and larger collections. Albums, artists, tracks, and playlists are connected through one coherent navigation model, while sideview-based detail access and direct playback from search results keep common tasks short and predictable. Metadata edits for albums and tracks are integrated into that same flow so curation does not feel like a separate tool.
+
+![Aurora Pulse - Library](docs/images/placeholder-library.png)
+
+### Playlists and Collections
+
+Playlist support covers both explicit manual curation and smart collection logic. Artwork generation and sorting behavior have been improved to stay robust even in mixed or generated collections, which makes playlists viable both for everyday listening and for structured thematic cataloging.
+
+![Aurora Pulse - Playlists](docs/images/placeholder-playlists.png)
+
+### DAP Sync
+
+DAP sync extends your local workflow to portable devices with a focus on operational stability. Progress tracking, ETA, resume, and cancellation are available as first-class controls, and the sync engine has been hardened for reconnect, restart, and interruption scenarios that happen in real device usage.
+
+![Aurora Pulse - DAP Sync](docs/images/placeholder-dap-sync.png)
+
+### Podcasts
+
+Podcasts are integrated into the same environment as your music library, including discovery, subscription management, and RSS-driven refresh. This keeps spoken content and music under one playback model, so you can switch context without leaving the app’s core workflow.
+
+![Aurora Pulse - Podcasts](docs/images/placeholder-podcasts.png)
+
+### CD Import
+
+CD import is oriented toward archival quality and practical cleanup reduction. The workflow emphasizes FLAC-centric outcomes, metadata-aware import decisions, and predictable cover handling, so your imported releases require less post-processing in your library.
+
+![Aurora Pulse - CD Import](docs/images/placeholder-cd-import.png)
+
+### DLNA / Remote Playback
+
+The DLNA stack has been significantly expanded to support remote playback scenarios with higher reliability. Command sequencing is serialized per renderer to reduce race conditions, transition handling between tracks is more robust, metadata compatibility has been improved for stricter renderer implementations, and bidirectional synchronization continues to evolve so player and renderer remain in sync during remote control operations.
 
 ---
 
-## Privacy and Ownership
+## UI Philosophy
 
-Aurora Pulse is designed around ownership by default. Your media library, database, and listening history remain local to your machine. Optional metadata enrichment can perform explicit online lookups when you ask for it, but the app does not include telemetry, analytics profiling, or behavioral tracking.
+Aurora Pulse follows a continuity-first UI model. Instead of forcing full-page context shifts for every detail, the interface keeps actions and information close to the active listening flow. The intent is to reduce interaction latency, preserve orientation while navigating deep libraries, and make frequent actions feel direct on both desktop and connected playback scenarios.
 
----
-
-## Project History and Why This Fork Exists
-
-Aurora Pulse is developed as a continuation of the Aurora project under the current maintainer team at galdo. The project focuses on a modern local-first player with stronger execution for audiophile workflows and everyday reliability.
-
-The motivation was practical. Users needed faster iteration on quality-of-life improvements, clearer audio transparency in the interface, more robust collection and sync behavior, and tighter consistency in how navigation and sideviews work across the app. Aurora Pulse keeps the original foundation and spirit, while intentionally accelerating delivery around these priorities.
-
-This is not a cosmetic rename. It is an execution-focused evolution of the same core idea: local music ownership with high usability and high playback confidence.
+![Aurora Pulse - UI Workflow](docs/images/placeholder-ui-workflow.png)
 
 ---
 
-## Original Source
+## Platform Support
 
-Aurora Pulse is maintained in the current repository at https://github.com/galdo/aurora and continues under the [MIT License](./LICENSE).
+Aurora Pulse is distributed for macOS (Apple Silicon and Intel), Windows, and Linux via Flatpak builds. Release artifacts are published through GitHub Releases and are intended for direct installation without additional packaging steps.
+
+---
+
+## Privacy and Data Ownership
+
+Aurora Pulse is intentionally local-first in both architecture and operating model. Your library data, playback state, and app-level metadata remain on your system. Optional online lookups are used only in explicit metadata workflows, and the application is not built around analytics profiling or behavioral telemetry.
+
+---
+
+## Development Status
+
+Aurora Pulse is in active development with a strong focus on audio confidence, sync resilience, and operational reliability in larger collections. Recent releases include substantial DLNA hardening work, expanded remote synchronization behavior, stronger DAP sync stability, and broader consistency improvements across the app shell.
+
+If you want a visual product-style overview, see the landing page at [docs/landing_page/index.html](docs/landing_page/index.html).
+
+---
+
+## Install
+
+### macOS
+
+Download the latest `.dmg` from Releases, move `AuroraPulse.app` to `Applications`, and launch from there. If Gatekeeper blocks first launch, open the context menu on the app and choose **Open**.
+
+### Windows
+
+Download the latest `.exe` installer from Releases and run it. If SmartScreen appears, use **More info** and then **Run anyway**.
+
+### Linux (Flatpak)
+
+Download the `.flatpak` artifact from Releases and install it with your Flatpak manager or via `flatpak install <file>.flatpak`.
+
+---
+
+## Contributing
+
+Contributions, bug reports, and feature suggestions are welcome via GitHub Issues and Pull Requests.
+
+Repository: https://github.com/galdo/aurora
+
+---
+
+## License
+
+Aurora Pulse is released under the [MIT License](./LICENSE).
+
+---
 
 ## Disclaimer
-Aurora Pulse interacts directly with your local file system and external storage media (DAPs).
-Use at your own risk: The software is provided "as is." The developer assumes no liability for data loss, corruption of music files, or hardware damage that may arise from the use of this software.
-Back up your data: Always ensure you have a complete and current backup of your music library before performing any synchronization operations.
+
+Aurora Pulse interacts directly with local file systems and external storage devices. Use the software at your own risk; it is provided “as is” without warranty. Before larger import or synchronization operations, maintain current backups of your media library and related metadata.
