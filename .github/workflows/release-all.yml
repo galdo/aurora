@@ -285,36 +285,24 @@ jobs:
           name: Release ${{ needs.meta.outputs.tag }}
           prerelease: ${{ needs.meta.outputs.prerelease }}
           body: |
-            ## AuroraPulse 1.5.1-beta2
+            ## AuroraPulse 1.5.1
 
             ### Scope
-            - This prerelease includes all technical changes from **1.5.1-beta1** plus the stabilization wave shipped in **1.5.1-beta2**.
-            - Baseline comparison: **1.5.0 → 1.5.1-beta2**.
+            - This release includes all functional changes delivered after **1.5.0**.
+            - Baseline comparison: **1.5.0 → 1.5.1**.
 
-            ### DAP Sync & Library Stability (beta2)
-            - Reworked DAP planning progress so the UI reports active work instead of lingering at `0/0`.
-            - Limited heavy planning validation to controlled parallelism to reduce UI stalls during large syncs.
-            - Throttled progress/checkpoint/state persistence updates during copy/cleaning phases to reduce renderer pressure.
-            - Strengthened cancellation behavior so aborts are honored during hash/file verification and long-running checks.
-            - Improved restart behavior after interrupted device syncs and device-removal scenarios.
-            - Reduced sync contention between startup local-library scan and manual topbar-triggered sync flows.
+            ### Highlights
+            - Added **Support for Aurora Pulse Android Launcher** with active MediaRenderer behavior and bidirectional playback coordination.
+            - Improved DLNA reliability with serialized per-renderer command processing to avoid race conditions and stale in-flight commands.
+            - Improved DLNA queue context handling so album/playlist context is kept stable during transitions.
+            - Added stronger remote state reconciliation for play/pause/stop/seek/next/previous and transport transitions.
+            - Improved metadata handling and compatibility for stricter renderers, including better DIDL behavior and artwork delivery.
+            - Improved backsync behavior so remote playback changes are reflected more consistently in Aurora Pulse player state.
 
-            ### UI / App Shell (beta2)
-            - Stabilized player surface on initial startup before first track is available.
-            - Refined sidebar branding sizing/positioning to better match splash composition.
-
-            ### DLNA (from 1.5.0 → 1.5.1-beta1, retained in beta2)
-            - Reworked DLNA control flow for Play/Pause/Resume/Stop with stronger state reconciliation.
-            - Added defensive handling for unstable renderer transport states (`TRANSITIONING`, intermittent `STOPPED`, delayed state convergence).
-            - Strengthened next-track synchronization (`SetNextAVTransportURI`) and reduced transition latency between tracks.
-            - Added fallback/retry behavior around transport URI setup and transition windows.
-            - Improved discovery behavior for devices appearing after app startup and during runtime.
-            - Revised DIDL metadata and artwork delivery compatibility for stricter renderers.
-
-            ### Library Insights / Dashboard (from 1.5.0 → 1.5.1-beta1)
-            - Redesigned the Top section into paged views (Top Songs / Top Albums) with explicit left/right navigation.
-            - Improved dashboard card and toplist rendering behavior.
-            - Migrated dashboard copy to i18n and added translation keys across all bundled locales.
+            ### Library / UI / Sync
+            - Improved DAP sync robustness, cancellation behavior, and progress reporting consistency.
+            - Improved startup/player surface stability and dashboard/toplist behavior.
+            - Expanded i18n coverage and translation usage in dashboard/library areas.
 
             ### Installation Notes
             - **macOS:** Open the DMG, move AuroraPulse to Applications, then launch from Applications. If Gatekeeper blocks first launch, right-click AuroraPulse.app and choose Open.

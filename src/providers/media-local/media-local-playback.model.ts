@@ -42,7 +42,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
   private remotePlaybackLastPlayingStateAt = 0;
   private remotePlaybackTransitionSince = 0;
   private remotePlaybackStoppedSnapshots = 0;
-  private remotePlaybackStatePollInterval?: ReturnType<typeof setInterval>;
+  private remotePlaybackPendingNextGraceUntil = 0;
+  private remotePlaybackStatePollTimeout?: ReturnType<typeof setTimeout>;
+  private remotePlaybackFastPollingUntil = 0;
   private preparationStatusListener?: (status?: IMediaPlaybackPreparationStatus) => void;
   private nativeBitPerfectDsdSession = false;
   private nativeBitPerfectDsdActive = false;
@@ -87,6 +89,28 @@ export class MediaLocalPlayback implements IMediaPlayback {
     this.preparationStatusListener = listener;
   }
 
+  adoptRemoteSnapshot(snapshot?: { transportState?: string; positionSeconds?: number }): void {
+    this.remotePlaybackSession = true;
+    this.mediaPlaybackEnded = false;
+    const transportState = String(snapshot?.transportState || this.remotePlaybackLastTransportState || 'PLAYING').toUpperCase();
+    const snapshotPosition = Number(snapshot?.positionSeconds || 0);
+    this.remotePlaybackPausedProgress = Number.isFinite(snapshotPosition) ? Math.max(0, snapshotPosition) : 0;
+    this.remotePlaybackLastSnapshotSeconds = this.remotePlaybackPausedProgress;
+    this.remotePlaybackLastTransportState = transportState;
+    this.remotePlaybackLastSnapshotAt = Date.now();
+    this.remotePlaybackLastPlayingStateAt = transportState === 'PLAYING' ? Date.now() : 0;
+    this.remotePlaybackTransitionSince = transportState === 'TRANSITIONING' ? Date.now() : 0;
+    this.remotePlaybackStoppedSnapshots = 0;
+    this.remotePlaybackPendingNextGraceUntil = 0;
+    this.remotePlaybackStartedAt = Date.now();
+    this.remotePlaybackActive = transportState === 'PLAYING' || transportState === 'TRANSITIONING';
+    this.startRemotePlaybackStatePolling();
+  }
+
+  deactivateRemotePolling(): void {
+    this.stopRemotePlaybackStatePolling();
+  }
+
   async play(): Promise<boolean> {
     this.mediaPlaybackEnded = false;
     if (this.remotePlaybackSession || DlnaService.isRemoteOutputRequested()) {
@@ -107,7 +131,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
       this.remotePlaybackLastPlayingStateAt = 0;
       this.remotePlaybackTransitionSince = 0;
       this.remotePlaybackStoppedSnapshots = 0;
-      this.remotePlaybackStoppedSnapshots = 0;
+      this.remotePlaybackPendingNextGraceUntil = 0;
       this.mediaPlaybackEnded = false;
       this.startRemotePlaybackStatePolling();
       return true;
@@ -381,6 +405,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.remotePlaybackLastTransportState = 'PAUSED_PLAYBACK';
         this.remotePlaybackLastSnapshotAt = Date.now();
         this.remotePlaybackStoppedSnapshots = 0;
+        this.remotePlaybackPendingNextGraceUntil = 0;
         this.stopRemotePlaybackStatePolling();
         return true;
       });
@@ -422,6 +447,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.remotePlaybackLastSnapshotAt = Date.now();
         this.remotePlaybackLastPlayingStateAt = Date.now();
         this.remotePlaybackStoppedSnapshots = 0;
+        this.remotePlaybackPendingNextGraceUntil = 0;
         this.startRemotePlaybackStatePolling();
         return true;
       });
@@ -443,6 +469,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.remotePlaybackLastSnapshotAt = Date.now();
         this.remotePlaybackLastPlayingStateAt = 0;
         this.remotePlaybackStoppedSnapshots = 0;
+        this.remotePlaybackPendingNextGraceUntil = 0;
         this.mediaPlaybackEnded = false;
         this.stopRemotePlaybackStatePolling();
         return true;
@@ -689,20 +716,54 @@ export class MediaLocalPlayback implements IMediaPlayback {
   }
 
   private startRemotePlaybackStatePolling() {
-    if (this.remotePlaybackStatePollInterval) {
+    if (this.remotePlaybackStatePollTimeout) {
       return;
     }
-    this.remotePlaybackStatePollInterval = setInterval(() => {
-      this.refreshRemotePlaybackState().catch(() => undefined);
-    }, 1250);
+    this.remotePlaybackFastPollingUntil = Date.now() + 9000;
+    this.scheduleRemotePlaybackStatePoll(0);
   }
 
   private stopRemotePlaybackStatePolling() {
-    if (!this.remotePlaybackStatePollInterval) {
+    if (!this.remotePlaybackStatePollTimeout) {
       return;
     }
-    clearInterval(this.remotePlaybackStatePollInterval);
-    this.remotePlaybackStatePollInterval = undefined;
+    clearTimeout(this.remotePlaybackStatePollTimeout);
+    this.remotePlaybackStatePollTimeout = undefined;
+    this.remotePlaybackFastPollingUntil = 0;
+  }
+
+  private scheduleRemotePlaybackStatePoll(delayMs: number) {
+    if (this.remotePlaybackStatePollTimeout) {
+      clearTimeout(this.remotePlaybackStatePollTimeout);
+    }
+    this.remotePlaybackStatePollTimeout = setTimeout(() => {
+      this.remotePlaybackStatePollTimeout = undefined;
+      this.refreshRemotePlaybackState()
+        .catch(() => undefined)
+        .finally(() => {
+          if (!this.remotePlaybackSession) {
+            return;
+          }
+          this.scheduleRemotePlaybackStatePoll(this.getRemotePlaybackPollIntervalMs());
+        });
+    }, Math.max(0, Math.floor(delayMs)));
+  }
+
+  private getRemotePlaybackPollIntervalMs(): number {
+    if (!this.remotePlaybackSession) {
+      return 1500;
+    }
+    const now = Date.now();
+    if (now < this.remotePlaybackFastPollingUntil) {
+      return 500;
+    }
+    if (this.remotePlaybackLastTransportState === 'TRANSITIONING') {
+      return 500;
+    }
+    if (this.remotePlaybackActive) {
+      return 1100;
+    }
+    return 900;
   }
 
   private async refreshRemotePlaybackState() {
@@ -733,12 +794,14 @@ export class MediaLocalPlayback implements IMediaPlayback {
         this.remotePlaybackActive = true;
         this.remotePlaybackLastPlayingStateAt = Date.now();
         this.remotePlaybackTransitionSince = 0;
+        this.remotePlaybackPendingNextGraceUntil = 0;
         this.mediaPlaybackEnded = false;
       }
     }
     const transportState = this.remotePlaybackLastTransportState;
     const trackDuration = Number(this.mediaTrack.track_duration || 0);
     if (transportState === 'PLAYING') {
+      this.remotePlaybackFastPollingUntil = Date.now() + 2000;
       this.remotePlaybackStoppedSnapshots = 0;
       if (!this.remotePlaybackActive) {
         this.remotePlaybackStartedAt = Date.now();
@@ -746,10 +809,12 @@ export class MediaLocalPlayback implements IMediaPlayback {
       this.remotePlaybackActive = true;
       this.remotePlaybackLastPlayingStateAt = Date.now();
       this.remotePlaybackTransitionSince = 0;
+      this.remotePlaybackPendingNextGraceUntil = 0;
       this.mediaPlaybackEnded = false;
       return;
     }
     if (transportState === 'TRANSITIONING') {
+      this.remotePlaybackFastPollingUntil = Date.now() + 3500;
       this.remotePlaybackStoppedSnapshots = 0;
       if (this.remotePlaybackTransitionSince <= 0) {
         this.remotePlaybackTransitionSince = Date.now();
@@ -767,6 +832,17 @@ export class MediaLocalPlayback implements IMediaPlayback {
       this.remotePlaybackTransitionSince = 0;
       const reachedTrackEnd = trackDuration > 0
         && this.remotePlaybackPausedProgress >= Math.max(0, trackDuration - 1);
+      const hasPendingNextTrack = DlnaService.hasPendingNextTrackOnSelectedRenderer();
+      if (hasPendingNextTrack) {
+        if (this.remotePlaybackPendingNextGraceUntil <= 0) {
+          this.remotePlaybackPendingNextGraceUntil = Date.now() + 9000;
+        }
+        if (Date.now() < this.remotePlaybackPendingNextGraceUntil) {
+          this.remotePlaybackActive = false;
+          this.mediaPlaybackEnded = false;
+          return;
+        }
+      }
       if (reachedTrackEnd) {
         this.remotePlaybackActive = false;
         this.mediaPlaybackEnded = true;
@@ -777,7 +853,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
       const playingStateAgeMs = this.remotePlaybackLastPlayingStateAt > 0
         ? Date.now() - this.remotePlaybackLastPlayingStateAt
         : Number.POSITIVE_INFINITY;
-      if (this.remotePlaybackStoppedSnapshots >= 3 && playingStateAgeMs >= 3500) {
+      if (this.remotePlaybackStoppedSnapshots >= 1 && playingStateAgeMs >= 1200) {
         this.remotePlaybackActive = false;
         this.mediaPlaybackEnded = true;
         this.stopRemotePlaybackStatePolling();
@@ -787,6 +863,7 @@ export class MediaLocalPlayback implements IMediaPlayback {
     if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
       this.remotePlaybackStoppedSnapshots = 0;
       this.remotePlaybackTransitionSince = 0;
+      this.remotePlaybackPendingNextGraceUntil = 0;
       this.remotePlaybackActive = false;
     }
   }

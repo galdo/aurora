@@ -103,6 +103,7 @@ export type DlnaState = {
 export type DlnaRendererSnapshot = {
   transportState?: string;
   positionSeconds?: number;
+  currentTrackUri?: string;
   volumePercent?: number;
   muted?: boolean;
 };
@@ -169,6 +170,11 @@ export class DlnaService {
   private static rendererOutputStateLastRefreshAtByRendererId: Map<string, number> = new Map();
   private static preferredTransportMetadataModeByRendererId: Map<string, DlnaRendererMetadataMode> = new Map();
   private static preferredNextMetadataModeByRendererId: Map<string, DlnaRendererMetadataMode> = new Map();
+  private static rendererCommandQueueByRendererId: Map<string, Promise<void>> = new Map();
+  private static rendererPlaybackOperationTokenByRendererId: Map<string, number> = new Map();
+  private static rendererCurrentTrackIdByRendererId: Map<string, string> = new Map();
+  private static rendererPendingNextTrackIdByRendererId: Map<string, string> = new Map();
+  private static rendererQueueContextSizeByRendererId: Map<string, number> = new Map();
   private static rendererMuteControlUnsupportedIds: Set<string> = new Set();
   private static rendererStoppedAtByRendererId: Map<string, number> = new Map();
   private static selectedRendererSnapshotFailureCount = 0;
@@ -345,75 +351,93 @@ export class DlnaService {
       return false;
     }
 
-    await this.startServer();
-    const filePath = String((mediaTrack.extra as any)?.file_path || '').trim();
-    if (filePath && fs.existsSync(filePath)) {
-      this.registerTrackFromMediaTrack(mediaTrack, filePath);
-    }
+    const operationToken = this.nextRendererPlaybackOperationToken(renderer.id);
+    return this.runRendererCommandSerialized(renderer, 'play_track', async () => {
+      if (!this.isRendererPlaybackOperationCurrent(renderer.id, operationToken)) {
+        return false;
+      }
+      await this.startServer();
+      if (!this.isRendererPlaybackOperationCurrent(renderer.id, operationToken)) {
+        return false;
+      }
 
-    const mediaTrackId = String(mediaTrack.id || mediaTrack.provider_id || '');
-    if (!mediaTrackId) {
-      return false;
-    }
+      const filePath = String((mediaTrack.extra as any)?.file_path || '').trim();
+      if (filePath && fs.existsSync(filePath)) {
+        this.registerTrackFromMediaTrack(mediaTrack, filePath, renderer);
+      }
 
-    const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
-    const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full');
-    const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility');
-    this.writeDlnaLog('info', 'play_track_requested', {
-      rendererId: renderer.id,
-      rendererName: renderer.friendlyName,
-      mediaTrackId,
-      streamUrl,
-    });
+      const mediaTrackId = String(mediaTrack.id || mediaTrack.provider_id || '');
+      if (!mediaTrackId) {
+        return false;
+      }
+      this.rendererCurrentTrackIdByRendererId.set(renderer.id, mediaTrackId);
+      this.rendererPendingNextTrackIdByRendererId.delete(renderer.id);
+      const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
+      const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full');
+      const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility');
+      this.writeDlnaLog('info', 'play_track_requested', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        mediaTrackId,
+        streamUrl,
+      });
 
-    const transportUriWasSet = await this.setRendererTransportUri(
-      renderer,
-      streamUrl,
-      metadata,
-      compatibilityMetadata,
-      'primary',
-    )
-      .then(() => true)
-      .catch(() => false);
-    if (!transportUriWasSet) {
-      await this.sendSoapRequest(
-        renderer.avTransportControlUrl,
-        renderer.avTransportServiceType,
-        'Stop',
-        {
-          InstanceID: '0',
-        },
-      ).catch(() => undefined);
-      await this.setRendererTransportUri(
+      await this.stopRenderer(renderer).catch(() => undefined);
+      await this.waitForSelectedRendererTransportState({
+        allowedStates: ['STOPPED', 'NO_MEDIA_PRESENT', 'PAUSED_PLAYBACK', 'PAUSED', 'PLAYING'],
+        timeoutMs: 2200,
+      }).catch(() => undefined);
+      await this.wait(80);
+      if (!this.isRendererPlaybackOperationCurrent(renderer.id, operationToken)) {
+        return false;
+      }
+
+      const transportUriWasSet = await this.setRendererTransportUri(
         renderer,
         streamUrl,
         metadata,
         compatibilityMetadata,
-        'retry',
-      );
-    }
+        'primary',
+      )
+        .then(() => true)
+        .catch(() => false);
+      if (!transportUriWasSet) {
+        await this.stopRenderer(renderer).catch(() => undefined);
+        await this.wait(80);
+        if (!this.isRendererPlaybackOperationCurrent(renderer.id, operationToken)) {
+          return false;
+        }
+        await this.setRendererTransportUri(
+          renderer,
+          streamUrl,
+          metadata,
+          compatibilityMetadata,
+          'retry',
+        );
+      }
+      if (!this.isRendererPlaybackOperationCurrent(renderer.id, operationToken)) {
+        return false;
+      }
 
-    const playbackStarted = await this.startRendererPlayback(renderer, seekPositionSeconds);
-    this.applyRendererOutputState(renderer, options).catch((error: any) => {
-      this.writeDlnaLog('warn', 'apply_output_state_failed', {
-        rendererId: renderer.id,
-        rendererName: renderer.friendlyName,
-        error: String(error?.message || error || ''),
+      const playbackStarted = await this.startRendererPlayback(renderer, seekPositionSeconds);
+      this.applyRendererOutputState(renderer, options).catch((error: any) => {
+        this.writeDlnaLog('warn', 'apply_output_state_failed', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          error: String(error?.message || error || ''),
+        });
       });
+      if (playbackStarted) {
+        return true;
+      }
+      await this.stopRenderer(renderer).catch(() => undefined);
+      await this.wait(80);
+      if (!this.isRendererPlaybackOperationCurrent(renderer.id, operationToken)) {
+        return false;
+      }
+      await this.setRendererTransportUri(renderer, streamUrl, metadata, compatibilityMetadata, 'retry');
+      return this.startRendererPlayback(renderer, seekPositionSeconds);
     });
-    if (playbackStarted) {
-      return true;
-    }
-    await this.sendSoapRequest(
-      renderer.avTransportControlUrl,
-      renderer.avTransportServiceType,
-      'Stop',
-      {
-        InstanceID: '0',
-      },
-    ).catch(() => undefined);
-    await this.setRendererTransportUri(renderer, streamUrl, metadata, compatibilityMetadata, 'retry');
-    return this.startRendererPlayback(renderer, seekPositionSeconds);
   }
 
   static async setNextMediaTrackOnSelectedRenderer(mediaTrack?: IMediaTrack): Promise<boolean> {
@@ -421,33 +445,192 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
-    await this.startServer();
-    if (!mediaTrack) {
-      return this.sendSoapRequest(
-        renderer.avTransportControlUrl,
-        renderer.avTransportServiceType,
-        'SetNextAVTransportURI',
-        {
-          InstanceID: '0',
-          NextURI: '',
-          NextURIMetaData: '',
-        },
-      )
-        .then(() => true)
-        .catch(() => false);
-    }
-    const filePath = String((mediaTrack.extra as any)?.file_path || '').trim();
-    if (filePath && fs.existsSync(filePath)) {
-      this.registerTrackFromMediaTrack(mediaTrack, filePath);
-    }
-    const mediaTrackId = String(mediaTrack.id || mediaTrack.provider_id || '').trim();
-    if (!mediaTrackId) {
+    return this.runRendererCommandSerialized(renderer, 'set_next_track', async () => {
+      await this.startServer();
+      if (!mediaTrack) {
+        return this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'SetNextAVTransportURI',
+          {
+            InstanceID: '0',
+            NextURI: '',
+            NextURIMetaData: '',
+          },
+        )
+          .then(() => {
+            this.rendererPendingNextTrackIdByRendererId.delete(renderer.id);
+            return true;
+          })
+          .catch(() => false);
+      }
+      const filePath = String((mediaTrack.extra as any)?.file_path || '').trim();
+      if (filePath && fs.existsSync(filePath)) {
+        this.registerTrackFromMediaTrack(mediaTrack, filePath, renderer);
+      }
+      const mediaTrackId = String(mediaTrack.id || mediaTrack.provider_id || '').trim();
+      if (!mediaTrackId) {
+        return false;
+      }
+      const currentTrackId = String(this.rendererCurrentTrackIdByRendererId.get(renderer.id) || '');
+      if (currentTrackId && currentTrackId === mediaTrackId) {
+        this.writeDlnaLog('info', 'set_next_uri_skipped_same_as_current', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          mediaTrackId,
+        });
+        return true;
+      }
+      const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
+      const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full');
+      const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility');
+      return this.setRendererNextTransportUri(renderer, streamUrl, metadata, compatibilityMetadata)
+        .then((result) => {
+          if (result) {
+            this.rendererPendingNextTrackIdByRendererId.set(renderer.id, mediaTrackId);
+          }
+          return result;
+        });
+    });
+  }
+
+  static async setSelectedRendererQueueContext(
+    mediaTracks: IMediaTrack[],
+    currentTrackId?: string,
+    contextId?: string,
+  ): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
       return false;
     }
-    const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
-    const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full');
-    const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility');
-    return this.setRendererNextTransportUri(renderer, streamUrl, metadata, compatibilityMetadata);
+    await this.startServer();
+    const rendererBaseUrl = this.getRendererBaseUrl(renderer);
+    if (!rendererBaseUrl) {
+      return false;
+    }
+    const normalizedTracks = (mediaTracks || [])
+      .map((track) => {
+        const trackId = String(track.id || track.provider_id || '').trim();
+        if (!trackId) {
+          return undefined;
+        }
+        const filePath = String((track.extra as any)?.file_path || '').trim();
+        if (filePath && fs.existsSync(filePath)) {
+          this.registerTrackFromMediaTrack(track, filePath, renderer);
+        }
+        const streamUrl = this.getTrackStreamUrlForRenderer(renderer, trackId);
+        const coverPath = this.getTrackCoverPathFromMediaTrack(track);
+        const coverUrl = coverPath
+          ? this.getTrackCoverUrlForRenderer(renderer, trackId)
+          : '';
+        return {
+          id: trackId,
+          uri: streamUrl,
+          title: String(track.track_name || 'Track'),
+          artist: String(track.track_artists?.map(trackArtist => trackArtist.artist_name).join(', ') || ''),
+          albumArt: coverUrl,
+          duration: Number(track.track_duration || 0),
+        };
+      })
+      .filter(Boolean) as Array<{
+      id: string;
+      uri: string;
+      title: string;
+      artist: string;
+      albumArt: string;
+      duration: number;
+    }>;
+    const normalizedCurrentTrackId = String(currentTrackId || '').trim();
+    const normalizedContextId = String(contextId || '').trim();
+    const queueContextKey = `${renderer.id}:${normalizedContextId || 'mixed'}`;
+    const nextQueueSize = normalizedTracks.length;
+    const previousQueueSize = Number(this.rendererQueueContextSizeByRendererId.get(queueContextKey) || 0);
+    const rendererAnyContextHasMultiTrack = Array.from(this.rendererQueueContextSizeByRendererId.entries())
+      .some(([key, value]) => key.startsWith(`${renderer.id}:`) && Number(value || 0) > 1);
+    if (nextQueueSize <= 1 && (previousQueueSize > 1 || rendererAnyContextHasMultiTrack)) {
+      this.writeDlnaLog('warn', 'queue_context_rejected_shrinking_to_single', {
+        rendererId: renderer.id,
+        contextId: normalizedContextId || 'mixed',
+        previousQueueSize,
+        nextQueueSize,
+        rendererAnyContextHasMultiTrack,
+      });
+      return true;
+    }
+    const currentTrack = normalizedTracks.find(track => track.id === normalizedCurrentTrackId);
+    const payload = {
+      contextId: normalizedContextId,
+      currentTrackId: normalizedCurrentTrackId,
+      currentUri: currentTrack?.uri || '',
+      tracks: normalizedTracks,
+    };
+    this.writeDlnaLog('info', 'queue_context_publish_requested', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+      contextId: normalizedContextId || 'mixed',
+      queueSize: normalizedTracks.length,
+      currentTrackId: normalizedCurrentTrackId || '',
+      previousQueueSize,
+      rendererBaseUrl,
+    });
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => abortController.abort(), 2000);
+    try {
+      const response = await fetch(`${rendererBaseUrl}/aurora/queue`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: abortController.signal,
+      });
+      if (response.ok) {
+        this.rendererQueueContextSizeByRendererId.set(queueContextKey, nextQueueSize);
+        this.writeDlnaLog('info', 'queue_context_publish_ack', {
+          rendererId: renderer.id,
+          contextId: normalizedContextId || 'mixed',
+          queueSize: normalizedTracks.length,
+        });
+      } else {
+        this.writeDlnaLog('warn', 'queue_context_publish_http_failed', {
+          rendererId: renderer.id,
+          contextId: normalizedContextId || 'mixed',
+          queueSize: normalizedTracks.length,
+          status: response.status,
+        });
+      }
+      return response.ok;
+    } catch (error) {
+      this.writeDlnaLog('warn', 'queue_context_publish_failed', {
+        rendererId: renderer.id,
+        contextId: normalizedContextId || 'mixed',
+        queueSize: normalizedTracks.length,
+        error: String((error as any)?.message || error || ''),
+      });
+      return false;
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  static getSelectedRendererCurrentTrackId(): string | undefined {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return undefined;
+    }
+    return this.rendererCurrentTrackIdByRendererId.get(renderer.id);
+  }
+
+  static getSelectedRendererPendingNextTrackId(): string | undefined {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return undefined;
+    }
+    return this.rendererPendingNextTrackIdByRendererId.get(renderer.id);
+  }
+
+  static hasPendingNextTrackOnSelectedRenderer(): boolean {
+    return !!this.getSelectedRendererPendingNextTrackId();
   }
 
   static async pauseSelectedRenderer(): Promise<boolean> {
@@ -459,72 +642,74 @@ export class DlnaService {
       rendererId: renderer.id,
       rendererName: renderer.friendlyName,
     });
-    const paused = await this.sendSoapRequest(
-      renderer.avTransportControlUrl,
-      renderer.avTransportServiceType,
-      'Pause',
-      {
-        InstanceID: '0',
-      },
-    )
-      .then(() => true)
-      .catch(() => false);
-    if (paused) {
-      this.writeDlnaLog('info', 'pause_acknowledged', {
-        rendererId: renderer.id,
-        rendererName: renderer.friendlyName,
-        source: 'soap_response',
-      });
-      return true;
-    }
-    const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
-    const transportState = String(snapshot?.transportState || '').toUpperCase();
-    if (transportState === 'TRANSITIONING') {
-      const stableState = await this.waitForSelectedRendererTransportState({
-        allowedStates: ['PAUSED_PLAYBACK', 'PAUSED', 'STOPPED', 'NO_MEDIA_PRESENT', 'PLAYING'],
-        timeoutMs: 2400,
-      });
-      if (stableState === 'PAUSED_PLAYBACK'
-        || stableState === 'PAUSED'
-        || stableState === 'STOPPED'
-        || stableState === 'NO_MEDIA_PRESENT') {
-        this.writeDlnaLog('info', 'pause_delayed_acknowledged', {
+    return this.runRendererCommandSerialized(renderer, 'pause', async () => {
+      const paused = await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'Pause',
+        {
+          InstanceID: '0',
+        },
+      )
+        .then(() => true)
+        .catch(() => false);
+      if (paused) {
+        this.writeDlnaLog('info', 'pause_acknowledged', {
           rendererId: renderer.id,
           rendererName: renderer.friendlyName,
-          transportState: stableState,
+          source: 'soap_response',
         });
         return true;
       }
-      if (stableState === 'PLAYING') {
-        const retriedPause = await this.sendSoapRequest(
-          renderer.avTransportControlUrl,
-          renderer.avTransportServiceType,
-          'Pause',
-          {
-            InstanceID: '0',
-          },
-        )
-          .then(() => true)
-          .catch(() => false);
-        if (retriedPause) {
-          this.writeDlnaLog('info', 'pause_acknowledged', {
+      const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+      const transportState = String(snapshot?.transportState || '').toUpperCase();
+      if (transportState === 'TRANSITIONING') {
+        const stableState = await this.waitForSelectedRendererTransportState({
+          allowedStates: ['PAUSED_PLAYBACK', 'PAUSED', 'STOPPED', 'NO_MEDIA_PRESENT', 'PLAYING'],
+          timeoutMs: 2400,
+        });
+        if (stableState === 'PAUSED_PLAYBACK'
+          || stableState === 'PAUSED'
+          || stableState === 'STOPPED'
+          || stableState === 'NO_MEDIA_PRESENT') {
+          this.writeDlnaLog('info', 'pause_delayed_acknowledged', {
             rendererId: renderer.id,
             rendererName: renderer.friendlyName,
-            source: 'soap_retry_after_transition',
+            transportState: stableState,
           });
           return true;
         }
+        if (stableState === 'PLAYING') {
+          const retriedPause = await this.sendSoapRequest(
+            renderer.avTransportControlUrl,
+            renderer.avTransportServiceType,
+            'Pause',
+            {
+              InstanceID: '0',
+            },
+          )
+            .then(() => true)
+            .catch(() => false);
+          if (retriedPause) {
+            this.writeDlnaLog('info', 'pause_acknowledged', {
+              rendererId: renderer.id,
+              rendererName: renderer.friendlyName,
+              source: 'soap_retry_after_transition',
+            });
+            return true;
+          }
+        }
       }
-    }
-    this.writeDlnaLog('info', 'pause_snapshot_check', {
-      rendererId: renderer.id,
-      rendererName: renderer.friendlyName,
-      transportState,
+      this.writeDlnaLog('info', 'pause_snapshot_check', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        transportState,
+      });
+      return transportState === 'PAUSED_PLAYBACK'
+        || transportState === 'PAUSED'
+        || transportState === 'STOPPED'
+        || transportState === 'NO_MEDIA_PRESENT';
     });
-    return transportState === 'PAUSED_PLAYBACK'
-      || transportState === 'PAUSED'
-      || transportState === 'STOPPED'
-      || transportState === 'NO_MEDIA_PRESENT';
   }
 
   static async resumeSelectedRenderer(): Promise<boolean> {
@@ -536,71 +721,73 @@ export class DlnaService {
       rendererId: renderer.id,
       rendererName: renderer.friendlyName,
     });
-    const resumed = await this.sendSoapRequest(
-      renderer.avTransportControlUrl,
-      renderer.avTransportServiceType,
-      'Play',
-      {
-        InstanceID: '0',
-        Speed: '1',
-      },
-    )
-      .then(() => true)
-      .catch(() => false);
-    if (resumed) {
-      this.writeDlnaLog('info', 'resume_acknowledged', {
-        rendererId: renderer.id,
-        rendererName: renderer.friendlyName,
-        source: 'soap_response',
-      });
-      return true;
-    }
-    const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
-    const transportState = String(snapshot?.transportState || '').toUpperCase();
-    if (transportState === 'TRANSITIONING') {
-      const stableState = await this.waitForSelectedRendererTransportState({
-        allowedStates: ['PLAYING', 'PAUSED_PLAYBACK', 'PAUSED', 'STOPPED', 'NO_MEDIA_PRESENT'],
-        timeoutMs: 2400,
-      });
-      if (stableState === 'PLAYING') {
-        this.writeDlnaLog('info', 'resume_delayed_acknowledged', {
+    return this.runRendererCommandSerialized(renderer, 'resume', async () => {
+      const resumed = await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'Play',
+        {
+          InstanceID: '0',
+          Speed: '1',
+        },
+      )
+        .then(() => true)
+        .catch(() => false);
+      if (resumed) {
+        this.writeDlnaLog('info', 'resume_acknowledged', {
           rendererId: renderer.id,
           rendererName: renderer.friendlyName,
-          transportState: stableState,
+          source: 'soap_response',
         });
         return true;
       }
-      if (stableState === 'PAUSED_PLAYBACK'
-        || stableState === 'PAUSED'
-        || stableState === 'STOPPED'
-        || stableState === 'NO_MEDIA_PRESENT') {
-        const retriedPlay = await this.sendSoapRequest(
-          renderer.avTransportControlUrl,
-          renderer.avTransportServiceType,
-          'Play',
-          {
-            InstanceID: '0',
-            Speed: '1',
-          },
-        )
-          .then(() => true)
-          .catch(() => false);
-        if (retriedPlay) {
-          this.writeDlnaLog('info', 'resume_acknowledged', {
+      const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+      const transportState = String(snapshot?.transportState || '').toUpperCase();
+      if (transportState === 'TRANSITIONING') {
+        const stableState = await this.waitForSelectedRendererTransportState({
+          allowedStates: ['PLAYING', 'PAUSED_PLAYBACK', 'PAUSED', 'STOPPED', 'NO_MEDIA_PRESENT'],
+          timeoutMs: 2400,
+        });
+        if (stableState === 'PLAYING') {
+          this.writeDlnaLog('info', 'resume_delayed_acknowledged', {
             rendererId: renderer.id,
             rendererName: renderer.friendlyName,
-            source: 'soap_retry_after_transition',
+            transportState: stableState,
           });
           return true;
         }
+        if (stableState === 'PAUSED_PLAYBACK'
+          || stableState === 'PAUSED'
+          || stableState === 'STOPPED'
+          || stableState === 'NO_MEDIA_PRESENT') {
+          const retriedPlay = await this.sendSoapRequest(
+            renderer.avTransportControlUrl,
+            renderer.avTransportServiceType,
+            'Play',
+            {
+              InstanceID: '0',
+              Speed: '1',
+            },
+          )
+            .then(() => true)
+            .catch(() => false);
+          if (retriedPlay) {
+            this.writeDlnaLog('info', 'resume_acknowledged', {
+              rendererId: renderer.id,
+              rendererName: renderer.friendlyName,
+              source: 'soap_retry_after_transition',
+            });
+            return true;
+          }
+        }
       }
-    }
-    this.writeDlnaLog('info', 'resume_snapshot_check', {
-      rendererId: renderer.id,
-      rendererName: renderer.friendlyName,
-      transportState,
+      this.writeDlnaLog('info', 'resume_snapshot_check', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        transportState,
+      });
+      return transportState === 'PLAYING';
     });
-    return transportState === 'PLAYING';
   }
 
   static async stopSelectedRenderer(): Promise<boolean> {
@@ -612,26 +799,28 @@ export class DlnaService {
       rendererId: renderer.id,
       rendererName: renderer.friendlyName,
     });
-    await this.stopRenderer(renderer);
-    const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
-    const transportState = String(snapshot?.transportState || '').toUpperCase();
-    if (transportState === 'TRANSITIONING') {
-      const stableState = await this.waitForSelectedRendererTransportState({
-        allowedStates: ['STOPPED', 'NO_MEDIA_PRESENT', 'PAUSED_PLAYBACK', 'PAUSED', 'PLAYING'],
-        timeoutMs: 2400,
-      });
-      this.writeDlnaLog('info', 'stop_delayed_snapshot_check', {
+    return this.runRendererCommandSerialized(renderer, 'stop', async () => {
+      await this.stopRenderer(renderer);
+      const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+      const transportState = String(snapshot?.transportState || '').toUpperCase();
+      if (transportState === 'TRANSITIONING') {
+        const stableState = await this.waitForSelectedRendererTransportState({
+          allowedStates: ['STOPPED', 'NO_MEDIA_PRESENT', 'PAUSED_PLAYBACK', 'PAUSED', 'PLAYING'],
+          timeoutMs: 2400,
+        });
+        this.writeDlnaLog('info', 'stop_delayed_snapshot_check', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          transportState: stableState || transportState,
+        });
+      }
+      this.writeDlnaLog('info', 'stop_snapshot_check', {
         rendererId: renderer.id,
         rendererName: renderer.friendlyName,
-        transportState: stableState || transportState,
+        transportState,
       });
-    }
-    this.writeDlnaLog('info', 'stop_snapshot_check', {
-      rendererId: renderer.id,
-      rendererName: renderer.friendlyName,
-      transportState,
+      return true;
     });
-    return true;
   }
 
   static async getSelectedRendererSnapshot(): Promise<DlnaRendererSnapshot | undefined> {
@@ -731,6 +920,23 @@ export class DlnaService {
 
     const currentTransportState = String(this.extractXmlTagValue(transportInfoResponse, 'CurrentTransportState') || '').trim();
     const relativeTimePosition = String(this.extractXmlTagValue(positionInfoResponse, 'RelTime') || '').trim();
+    const currentTrackUri = String(this.extractXmlTagValue(positionInfoResponse, 'TrackURI') || '').trim();
+    const currentTrackId = this.extractTrackIdFromDlnaTrackUri(currentTrackUri);
+    if (currentTrackId) {
+      this.rendererCurrentTrackIdByRendererId.set(renderer.id, currentTrackId);
+      this.writeDlnaLog('info', 'snapshot_track_id_resolved', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        currentTrackId,
+        currentTrackUri,
+      });
+    } else if (currentTrackUri) {
+      this.writeDlnaLog('warn', 'snapshot_track_id_unresolved', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        currentTrackUri,
+      });
+    }
     const currentVolume = Number(this.extractXmlTagValue(volumeResponse, 'CurrentVolume') || NaN);
     const currentMute = String(this.extractXmlTagValue(muteResponse, 'CurrentMute') || '').trim();
     if (Number.isFinite(currentVolume)) {
@@ -754,6 +960,7 @@ export class DlnaService {
     return {
       transportState: currentTransportState || undefined,
       positionSeconds: this.parseDlnaTimeToSeconds(relativeTimePosition),
+      currentTrackUri: currentTrackUri || undefined,
       volumePercent: Number.isFinite(currentVolume)
         ? Math.max(0, Math.min(100, Math.floor(currentVolume)))
         : this.rendererOutputStateByRendererId.get(renderer.id)?.volumePercent,
@@ -780,17 +987,19 @@ export class DlnaService {
     }
     const clampedSeconds = Math.max(0, Math.floor(Number(seekPositionSeconds || 0)));
     const seekTarget = this.formatSecondsAsDlnaTime(clampedSeconds);
-    await this.sendSoapRequest(
-      renderer.avTransportControlUrl,
-      renderer.avTransportServiceType,
-      'Seek',
-      {
-        InstanceID: '0',
-        Unit: 'REL_TIME',
-        Target: seekTarget,
-      },
-    );
-    return true;
+    return this.runRendererCommandSerialized(renderer, 'seek', async () => {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'Seek',
+        {
+          InstanceID: '0',
+          Unit: 'REL_TIME',
+          Target: seekTarget,
+        },
+      );
+      return true;
+    });
   }
 
   static async setSelectedRendererVolume(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): Promise<boolean> {
@@ -800,20 +1009,22 @@ export class DlnaService {
     }
     const maxVolume = Math.max(1, Number(mediaPlaybackMaxVolume || 100));
     const volume = Math.max(0, Math.min(100, Math.round((Number(mediaPlaybackVolume || 0) / maxVolume) * 100)));
-    await this.sendSoapRequest(
-      renderer.renderingControlUrl,
-      renderer.renderingControlServiceType,
-      'SetVolume',
-      {
-        InstanceID: '0',
-        Channel: 'Master',
-        DesiredVolume: String(volume),
-      },
-    );
-    this.updateRendererOutputCache(renderer.id, {
-      volumePercent: volume,
+    return this.runRendererCommandSerialized(renderer, 'set_volume', async () => {
+      await this.sendSoapRequest(
+        renderer.renderingControlUrl,
+        renderer.renderingControlServiceType,
+        'SetVolume',
+        {
+          InstanceID: '0',
+          Channel: 'Master',
+          DesiredVolume: String(volume),
+        },
+      );
+      this.updateRendererOutputCache(renderer.id, {
+        volumePercent: volume,
+      });
+      return true;
     });
-    return true;
   }
 
   static async muteSelectedRenderer(): Promise<boolean> {
@@ -824,20 +1035,22 @@ export class DlnaService {
     if (this.rendererMuteControlUnsupportedIds.has(renderer.id)) {
       return true;
     }
-    await this.sendSoapRequest(
-      renderer.renderingControlUrl,
-      renderer.renderingControlServiceType,
-      'SetMute',
-      {
-        InstanceID: '0',
-        Channel: 'Master',
-        DesiredMute: '1',
-      },
-    );
-    this.updateRendererOutputCache(renderer.id, {
-      muted: true,
+    return this.runRendererCommandSerialized(renderer, 'mute', async () => {
+      await this.sendSoapRequest(
+        renderer.renderingControlUrl,
+        renderer.renderingControlServiceType,
+        'SetMute',
+        {
+          InstanceID: '0',
+          Channel: 'Master',
+          DesiredMute: '1',
+        },
+      );
+      this.updateRendererOutputCache(renderer.id, {
+        muted: true,
+      });
+      return true;
     });
-    return true;
   }
 
   static async unmuteSelectedRenderer(): Promise<boolean> {
@@ -848,23 +1061,25 @@ export class DlnaService {
     if (this.rendererMuteControlUnsupportedIds.has(renderer.id)) {
       return true;
     }
-    await this.sendSoapRequest(
-      renderer.renderingControlUrl,
-      renderer.renderingControlServiceType,
-      'SetMute',
-      {
-        InstanceID: '0',
-        Channel: 'Master',
-        DesiredMute: '0',
-      },
-    );
-    this.updateRendererOutputCache(renderer.id, {
-      muted: false,
+    return this.runRendererCommandSerialized(renderer, 'unmute', async () => {
+      await this.sendSoapRequest(
+        renderer.renderingControlUrl,
+        renderer.renderingControlServiceType,
+        'SetMute',
+        {
+          InstanceID: '0',
+          Channel: 'Master',
+          DesiredMute: '0',
+        },
+      );
+      this.updateRendererOutputCache(renderer.id, {
+        muted: false,
+      });
+      return true;
     });
-    return true;
   }
 
-  static registerTrackFromMediaTrack(mediaTrack: IMediaTrack, filePath: string) {
+  static registerTrackFromMediaTrack(mediaTrack: IMediaTrack, filePath: string, renderer?: DlnaRendererDevice) {
     if (!filePath || !fs.existsSync(filePath)) {
       return;
     }
@@ -882,7 +1097,7 @@ export class DlnaService {
       albumId: String(mediaTrack.track_album_id || ''),
       duration: Number(mediaTrack.track_duration || 0),
       filePath,
-      mimeType: this.getMimeType(filePath),
+      mimeType: this.getMimeType(filePath, renderer),
       fileSize: Number(fileStats.size || 0),
       coverPath: coverPath || undefined,
       coverMimeType: coverPath ? this.getImageMimeType(coverPath) : undefined,
@@ -1047,8 +1262,14 @@ export class DlnaService {
     const friendlyName = String(this.extractXmlTagValue(xml, 'friendlyName') || udn).trim();
     const modelName = String(this.extractXmlTagValue(xml, 'modelName') || '').trim();
     const serviceBlocks = this.extractXmlServiceBlocks(xml);
-    const avTransportService = serviceBlocks.find(serviceBlock => serviceBlock.serviceType === this.avTransportServiceType);
-    const renderingControlService = serviceBlocks.find(serviceBlock => serviceBlock.serviceType === this.renderingControlServiceType);
+    const avTransportService = serviceBlocks.find(serviceBlock => this.matchesServiceType(
+      serviceBlock.serviceType,
+      this.avTransportServiceType,
+    ));
+    const renderingControlService = serviceBlocks.find(serviceBlock => this.matchesServiceType(
+      serviceBlock.serviceType,
+      this.renderingControlServiceType,
+    ));
 
     if (!avTransportService || !renderingControlService) {
       return;
@@ -1135,13 +1356,30 @@ export class DlnaService {
     while (serviceMatch) {
       const block = String(serviceMatch[1] || '');
       const serviceType = String(this.extractXmlTagValue(block, 'serviceType') || '').trim();
-      const controlURL = String(this.extractXmlTagValue(block, 'controlURL') || '').trim();
+      const controlURL = String(
+        this.extractXmlTagValue(block, 'controlURL')
+        || this.extractXmlTagValue(block, 'controlUrl')
+        || '',
+      ).trim();
       if (serviceType && controlURL) {
         services.push({ serviceType, controlURL });
       }
       serviceMatch = serviceRegex.exec(xml);
     }
     return services;
+  }
+
+  private static matchesServiceType(value: string, target: string): boolean {
+    const normalizedValue = String(value || '').toLowerCase().trim();
+    const normalizedTarget = String(target || '').toLowerCase().trim();
+    if (!normalizedValue || !normalizedTarget) {
+      return false;
+    }
+    if (normalizedValue === normalizedTarget) {
+      return true;
+    }
+    const targetPrefix = normalizedTarget.replace(/:\d+$/, ':');
+    return normalizedValue.startsWith(targetPrefix);
   }
 
   private static resolveServiceUrl(location: string, controlUrl: string): string {
@@ -1158,6 +1396,41 @@ export class DlnaService {
     const rendererAddress = String(rendererUrl.hostname || '').replace(/^::ffff:/, '');
     const servingIp = this.getBestServingIpForClient(rendererAddress);
     return `http://${servingIp}:${this.port}/stream/${encodeURIComponent(mediaTrackId)}`;
+  }
+
+  private static getRendererBaseUrl(renderer: DlnaRendererDevice): string {
+    const resolveOrigin = (value: string): string => {
+      try {
+        const parsed = new URL(value);
+        return `${parsed.protocol}//${parsed.host}`;
+      } catch (_error) {
+        return '';
+      }
+    };
+    const locationUrl = String(renderer.location || '').trim();
+    if (locationUrl) {
+      const origin = resolveOrigin(locationUrl);
+      if (origin) {
+        return origin;
+      }
+    }
+    const transportUrl = String(renderer.avTransportControlUrl || '').trim();
+    if (!transportUrl) {
+      return '';
+    }
+    return resolveOrigin(transportUrl);
+  }
+
+  static cancelPendingSelectedRendererPlaybackOperations(): void {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return;
+    }
+    this.nextRendererPlaybackOperationToken(renderer.id);
+    this.writeDlnaLog('info', 'playback_operation_cancelled', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+    });
   }
 
   private static getTrackCoverUrlForRenderer(renderer: DlnaRendererDevice, mediaTrackId: string): string {
@@ -1189,7 +1462,7 @@ export class DlnaService {
       ? ` dlna:profileID="${coverProfile}"`
       : '';
     const coverProtocolInfo = coverProfile
-      ? `http-get:*:${coverMimeType}:DLNA.ORG_PN=${coverProfile}`
+      ? `http-get:*:${coverMimeType}:DLNA.ORG_PN=${coverProfile};DLNA.ORG_CI=1`
       : `http-get:*:${coverMimeType}:*`;
     const duration = this.formatSecondsAsDlnaTime(Number(mediaTrack.track_duration || 0));
     return `<?xml version="1.0" encoding="utf-8"?>
@@ -1201,6 +1474,7 @@ ${this.getDidlRootStart()}
 <upnp:class>object.item.audioItem.musicTrack</upnp:class>
 ${coverUrl ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
 ${coverUrl && coverProfile ? `<upnp:albumArtURI>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl ? `<upnp:icon>${this.escapeXml(coverUrl)}</upnp:icon>` : ''}
 ${coverUrl && coverMimeType ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${mimeType}:*" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>
@@ -1208,7 +1482,7 @@ ${coverUrl && coverMimeType ? `<res protocolInfo="${coverProtocolInfo}">${this.e
   }
 
   private static getDlnaImageProfileForMimeType(): string {
-    return 'JPEG_TN';
+    return 'JPEG_SM';
   }
 
   private static formatSecondsAsDlnaTime(seconds: number): string {
@@ -1996,14 +2270,14 @@ ${actionBody}
       response.end('Cover not available');
       return;
     }
-    let coverBuffer = fs.readFileSync(coverPath);
-    let coverMimeType = 'image/jpeg';
+    const rawCoverBuffer = fs.readFileSync(coverPath);
+    let coverBuffer: Buffer;
     try {
-      coverBuffer = await sharp(coverBuffer)
+      coverBuffer = await sharp(rawCoverBuffer)
         .rotate()
         .resize({
-          width: 640,
-          height: 640,
+          width: 600,
+          height: 600,
           fit: 'inside',
           withoutEnlargement: true,
         })
@@ -2014,18 +2288,39 @@ ${actionBody}
           chromaSubsampling: '4:2:0',
         })
         .toBuffer();
-    } catch (error) {
-      coverMimeType = track?.coverMimeType || this.getImageMimeType(coverPath);
-      debug('streamTrackCover sharp conversion failed - %o', error);
-      this.writeDlnaLog('error', 'cover_sharp_conversion_failed', {
-        trackId,
-        coverPath,
-        error: String((error as any)?.message || error || ''),
-      });
+    } catch (_error) {
+      try {
+        coverBuffer = await sharp(coverPath)
+          .rotate()
+          .resize({
+            width: 600,
+            height: 600,
+            fit: 'inside',
+            withoutEnlargement: true,
+          })
+          .jpeg({
+            quality: 86,
+            progressive: false,
+            mozjpeg: true,
+            chromaSubsampling: '4:2:0',
+          })
+          .toBuffer();
+      } catch (error) {
+        debug('streamTrackCover sharp conversion failed - %o', error);
+        this.writeDlnaLog('error', 'cover_sharp_conversion_failed', {
+          trackId,
+          coverPath,
+          error: String((error as any)?.message || error || ''),
+        });
+        response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        response.end('Cover conversion failed');
+        return;
+      }
     }
     const coverProfile = this.getDlnaImageProfileForMimeType();
+    const coverMimeType = 'image/jpeg';
     const coverContentFeatures = coverProfile
-      ? `DLNA.ORG_PN=${coverProfile};DLNA.ORG_OP=01`
+      ? `DLNA.ORG_PN=${coverProfile};DLNA.ORG_OP=01;DLNA.ORG_CI=1`
       : 'DLNA.ORG_OP=01';
     const rangeHeader = String(request.headers.range || '');
     const totalLength = coverBuffer.byteLength;
@@ -2268,7 +2563,7 @@ ${items}
     }
   }
 
-  private static getMimeType(filePath: string) {
+  private static getMimeType(filePath: string, renderer?: DlnaRendererDevice) {
     const extension = path.extname(filePath).toLowerCase();
     if (extension === '.flac') {
       return 'audio/flac';
@@ -2286,12 +2581,34 @@ ${items}
       return 'audio/ogg';
     }
     if (extension === '.dsf') {
-      return 'audio/x-dsf';
+      const profile = this.getRendererDsdMimeProfile(renderer);
+      return profile?.dsfMime || 'audio/x-dsf';
     }
     if (extension === '.dff') {
-      return 'audio/x-dff';
+      const profile = this.getRendererDsdMimeProfile(renderer);
+      return profile?.dffMime || 'audio/x-dff';
     }
     return 'audio/mpeg';
+  }
+
+  private static getRendererDsdMimeProfile(renderer?: DlnaRendererDevice): { dsfMime: string; dffMime: string } | undefined {
+    const rendererDescriptor = `${String(renderer?.friendlyName || '')} ${String(renderer?.modelName || '')}`.toLowerCase();
+    if (!rendererDescriptor) {
+      return undefined;
+    }
+    if (rendererDescriptor.includes('cambridge')
+      || rendererDescriptor.includes('bubbleupnp')
+      || rendererDescriptor.includes('jriver')
+      || rendererDescriptor.includes('foobar')) {
+      return {
+        dsfMime: 'audio/x-dsd',
+        dffMime: 'audio/x-dsd',
+      };
+    }
+    return {
+      dsfMime: 'audio/x-dsf',
+      dffMime: 'audio/x-dff',
+    };
   }
 
   private static escapeXml(value: string) {
@@ -2434,6 +2751,7 @@ ${items}
           'http-get:*:audio/ogg:*',
           'http-get:*:audio/x-dsf:*',
           'http-get:*:audio/x-dff:*',
+          'http-get:*:audio/x-dsd:*',
         ].join(',');
         const payload = [
           `<Source>${this.escapeXml(sourceProtocols)}</Source>`,
@@ -2497,6 +2815,22 @@ ${actionBody}
       return undefined;
     }
     return (hours * 3600) + (minutes * 60) + seconds;
+  }
+
+  private static extractTrackIdFromDlnaTrackUri(value: string): string | undefined {
+    const uri = String(value || '').trim();
+    if (!uri) {
+      return undefined;
+    }
+    const streamSegmentMatch = uri.match(/\/stream\/([^/?#]+)/i);
+    if (!streamSegmentMatch?.[1]) {
+      return undefined;
+    }
+    try {
+      return decodeURIComponent(streamSegmentMatch[1]);
+    } catch (_error) {
+      return streamSegmentMatch[1];
+    }
   }
 
   private static decodeXmlEntities(value: string) {
@@ -2678,7 +3012,7 @@ ${this.buildTrackDidlItem(track, 'tracks', clientAddress)}
     let coverProtocolInfo = '';
     if (coverMimeType) {
       if (coverProfile) {
-        coverProtocolInfo = `http-get:*:${coverMimeType}:DLNA.ORG_PN=${coverProfile}`;
+        coverProtocolInfo = `http-get:*:${coverMimeType}:DLNA.ORG_PN=${coverProfile};DLNA.ORG_CI=1`;
       } else {
         coverProtocolInfo = `http-get:*:${coverMimeType}:*`;
       }
@@ -2693,6 +3027,7 @@ ${this.buildTrackDidlItem(track, 'tracks', clientAddress)}
 <upnp:album>${this.escapeXml(track.album)}</upnp:album>
 ${coverUrl ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
 ${coverUrl && coverProfile ? `<upnp:albumArtURI>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl ? `<upnp:icon>${this.escapeXml(coverUrl)}</upnp:icon>` : ''}
 ${coverUrl && coverProtocolInfo ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${track.mimeType}:*" size="${track.fileSize}" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>`;
@@ -3062,6 +3397,38 @@ ${itemsXml}
       this.getArtistViewMode(),
       albumArtistByAlbumId,
     );
+  }
+
+  private static runRendererCommandSerialized<T>(
+    renderer: DlnaRendererDevice,
+    commandName: string,
+    command: () => Promise<T>,
+  ): Promise<T> {
+    const previousQueue = this.rendererCommandQueueByRendererId.get(renderer.id) || Promise.resolve();
+    const queuedCommand = previousQueue
+      .catch(() => undefined)
+      .then(async () => command());
+    this.rendererCommandQueueByRendererId.set(renderer.id, queuedCommand.then(() => undefined).catch(() => undefined));
+    return queuedCommand
+      .catch((error) => {
+        this.writeDlnaLog('warn', 'renderer_command_failed', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          commandName,
+          error: String((error as any)?.message || error || ''),
+        });
+        throw error;
+      });
+  }
+
+  private static nextRendererPlaybackOperationToken(rendererId: string): number {
+    const nextToken = Number(this.rendererPlaybackOperationTokenByRendererId.get(rendererId) || 0) + 1;
+    this.rendererPlaybackOperationTokenByRendererId.set(rendererId, nextToken);
+    return nextToken;
+  }
+
+  private static isRendererPlaybackOperationCurrent(rendererId: string, operationToken: number): boolean {
+    return Number(this.rendererPlaybackOperationTokenByRendererId.get(rendererId) || 0) === operationToken;
   }
 
   private static getArtistViewMode(): ArtistViewMode {
