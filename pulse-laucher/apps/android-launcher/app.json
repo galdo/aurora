@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Aurora Pulse Launcher",
+    "slug": "pulse-laucher",
+    "version": "1.0.0-beta5",
+    "newArchEnabled": false,
+    "orientation": "portrait",
+    "icon": "./assets/icons/app-icon.png",
+    "platforms": [
+      "android"
+    ],
+    "android": {
+      "package": "app.pulse.laucher",
+      "adaptiveIcon": {
+        "backgroundImage": "./assets/icons/app-icon.png"
+      },
+      "intentFilters": [
+        {
+          "action": "MAIN",
+          "category": [
+            "HOME",
+            "DEFAULT"
+          ]
+        }
+      ],
+      "permissions": [
+        "READ_MEDIA_AUDIO",
+        "QUERY_ALL_PACKAGES"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "kotlinVersion": "1.9.25",
+            "enableProguardInReleaseBuilds": true
+          }
+        }
+      ]
+    ]
+  }
+}
