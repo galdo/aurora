@@ -1,0 +1,27 @@
+.collection-cover-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collection-cover-size-slider {
+  width: 124px;
+}
+
+.collection-cover-size-icon {
+  color: var(--text-dark-color);
+  font-size: 14px;
+}
+
+.collection-cover-size-slider-instance {
+  width: 100%;
+}
+
+.collection-cover-size-slider-track {
+  height: 4px;
+}
+
+.collection-cover-size-slider-thumb {
+  width: 14px;
+  height: 14px;
+}

@@ -1,0 +1,373 @@
+/*
+ * note - prepend a `~` to css file paths that are in your node_modules
+ * @see - https://github.com/webpack-contrib/sass-loader#imports
+ */
+@import '~@fortawesome/fontawesome-free/css/all.css';
+@import '~bootstrap/dist/css/bootstrap.css';
+@import '~react-contexify/dist/ReactContexify.css';
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700&display=swap');
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+}
+
+* {
+  font-family: 'Noto Sans', sans-serif;
+}
+
+:root {
+  /*context menu*/
+  --context-menu-color: #b3b3b3;
+  --context-menu-bg-color: #282828;
+  --context-menu-max-overflow-width: 250px;
+  --context-menu-max-overflow-height: 300px;
+  /*button*/
+  --button-primary-bg-color: #009233;
+  --button-primary-hovered-bg-color: #007a2b;
+  --button-primary-active-bg-color: #004d19;
+  --button-danger-bg-color: #dc3545;
+  --button-danger-hovered-bg-color: #bb2d3b;
+  --button-danger-active-bg-color: #9a2530;
+  /*selectable*/
+  --selectable-color: #b3b3b3;
+  --selectable-bg-color: #181818;
+  --selectable-active-color: #e9ecef;
+  --selectable-active-bg-color: #282828;
+  --selectable-outline-color: #282828;
+  --selectable-hovered-color: #e9ecef;
+  --selectable-hovered-bg-color: #282828;
+  --selectable-focused-bg-color: #3c3c3c;
+  --selectable-item-transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease, opacity 200ms ease, transform 100ms ease;
+  --selectable-focus-ring-size: 3px;
+  --selectable-focus-ring-color: #dee2e6;
+  /*stage*/
+  --stage-bg-color: #121212;
+  --stage-content-bg-color: #1d1d1d;
+  --stage-overlay-bg-color: #181818;
+  --stage-overlay-outline-color: #282828;
+  --sidebar-glass-bg: rgba(34, 34, 34, 0.52);
+  --stage-scroll-bg-color: rgba(255, 255, 255, 0.3);
+  --stage-toast-bg-color: #f8f8f8;
+  --stage-toast-color: #1d1d1d;
+  /*text*/
+  --text-dark-color: #b3b3b3;
+  --text-light-color: #e9ecef;
+  --text-disabled-color: #383838;
+  --text-danger-color: #dc3545;
+  --text-warning-color: #ffc107;
+  /*loader*/
+  --loader-color: #e9ecef;
+  --loader-track-color: #b3b3b39e;
+  /*misc*/
+  --titlebar-overlay-height: 54px;
+  --scrollable-scrollbar-width: 6px;
+  --slide-in-item-transition: opacity 200ms ease, bottom 200ms, right 200ms ease, transform 200ms ease, margin-bottom 200ms;
+  --radius-pill: 9999px; /* fully rounded element */
+  /*input*/
+  --input-color: var(--text-light-color);
+  --input-bg-color: #3c3c3c;
+  --input-outline-color: #3c3c3c;
+  --input-focused-bg-color: #282828;
+  --input-focused-outline-color: #6d6d6d;
+  --input-transition: background-color 200ms ease;
+  /*--button-color: #b3b3b3;*/
+  /*--dark-music-player-bg-color: #181818;*/
+  /*--dark-music-player-border-color: #282828;*/
+  /*--selected-bg-color: #282828;*/
+  /*--selected-text-color: #fff;*/
+  /*--dark-button-color: #b3b3b3;*/
+  /*--light-bg-color: #1d1d1d;*/
+}
+
+/* Light theme overrides */
+html[data-theme='light'] {
+  --context-menu-color: #333;
+  --context-menu-bg-color: #fff;
+  --selectable-color: #444;
+  --selectable-bg-color: #ffffff;
+  --selectable-active-color: #111;
+  --selectable-active-bg-color: #f3f3f3;
+  --selectable-outline-color: #e5e5e5;
+  --selectable-hovered-color: #111;
+  --selectable-hovered-bg-color: #f3f3f3;
+  --selectable-focused-bg-color: #ececec;
+  --stage-bg-color: #f2f2f2;
+  --stage-content-bg-color: #ffffff;
+  --stage-overlay-bg-color: #ffffff;
+  --stage-overlay-outline-color: #e5e5e5;
+  --sidebar-glass-bg: rgba(248, 246, 240, 0.86);
+  --stage-scroll-bg-color: rgba(0,0,0,0.3);
+  --stage-toast-bg-color: #1d1d1d;
+  --stage-toast-color: #ffffff;
+  --text-dark-color: #555;
+  --text-light-color: #111;
+  --text-disabled-color: #999;
+  --input-color: #111;
+  --input-bg-color: #f6f6f6;
+  --input-outline-color: #e5e5e5;
+  --input-focused-bg-color: #fff;
+  --input-focused-outline-color: #c9c9c9;
+}
+
+/* Dark theme explicit (matches current root defaults) */
+html[data-theme='dark'] {
+  /* no-op: root already has dark defaults */
+}
+
+/* Auto theme follows system preferences when set to 'auto' */
+@media (prefers-color-scheme: light) {
+  html[data-theme='auto'] {
+    --context-menu-color: #333;
+    --context-menu-bg-color: #fff;
+    --selectable-color: #444;
+    --selectable-bg-color: #ffffff;
+    --selectable-active-color: #111;
+    --selectable-active-bg-color: #f3f3f3;
+    --selectable-outline-color: #e5e5e5;
+    --selectable-hovered-color: #111;
+    --selectable-hovered-bg-color: #f3f3f3;
+    --selectable-focused-bg-color: #ececec;
+    --stage-bg-color: #f2f2f2;
+    --stage-content-bg-color: #ffffff;
+    --stage-overlay-bg-color: #ffffff;
+    --stage-overlay-outline-color: #e5e5e5;
+    --sidebar-glass-bg: rgba(248, 246, 240, 0.86);
+    --stage-scroll-bg-color: rgba(0,0,0,0.3);
+    --stage-toast-bg-color: #1d1d1d;
+    --stage-toast-color: #ffffff;
+    --text-dark-color: #555;
+    --text-light-color: #111;
+    --text-disabled-color: #999;
+    --input-color: #111;
+    --input-bg-color: #f6f6f6;
+    --input-outline-color: #e5e5e5;
+    --input-focused-bg-color: #fff;
+    --input-focused-outline-color: #c9c9c9;
+  }
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--selectable-focus-ring-color);
+}
+
+body {
+  user-select: none;
+  /* This needs to match with our main stage color to ensure there's no white flash when resizing */
+  background-color: var(--stage-content-bg-color);
+  color: var(--text-dark-color);
+}
+
+/*scrollable*/
+
+.app-scrollable {
+  overflow-y: scroll;
+  overflow-x: hidden;
+  scrollbar-gutter: stable; /* keeps the space for scrollbar reserved */
+}
+
+.app-scrollable.locked {
+  overflow: hidden;
+}
+
+.app-scrollable::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+.app-scrollable::-webkit-scrollbar {
+  width: var(--scrollable-scrollbar-width);
+  background-color: transparent;
+}
+
+.app-scrollable::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background-color: transparent;
+  border: 1px solid rgba(0, 0, 0, 0);
+}
+
+.app-scrollable:hover::-webkit-scrollbar-thumb {
+  background-color: var(--stage-scroll-bg-color);
+}
+
+/*navigation link*/
+
+.app-nav-link {
+  text-decoration: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/*window drag*/
+
+.app-window-drag {
+  /* according to electron docs, following property makes the frameless window draggable */
+  -webkit-app-region: drag;
+}
+
+.app-window-drag * {
+  /* having a draggable parent makes children inaccessible */
+  /* all clickable elements within our header should still work as expected */
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}
+
+/*context menu*/
+
+.contexify {
+  background-color: var(--context-menu-bg-color);
+  color: var(--context-menu-color);
+  border-radius: 4px;
+  padding: 4px;
+  font-size: 14px;
+  box-shadow: 0 16px 24px rgb(0 0 0 / 30%), 0 6px 8px rgb(0 0 0 / 20%);
+}
+
+.contexify_item {
+  color: inherit;
+}
+
+.contexify_itemContent {
+  color: inherit;
+  transition: var(--selectable-item-transition);
+  border-radius: 2px;
+}
+
+/*no focus rings in any context menu child*/
+.contexify_itemContent *:focus-within {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.contexify_itemContent > .icon {
+  margin-right: 5px;
+}
+
+.contexify_item:not(.contexify_item_inline) > .contexify_itemContent {
+  padding: 8px 16px;
+}
+
+.contexify_item:not(.contexify_item-disabled):hover > .contexify_itemContent,
+.contexify_item:not(.contexify_item-disabled):focus > .contexify_itemContent {
+  color: var(--selectable-hovered-color);
+  background-color: var(--selectable-focused-bg-color);
+}
+
+.contexify_separator {
+  background-color: var(--selectable-focused-bg-color);
+  margin: 5px 0;
+}
+
+/*modal*/
+
+.modal-content {
+  background-color: var(--stage-overlay-bg-color);
+  color: var(--text-dark-color);
+  border: 1px solid var(--stage-overlay-outline-color);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border-radius: 12px;
+  font-size: 16px;
+}
+
+.modal-header {
+  border: none;
+}
+
+.modal-title {
+  font-weight: bold;
+  color: var(--text-light-color);
+  font-size: 18px;
+}
+
+.modal-footer {
+  border: none;
+  gap: 10px;
+}
+
+.modal-dialog.podcast-discover-modal-dialog {
+  width: min(60vw, 1120px);
+  max-width: 95vw;
+  min-width: min(50vw, 920px);
+}
+
+.modal-dialog.library-stats-modal-dialog {
+  width: min(60vw, 980px);
+  max-width: 94vw;
+  min-width: min(48vw, 860px);
+}
+
+.modal-backdrop.show.podcast-discover-modal-backdrop {
+  --podcast-backdrop-player-offset: 100px;
+  background-color: rgba(0, 0, 0, 0.05);
+  --bs-backdrop-opacity: 1;
+  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
+  inset: 0 0 var(--podcast-backdrop-player-offset) 0;
+  width: auto;
+  height: auto;
+}
+
+@media (max-width: 1200px) {
+  .modal-dialog.podcast-discover-modal-dialog {
+    width: min(90vw, 980px);
+    min-width: 0;
+  }
+
+  .modal-dialog.library-stats-modal-dialog {
+    width: min(92vw, 900px);
+    min-width: 0;
+  }
+}
+
+/*.modal-footer [role="button"]:not([disabled]):hover {*/
+/*  transform: scale(1.05);*/
+/*}*/
+
+/*form control*/
+
+.form-control {
+  color: var(--input-color);
+  background-color: var(--input-bg-color);
+  outline: none;
+  box-shadow: none;
+  transition: var(--input-transition);
+  border: 1px solid var(--input-outline-color);
+  border-radius: 5px;
+}
+
+.form-control:focus {
+  color: var(--input-color);
+  background-color: var(--input-focused-bg-color);
+  border: 1px solid var(--input-focused-outline-color);
+  outline: none;
+  box-shadow: none;
+}
+
+/*media player tinting*/
+/*these properties are required to be defined in global scope in order to apply transition*/
+/*@see - https://www.w3.org/TR/css-properties-values-api-1/#animation-behavior-of-custom-properties*/
+
+@property --media-player-tint-color-1 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #000000;
+}
+
+@property --media-player-tint-color-2 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #000000;
+}
+
+@property --media-player-tint-color-3 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #000000;
+}

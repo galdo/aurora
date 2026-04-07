@@ -1,0 +1,19 @@
+.media-header-navigation-link {
+  padding: 6px 12px;
+  font-size: 14px;
+  border-radius: 999px;
+  color: var(--text-dark-color);
+  border: 1px solid transparent;
+  transition: var(--selectable-item-transition);
+}
+
+.media-header-navigation-link:hover {
+  color: var(--text-light-color);
+  background-color: var(--selectable-hovered-bg-color);
+}
+
+.media-header-navigation-link.active {
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+  border-color: var(--button-primary-bg-color);
+}

@@ -1,0 +1,71 @@
+.collection-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.collection-sort-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background-color: var(--selectable-bg-color);
+  border: 1px solid var(--selectable-outline-color);
+  border-radius: 999px;
+  padding: 0 6px 0 14px;
+  min-height: 44px;
+}
+
+.collection-size-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 240px;
+  background-color: var(--selectable-bg-color);
+  border: 1px solid var(--selectable-outline-color);
+  border-radius: 999px;
+  padding: 0 14px;
+  min-height: 44px;
+}
+
+.collection-size-slider {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  height: 20px;
+}
+
+.collection-slider-instance {
+  width: 100%;
+}
+
+.collection-select {
+  background-color: transparent;
+  color: var(--text-light-color);
+  border: none;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+  min-width: 110px;
+  font-weight: var(--font-weight-bold);
+}
+
+.collection-select:focus {
+  color: var(--text-normal-color);
+}
+
+.collection-select option {
+  color: var(--text-light-color);
+  background-color: var(--stage-overlay-bg-color);
+}
+
+.collection-slider-track {
+  background-color: var(--text-light-color);
+}
+
+.collection-slider-thumb {
+  background-color: var(--text-light-color);
+}

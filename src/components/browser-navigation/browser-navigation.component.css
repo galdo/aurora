@@ -1,0 +1,11 @@
+.browser-navigation {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+}
+
+.browser-navigation-button {
+  -webkit-text-stroke: 1px var(--stage-bg-color);
+}

@@ -1,0 +1,122 @@
+.collection-tile {
+  background-color: var(--selectable-bg-color);
+  border-radius: 5px;
+  transition: var(--selectable-item-transition);
+  height: 100%;
+  display: block;
+}
+
+.collection-tile:focus,
+.collection-tile:hover {
+  background-color: var(--selectable-hovered-bg-color);
+}
+
+.collection-tile-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 15px;
+  padding: 15px;
+}
+
+.collection-tile-cover {
+  flex-grow: 1;
+  position: relative;
+}
+
+.collection-tile-cover-picture {
+  /* size for placeholder icon */
+  font-size: 50px;
+}
+
+.collection-tile-cover :global(img),
+.collection-tile-cover :global(.media-cover-picture) {
+  border-radius: 12px;
+}
+
+.collection-tile-cover-overlay {
+  position: absolute;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 10px;
+  bottom: 0;
+  height: 100%;
+  width: 100%;
+  z-index: 2;
+}
+
+.collection-tile-cover-action {
+  margin-bottom: -40px;
+  transition: var(--slide-in-item-transition);
+  opacity: 0;
+}
+
+.collection-tile:hover .collection-tile-cover-action,
+.collection-tile.playing .collection-tile-cover-action {
+  margin-bottom: 0;
+  opacity: 1;
+}
+
+.collection-tile-cover-action-button {
+  box-shadow: 0 8px 32px rgb(0 0 0 / 80%);
+}
+
+.collection-tile-info {
+  display: flex;
+  flex-flow: column;
+  align-items: flex-start;
+  width: 100%;
+  white-space: normal;
+  overflow: hidden;
+  gap: 5px;
+}
+
+.collection-tile-title {
+  width: 100%;
+  display: block;
+  font-size: 15px;
+  font-weight: bold;
+  color: var(--text-light-color);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.collection-tile-subtitle {
+  width: 100%;
+  display: block;
+  font-size: 12px;
+  color: var(--button-primary-bg-color);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.collection-tile-year-chip {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background-color: var(--button-primary-bg-color);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.collection-tile-genre-chip {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  z-index: 10;
+  pointer-events: none;
+}

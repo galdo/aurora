@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aurora Pulse | Local-First Audiophile Player</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f17;
+      --bg-soft: #111826;
+      --text: #e8eef8;
+      --muted: #9fb0c9;
+      --accent: #3ccf91;
+      --line: #1f2a3d;
+      --card: #121a2b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: radial-gradient(circle at 20% 0%, #122038 0%, var(--bg) 42%);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .wrap { width: min(1100px, 92vw); margin: 0 auto; }
+    .hero { padding: 72px 0 36px; }
+    .tag {
+      display: inline-block;
+      border: 1px solid #2c3c57;
+      border-radius: 999px;
+      padding: 6px 12px;
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 18px;
+      background: rgba(18, 26, 43, 0.6);
+    }
+    h1 {
+      margin: 0 0 18px;
+      font-size: clamp(36px, 6vw, 56px);
+      line-height: 1.08;
+      letter-spacing: -0.02em;
+    }
+    .lead {
+      max-width: 880px;
+      font-size: 19px;
+      color: #cdd8ea;
+      margin: 0 0 26px;
+    }
+    .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn {
+      text-decoration: none;
+      border-radius: 12px;
+      padding: 12px 18px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      transition: .2s ease;
+    }
+    .btn.primary { background: var(--accent); color: #082316; }
+    .btn.secondary { background: transparent; color: var(--text); border-color: #334764; }
+    .btn:hover { transform: translateY(-1px); opacity: 0.96; }
+    .hero-image {
+      margin-top: 34px;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      box-shadow: 0 20px 55px rgba(0,0,0,.35);
+    }
+    .hero-image img { width: 100%; display: block; }
+    section { padding: 22px 0 30px; }
+    h2 {
+      margin: 0 0 14px;
+      font-size: clamp(26px, 4vw, 34px);
+      letter-spacing: -0.01em;
+    }
+    p { margin: 0 0 14px; color: #d5def0; }
+    .muted { color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(18,26,43,.95), rgba(15,22,36,.95));
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .card h3 { margin: 0 0 8px; font-size: 18px; }
+    .card p { margin: 0; font-size: 14px; color: #b8c5dc; }
+    .split {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 16px;
+      margin-top: 12px;
+    }
+    .split img {
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      display: block;
+      background: var(--card);
+    }
+    .footer {
+      border-top: 1px solid var(--line);
+      margin-top: 34px;
+      padding: 20px 0 40px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <span class="tag">Aurora Pulse • Local-First Audio Platform</span>
+      <h1>A modern audiophile player for serious local libraries.</h1>
+      <p class="lead">
+        Aurora Pulse combines high-fidelity desktop playback, robust collection workflows, and practical device sync in one cohesive environment.
+        It is built for listeners who care about quality, transparency, and ownership instead of cloud lock-in.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/galdo/aurora/releases">Download Latest Release</a>
+        <a class="btn secondary" href="https://github.com/galdo/aurora">View Source on GitHub</a>
+      </div>
+      <div class="hero-image">
+        <img src="../images/placeholder-main-interface.png" alt="Aurora Pulse main interface">
+      </div>
+    </section>
+
+    <section>
+      <h2>Built for listening flow, not tool friction</h2>
+      <p>
+        The core experience is designed around continuity. You can move between library navigation, queue control, playback tuning, and remote
+        output without losing context. Sideview-first details, topbar actions, and consistent interaction patterns reduce navigation overhead,
+        especially in larger collections where speed and orientation matter.
+      </p>
+      <p class="muted">
+        This is the same design philosophy that guides ongoing work across the desktop app and connected launcher ecosystem.
+      </p>
+    </section>
+
+    <section>
+      <h2>Core capabilities</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>High-Fidelity Playback</h3>
+          <p>Transparent playback info, responsive controls, and a queue-first model optimized for long listening sessions.</p>
+        </article>
+        <article class="card">
+          <h3>EQ + AutoEQ</h3>
+          <p>Multi-band equalization, device correction profiles, and headroom compensation in one practical tuning workflow.</p>
+        </article>
+        <article class="card">
+          <h3>DLNA Remote Output</h3>
+          <p>Hardened remote renderer control with stronger transition handling and bidirectional synchronization improvements.</p>
+        </article>
+        <article class="card">
+          <h3>DAP Sync</h3>
+          <p>Reliable sync with ETA, resume, cancel, and improved robustness for reconnect and interruption scenarios.</p>
+        </article>
+        <article class="card">
+          <h3>Playlists + Smart Collections</h3>
+          <p>Manual and rule-based playlists with stronger artwork generation and stable behavior in mixed collections.</p>
+        </article>
+        <article class="card">
+          <h3>Podcast Integration</h3>
+          <p>Discovery, subscriptions, and episode refresh fully integrated into the same playback environment.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Collection and archive workflows</h2>
+      <p>
+        Aurora Pulse is not only a player, but also a long-term library companion. CD import is oriented toward FLAC-centric archival quality
+        with metadata-aware flows that reduce cleanup work after import. Local metadata editing and search-driven playback are integrated directly
+        into browsing, so curation remains part of daily listening instead of a separate maintenance task.
+      </p>
+      <div class="split">
+        <img src="../images/placeholder-library.png" alt="Library view">
+        <img src="../images/placeholder-cd-import.png" alt="CD import view">
+      </div>
+    </section>
+
+    <section>
+      <h2>Platform coverage</h2>
+      <p>
+        Aurora Pulse is available for macOS (Apple Silicon and Intel), Windows, and Linux (Flatpak). Release artifacts are published on GitHub.
+        The project is actively developed, with ongoing focus on playback confidence, sync resilience, and stable remote-control behavior.
+      </p>
+    </section>
+
+    <section class="footer">
+      <p>
+        Aurora Pulse is open-source under the MIT License. Learn more in the project README and changelog,
+        or go directly to the repository and release pages.
+      </p>
+    </section>
+  </main>
+</body>
+</html>

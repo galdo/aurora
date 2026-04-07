@@ -1,0 +1,97 @@
+.media-progress-container {
+  position: relative;
+}
+
+.media-progress-container.vertical {
+  .media-progress-bar-container {
+    width: 8px;
+    height: 190px;
+    margin: 0 auto;
+    align-items: flex-end;
+  }
+
+  .media-progress-bar {
+    width: 100%;
+    transition: height .1s ease, background-color .1s ease;
+  }
+
+  .media-progress-handler {
+    left: 50%;
+    top: auto;
+    margin-left: -7px;
+    margin-bottom: -7px;
+    height: 14px;
+    width: 14px;
+    transition: bottom .1s ease, opacity .1s ease;
+  }
+}
+
+.media-progress-container:not(.disabled):hover,
+.media-progress-container:not(.disabled).dragging {
+  cursor: pointer;
+
+  .media-progress-bar {
+    background-color: var(--selectable-hovered-color);
+  }
+
+  .media-progress-handler {
+    opacity: 1;
+    background-color: var(--selectable-hovered-color);
+  }
+}
+
+.media-progress-container:not(.disabled) .media-progress-handler:focus {
+  opacity: 1;
+}
+
+.media-progress-container.dragging {
+  // disable transitions and add back the other ones from draggable components
+  // when we are dragging to remove lag in respect to cursor position
+
+  .media-progress-bar {
+    transition: background-color .1s ease;
+  }
+
+  .media-progress-handler {
+    transition: opacity .1s ease;
+  }
+}
+
+.media-progress-container.disabled {
+  .media-progress-bar-container {
+    background-color: var(--loader-track-color);
+  }
+}
+
+.media-progress-bar-container {
+  display: flex;
+  height: 4px;
+  overflow: hidden;
+  background-color: var(--loader-track-color);
+  border-radius: 0.25rem;
+  transition: background-color .5s ease;
+}
+
+.media-progress-bar {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  text-align: center;
+  white-space: nowrap;
+  background-color: var(--selectable-color);
+  transition: width .1s ease, background-color .1s ease;
+}
+
+.media-progress-handler {
+  position: absolute;
+  height: 12px;
+  width: 12px;
+  top: -4px;
+  left: 0;
+  background-color: var(--selectable-color);
+  border-radius: 50%;
+  margin-left: -6px;
+  opacity: 0;
+  transition: left .1s ease, opacity .1s ease;
+}

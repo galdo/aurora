@@ -1,0 +1,48 @@
+import React, { useCallback } from 'react';
+
+import { MediaEnums } from '../../enums';
+import { IMediaPicture } from '../../interfaces';
+import { MediaLibraryService } from '../../services';
+import { IPCRenderer, IPCCommChannel } from '../../modules/ipc';
+import { FSImageExtensions } from '../../modules/file-system';
+
+import { UploadOverlay } from '../upload/upload-overlay.component';
+import { MediaCoverPicture, MediaCoverPictureProps } from './media-cover-picture.component';
+
+export type MediaCoverPictureUploadableProps = {
+  onPictureUpdate?: (picture: IMediaPicture) => void;
+} & MediaCoverPictureProps;
+
+export function MediaCoverPictureUploadable(props: MediaCoverPictureUploadableProps) {
+  const {
+    onPictureUpdate,
+    ...rest
+  } = props;
+
+  const handleUpload = useCallback(async (filePath?: string) => {
+    if (!filePath || !onPictureUpdate) {
+      return;
+    }
+
+    const imagePath = await IPCRenderer.sendAsyncMessage(IPCCommChannel.ImageScale, filePath, {
+      width: MediaLibraryService.mediaPictureScaleWidth,
+      height: MediaLibraryService.mediaPictureScaleHeight,
+    });
+
+    onPictureUpdate({
+      image_data: imagePath,
+      image_data_type: MediaEnums.MediaTrackCoverPictureImageDataType.Path,
+    });
+  }, [
+    onPictureUpdate,
+  ]);
+
+  return (
+    <UploadOverlay
+      onUpload={handleUpload}
+      extensions={FSImageExtensions}
+    >
+      <MediaCoverPicture {...rest}/>
+    </UploadOverlay>
+  );
+}

@@ -1,0 +1,185 @@
+import React, { HTMLAttributes } from 'react';
+import classNames from 'classnames/bind';
+
+import { Icons } from '../../constants';
+import { IMediaTrack } from '../../interfaces';
+import { Events, MediaUtils } from '../../utils';
+import { useMediaTrackPlayback } from '../../hooks';
+
+import { MediaCoverPicture } from '../media-cover-picture/media-cover-picture.component';
+import { MediaTrackInfo } from '../media-track-info/media-track-info.component';
+import { MediaPlaybackButton } from '../media-playback-button/media-playback-button.component';
+import { MediaTrackLikeButton } from '../media-track-like-button/media-track-like-button.component';
+import { MediaTrackEditModal } from '../media-track-edit-modal/media-track-edit-modal.component';
+import { Button } from '../button/button.component';
+import { Icon } from '../icon/icon.component';
+import { useModal } from '../../contexts';
+
+import styles from './media-track.component.css';
+
+const cx = classNames.bind(styles);
+
+export type MediaTrackProps<T> = {
+  mediaTrack: T;
+  mediaTrackPointer?: number;
+  onMediaTrackPlay?: (mediaTrack: T) => void;
+  isPlaying?: boolean;
+  disableCover?: boolean;
+  disableAlbumLink?: boolean;
+  isSelected?: boolean;
+  isActive?: boolean;
+  variant?: 'default' | 'sideview';
+} & HTMLAttributes<HTMLDivElement>;
+
+export function MediaTrack<T extends IMediaTrack>(props: MediaTrackProps<T>) {
+  const {
+    mediaTrack,
+    mediaTrackPointer,
+    onMediaTrackPlay,
+    isPlaying = false,
+    disableCover = false,
+    disableAlbumLink = false,
+    isSelected = false,
+    isActive = false,
+    className,
+    onDoubleClick,
+    onClick,
+    onKeyDown,
+    variant = 'default',
+    ...rest
+  } = props;
+
+  const {
+    play,
+    pause,
+    toggle,
+    isTrackActive,
+    isTrackPlaying,
+  } = useMediaTrackPlayback({
+    mediaTrack,
+    mediaTrackPointer,
+    onMediaTrackPlay,
+    isPlaying,
+  });
+
+  const { showModal } = useModal();
+  const showPlayCount = !!(mediaTrack.extra as any)?.show_play_count;
+  const playCount = Number((mediaTrack.extra as any)?.play_count || 0);
+
+  return (
+    <div
+      role="row"
+      tabIndex={0}
+      {...rest}
+      className={cx('media-track', className, {
+        current: isActive || isTrackActive,
+        selected: isSelected || rest['aria-selected'],
+      })}
+      onDoubleClick={(e) => {
+        onDoubleClick?.(e);
+        toggle();
+      }}
+      onClick={(e) => {
+        onClick?.(e);
+        if (variant !== 'sideview') {
+          return;
+        }
+        const targetElement = e.target as HTMLElement | null;
+        if (targetElement?.closest('button, a, input, select, textarea')) {
+          return;
+        }
+        if (isActive || isTrackActive) {
+          toggle();
+          return;
+        }
+        play();
+      }}
+      onKeyDown={(e) => {
+        onKeyDown?.(e);
+        if (Events.isEnterKey(e) && e.target === e.currentTarget) toggle();
+      }}
+    >
+      <div className={cx('media-track-content')}>
+        {variant !== 'sideview' && (
+          <div className={cx('media-track-section', 'button')}>
+            <Button
+              className={cx('media-track-edit-button')}
+              variant={['rounded', 'outline']}
+              onButtonSubmit={(e) => {
+                e.stopPropagation();
+                showModal(MediaTrackEditModal, {
+                  mediaTrackId: mediaTrack.id,
+                });
+              }}
+              tabIndex={-1}
+            >
+              <Icon name={Icons.Edit}/>
+            </Button>
+            <MediaPlaybackButton
+              isPlaying={isTrackPlaying}
+              className={cx('media-track-playback-button')}
+              onPlay={play}
+              onPause={pause}
+              tabIndex={-1}
+            />
+          </div>
+        )}
+        {!disableCover && (
+          <div className={cx('media-track-section', 'cover')}>
+            <MediaCoverPicture
+              mediaPicture={mediaTrack.track_cover_picture}
+              mediaPictureAltText={mediaTrack.track_name}
+              className={cx('media-track-cover')}
+              mediaCoverPlaceholderIcon={Icons.TrackPlaceholder}
+            />
+          </div>
+        )}
+        <div className={cx('media-track-section', 'info')}>
+          {variant === 'sideview' && (
+            <span className={cx('media-track-number-slot')}>
+              <span className={cx('media-track-number')}>{mediaTrack.track_number}</span>
+              <MediaPlaybackButton
+                isPlaying={isTrackPlaying}
+                className={cx('media-track-playback-button', 'sideview', 'sideview-number')}
+                onPlay={play}
+                onPause={pause}
+                tabIndex={-1}
+              />
+            </span>
+          )}
+          <MediaTrackInfo
+            mediaTrack={mediaTrack}
+            disableAlbumLink={disableAlbumLink}
+            className={cx('media-track-info')}
+          />
+        </div>
+        <div className={cx('media-track-section', 'end')}>
+          {(mediaTrack.extra as any)?.status === 'completed' && (
+            <div className={cx('media-track-status')} style={{ color: '#28a745' }}>
+              <Icon name={Icons.Completed}/>
+            </div>
+          )}
+          {(mediaTrack.extra as any)?.status === 'in-progress' && (
+            <div className={cx('media-track-status')} style={{ color: '#007bff' }}>
+              <Icon name={Icons.Refreshing}/>
+            </div>
+          )}
+          <div className={cx('media-track-like')}>
+            <MediaTrackLikeButton
+              mediaTrack={mediaTrack}
+              className={cx('media-track-like-button')}
+            />
+          </div>
+          {showPlayCount && (
+            <div className={cx('media-track-play-count')}>
+              {`Plays ${playCount}`}
+            </div>
+          )}
+          <div className={cx('media-track-duration')}>
+            {MediaUtils.formatMediaTrackDuration(mediaTrack.track_duration)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

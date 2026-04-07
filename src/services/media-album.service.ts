@@ -1,0 +1,280 @@
+import fs from 'fs';
+import _ from 'lodash';
+import NodeID3 from 'node-id3';
+
+import { MediaAlbumDatastore, MediaArtistDatastore, MediaTrackDatastore } from '../datastores';
+import { MediaLibraryActions } from '../enums';
+import { IMediaAlbum, IMediaAlbumData } from '../interfaces';
+import { MediaUtils } from '../utils';
+import store from '../store';
+
+import { MediaArtistService } from './media-artist.service';
+import { DataStoreFilterData, DataStoreUpdateData } from '../modules/datastore';
+import { IPCRenderer, IPCCommChannel } from '../modules/ipc';
+
+export class MediaAlbumService {
+  static async searchAlbumsByName(query: string): Promise<IMediaAlbum[]> {
+    const normalizedQuery = this.normalizeSearchValue(query);
+    if (!normalizedQuery) {
+      return [];
+    }
+
+    const escapedNormalizedQuery = _.escapeRegExp(normalizedQuery);
+    const escapedRawQuery = _.escapeRegExp(query);
+    const prefixRegex = new RegExp(`^${escapedNormalizedQuery}`);
+    const containsRegex = new RegExp(escapedNormalizedQuery);
+    const containsRawRegex = new RegExp(escapedRawQuery, 'i');
+    const limit = 120;
+
+    const albumsPrefix = await MediaAlbumDatastore.findMediaAlbums({
+      album_name_normalized: {
+        $regex: prefixRegex,
+      },
+    } as any);
+
+    const albumsContains = albumsPrefix.length < limit
+      ? await MediaAlbumDatastore.findMediaAlbums({
+        album_name_normalized: {
+          $regex: containsRegex,
+        },
+      } as any)
+      : [];
+
+    const albumsFallback = albumsPrefix.length === 0 && albumsContains.length === 0
+      ? await MediaAlbumDatastore.findMediaAlbums({
+        album_name: {
+          $regex: containsRawRegex,
+        },
+      })
+      : [];
+
+    const albumsById = new Map<string, IMediaAlbumData>();
+    [...albumsPrefix, ...albumsContains, ...albumsFallback].forEach((album) => {
+      albumsById.set(album.id, album);
+    });
+
+    const mediaAlbums = await this.buildMediaAlbums(Array.from(albumsById.values()));
+    return _.orderBy(
+      mediaAlbums,
+      [album => this.normalizeSearchValue(album.album_name)],
+      ['asc'],
+    ).slice(0, limit);
+  }
+
+  private static normalizeSearchValue(value: string): string {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+
+  static async getMediaAlbum(albumId: string): Promise<IMediaAlbum | undefined> {
+    const albumData = await MediaAlbumDatastore.findMediaAlbumById(albumId);
+    return albumData ? this.buildMediaAlbum(albumData) : undefined;
+  }
+
+  static async getMediaAlbums(): Promise<IMediaAlbum[]> {
+    const mediaAlbumDataList = await MediaAlbumDatastore.findMediaAlbums();
+
+    const mediaAlbums = await Promise.all(mediaAlbumDataList.map(mediaAlbumData => this.buildMediaAlbum(mediaAlbumData)));
+    return MediaUtils.sortMediaAlbums(mediaAlbums);
+  }
+
+  static async getMediaArtistAlbums(mediaArtistId: string): Promise<IMediaAlbum[]> {
+    const mediaAlbumDataList = await MediaAlbumDatastore.findMediaAlbums({
+      album_artist_id: mediaArtistId,
+    });
+
+    const mediaAlbums = await Promise.all(mediaAlbumDataList.map(mediaAlbumData => this.buildMediaAlbum(mediaAlbumData)));
+    return MediaUtils.sortMediaAlbums(mediaAlbums);
+  }
+
+  static async updateMediaAlbum(mediaAlbumFilterData: DataStoreFilterData<IMediaAlbumData>, mediaAlbumUpdateData: DataStoreUpdateData<IMediaAlbumData>): Promise<IMediaAlbum | undefined> {
+    const mediaAlbumData = await MediaAlbumDatastore.updateMediaAlbum(mediaAlbumFilterData, {
+      ...mediaAlbumUpdateData,
+      ...(mediaAlbumUpdateData.album_name ? {
+        album_name_normalized: this.normalizeSearchValue(mediaAlbumUpdateData.album_name),
+      } : {}),
+    });
+    if (!mediaAlbumData) {
+      return undefined;
+    }
+
+    return this.buildMediaAlbum(mediaAlbumData, true);
+  }
+
+  static async updateMediaAlbums(mediaAlbumFilterData: DataStoreFilterData<IMediaAlbumData>, mediaAlbumUpdateData: DataStoreUpdateData<IMediaAlbumData>): Promise<IMediaAlbum[]> {
+    const mediaAlbumDataList = await MediaAlbumDatastore.updateMediaAlbums(mediaAlbumFilterData, {
+      ...mediaAlbumUpdateData,
+      ...(mediaAlbumUpdateData.album_name ? {
+        album_name_normalized: this.normalizeSearchValue(mediaAlbumUpdateData.album_name),
+      } : {}),
+    });
+    return this.buildMediaAlbums(mediaAlbumDataList, true);
+  }
+
+  static loadMediaAlbums(): void {
+    this
+      .getMediaAlbums()
+      .then((mediaAlbums) => {
+        store.dispatch({
+          type: MediaLibraryActions.SetAlbums,
+          data: {
+            mediaAlbums: mediaAlbums.filter(mediaAlbum => !mediaAlbum.hidden),
+          },
+        });
+      });
+  }
+
+  static loadMediaArtistAlbums(mediaArtistId: string): void {
+    this
+      .getMediaArtistAlbums(mediaArtistId)
+      .then(async (mediaArtistAlbums) => {
+        store.dispatch({
+          type: MediaLibraryActions.SetArtist,
+          data: {
+            mediaArtist: await MediaArtistService.getMediaArtist(mediaArtistId),
+            mediaArtistAlbums,
+          },
+        });
+      });
+  }
+
+  static unloadMediaAlbum(): void {
+    store.dispatch({
+      type: MediaLibraryActions.SetAlbum,
+      data: {
+        mediaAlbum: undefined,
+        mediaAlbumTracks: undefined,
+      },
+    });
+  }
+
+  static async syncAlbumMetadata(mediaAlbumId: string): Promise<void> {
+    const mediaAlbum = await this.getMediaAlbum(mediaAlbumId);
+    if (!mediaAlbum) {
+      return;
+    }
+
+    const mediaTracksData = await MediaTrackDatastore.findMediaTracks({
+      track_album_id: mediaAlbumId,
+    });
+
+    await Promise.all(mediaTracksData.map(async (mediaTrackData) => {
+      const extra = mediaTrackData.extra as any;
+      if (!extra || !extra.file_path) {
+        return;
+      }
+
+      const filePath = extra.file_path;
+      const isMp3 = filePath.toLowerCase().endsWith('.mp3');
+      const isFlac = filePath.toLowerCase().endsWith('.flac');
+
+      if (!isMp3 && !isFlac) {
+        return;
+      }
+
+      const tags: any = {
+        albumArtist: mediaAlbum.album_artist.artist_name,
+        album: mediaAlbum.album_name,
+        genre: mediaAlbum.album_genre,
+        year: mediaAlbum.album_year ? String(mediaAlbum.album_year) : undefined,
+      };
+
+      const coverImage = mediaAlbum.album_cover_picture
+        ? mediaAlbum.album_cover_picture.image_data?.replace(/^file:\/\//, '')
+        : undefined;
+
+      try {
+        if (isMp3) {
+          if (coverImage) {
+            tags.image = coverImage;
+          }
+          const result = NodeID3.update(tags, filePath);
+          if ((result as any) !== true) {
+            console.warn(`Failed to update tags for ${filePath}`, result);
+          }
+        } else if (isFlac) {
+          await IPCRenderer.sendAsyncMessage(IPCCommChannel.DeviceWriteFlacMetadata, {
+            filePath,
+            tags: {
+              ...tags,
+              title: mediaTrackData.track_name,
+            },
+            coverImage,
+          });
+        }
+
+        const fileStats = await fs.promises.stat(filePath);
+        await MediaTrackDatastore.updateMediaTrack({
+          id: mediaTrackData.id,
+        }, {
+          extra: {
+            ...extra,
+            file_mtime: fileStats.mtimeMs,
+            file_size: fileStats.size,
+          },
+        });
+      } catch (error) {
+        console.error(`Error updating tags for ${filePath}`, error);
+      }
+    }));
+  }
+
+  static async buildMediaAlbum(mediaAlbum: string | IMediaAlbumData, loadMediaAlbum = false): Promise<IMediaAlbum> {
+    let mediaAlbumData;
+    if (typeof mediaAlbum === 'string') {
+      mediaAlbumData = await MediaAlbumDatastore.findMediaAlbumById(mediaAlbum);
+
+      if (!mediaAlbumData) {
+        throw new Error(`MediaLibraryService encountered error at buildMediaAlbum - Could not find album - ${mediaAlbum}`);
+      }
+    } else {
+      mediaAlbumData = mediaAlbum;
+    }
+
+    let mediaAlbumArtist = await MediaArtistService.getMediaArtist(mediaAlbumData.album_artist_id);
+    if (!mediaAlbumArtist) {
+      const recoveredArtistProviderId = `recovered-artist:${mediaAlbumData.provider}:${mediaAlbumData.album_artist_id}`;
+      const recoveredArtistData = await MediaArtistDatastore.upsertMediaArtist({
+        provider: mediaAlbumData.provider,
+        provider_id: recoveredArtistProviderId,
+      }, {
+        provider: mediaAlbumData.provider,
+        provider_id: recoveredArtistProviderId,
+        artist_name: 'Unknown Artist',
+        sync_timestamp: Date.now(),
+      });
+      await MediaAlbumDatastore.updateMediaAlbum({
+        id: mediaAlbumData.id,
+      }, {
+        album_artist_id: recoveredArtistData.id,
+      });
+      mediaAlbumArtist = await MediaArtistService.getMediaArtist(recoveredArtistData.id);
+      if (!mediaAlbumArtist) {
+        throw new Error(`Encountered error while build media album - ${mediaAlbumData.id} - Could not recover artist for id - ${mediaAlbumData.album_artist_id}`);
+      }
+    }
+
+    const mediaAlbumBuilt = _.assign({}, mediaAlbumData, {
+      album_artist: mediaAlbumArtist,
+    });
+
+    if (loadMediaAlbum) {
+      store.dispatch({
+        type: MediaLibraryActions.AddAlbum,
+        data: {
+          mediaAlbum: mediaAlbumBuilt,
+        },
+      });
+    }
+
+    return mediaAlbumBuilt;
+  }
+
+  static async buildMediaAlbums(mediaAlbums: string[] | IMediaAlbumData[], loadMediaAlbums = false): Promise<IMediaAlbum[]> {
+    return Promise.all(mediaAlbums.map((mediaAlbum: any) => this.buildMediaAlbum(mediaAlbum, loadMediaAlbums)));
+  }
+}

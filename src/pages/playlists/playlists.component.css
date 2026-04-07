@@ -1,0 +1,30 @@
+.playlists-empty-section {
+  width: 100%;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.playlists-empty-label {
+  color: var(--text-dark-color);
+  font-weight: bold;
+}
+
+.playlist-liked-tracks {
+  margin-bottom: 15px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.playlist-liked-tracks-collection-item {
+  border: 1px solid var(--selectable-outline-color);
+  padding: 10px;
+  flex: 1 1 280px;
+}
+
+.playlist-liked-tracks-collection-item :global(.media-cover-placeholder-icon) {
+  color: var(--button-primary-bg-color);
+}

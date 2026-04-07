@@ -1,0 +1,56 @@
+.settings-directory-icon-error {
+  color: var(--text-danger-color);
+}
+
+.settings-directory-icon-success {
+  color: var(--text-light-color);
+}
+
+.settings-keywords-help {
+  margin-top: 10px;
+}
+
+.settings-action-button:not(.disabled):hover,
+.settings-action-button:not(.disabled):active {
+  background-color: color-mix(in srgb, var(--button-primary-bg-color) 82%, #0e7a35);
+  color: var(--text-light-color);
+}
+
+.settings-keywords-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.settings-keyword-group {
+  border: 1px solid var(--stage-overlay-outline-color);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background-color: var(--stage-overlay-bg-color);
+}
+
+.settings-keyword-group-label {
+  color: var(--text-light-color);
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.settings-keyword-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.settings-keyword-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--stage-overlay-outline-color);
+  background-color: var(--selectable-bg-color);
+  color: var(--text-dark-color);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+}

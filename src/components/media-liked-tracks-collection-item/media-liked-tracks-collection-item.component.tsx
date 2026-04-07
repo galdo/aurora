@@ -1,0 +1,62 @@
+import React, { useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
+
+import { Icons, Routes } from '../../constants';
+import { RootState } from '../../reducers';
+import { I18nService, MediaCollectionService, MediaLikedTrackService } from '../../services';
+
+import { MediaCollectionItem } from '../media-collection-item/media-collection-item.component';
+import { MediaCollectionContextMenu, MediaCollectionContextMenuItem } from '../media-collection-context-menu/media-collection-context-menu.component';
+import { openLikedTracksSideView } from '../media-sideview/media-sideview.store';
+
+const likesCollectionItem = MediaCollectionService.getMediaItemForLikedTracks();
+
+export function MediaLikedTracksCollectionItem(props: {
+  className?: string;
+}) {
+  const { className } = props;
+  const mediaLikedTracksRecord = useSelector((state: RootState) => state.mediaLibrary.mediaLikedTracksRecord);
+  const [likedTracksCount, setLikedTracksCount] = useState(0);
+
+  const contextMenuId = 'media-liked-tracks-context-menu';
+
+  useEffect(() => {
+    MediaLikedTrackService.getLikedTracksCount()
+      .then((count) => {
+        setLikedTracksCount(count);
+      })
+      .catch((error) => {
+        console.error(error);
+      });
+  }, [
+    mediaLikedTracksRecord,
+  ]);
+
+  return (
+    <>
+      <MediaCollectionItem
+        key={likesCollectionItem.id}
+        mediaItem={likesCollectionItem}
+        contextMenuId={contextMenuId}
+        routerLink={Routes.LibraryLikedTracks}
+        onClick={() => {
+          openLikedTracksSideView();
+        }}
+        subtitle={I18nService.getString('label_playlist_subtitle', {
+          trackCount: likedTracksCount,
+        })}
+        disablePlayback={likedTracksCount === 0}
+        className={className}
+        coverPlaceholderIcon={Icons.MediaLike}
+      />
+      <MediaCollectionContextMenu
+        id={contextMenuId}
+        menuItems={[
+          MediaCollectionContextMenuItem.AddToQueue,
+          MediaCollectionContextMenuItem.AddToPlaylist,
+          MediaCollectionContextMenuItem.Pin,
+        ]}
+      />
+    </>
+  );
+}

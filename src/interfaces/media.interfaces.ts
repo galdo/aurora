@@ -1,0 +1,316 @@
+import React from 'react';
+
+import {
+  MediaCollectionItemType,
+  MediaTrackCoverPictureImageDataType,
+} from '../enums';
+
+export interface IMediaTrackData {
+  id: string;
+  provider: string;
+  provider_id: string;
+  sync_timestamp: number;
+  track_name: string;
+  track_name_normalized?: string;
+  track_number: number;
+  track_duration: number;
+  track_cover_picture?: IMediaPicture;
+  track_artist_ids: string[];
+  track_album_id: string;
+  extra?: object;
+}
+
+export interface IMediaAlbumData {
+  id: string;
+  provider: string;
+  provider_id: string;
+  sync_timestamp: number;
+  album_name: string;
+  album_name_normalized?: string;
+  album_artist_id: string;
+  album_cover_picture?: IMediaPicture;
+  album_genre?: string;
+  album_year?: number;
+  hidden?: boolean;
+  extra?: object;
+}
+
+export interface IMediaArtistData {
+  id: string;
+  provider: string;
+  provider_id: string;
+  sync_timestamp: number;
+  artist_name: string;
+  artist_name_normalized?: string;
+  artist_feature_picture?: IMediaPicture;
+  extra?: object;
+}
+
+export interface IMediaTrack extends IMediaTrackData {
+  track_artists: IMediaArtist[];
+  track_album: IMediaAlbum;
+}
+
+export interface IMediaTrackList {
+  id: string;
+}
+
+export interface IMediaQueueTrack extends IMediaTrack {
+  tracklist_id: string;
+  queue_entry_id: string;
+  queue_insertion_index: number;
+}
+
+export interface IMediaAlbum extends IMediaAlbumData {
+  album_artist: IMediaArtist;
+}
+
+export interface IMediaAlbumUpdateData {
+  album_name?: string;
+  album_artist_id?: string;
+  album_genre?: string;
+  album_year?: number;
+  album_cover_picture?: IMediaPicture;
+}
+
+export interface IMediaArtist extends IMediaArtistData {
+}
+
+export interface IMediaPicture {
+  image_data: any;
+  image_data_type: MediaTrackCoverPictureImageDataType;
+}
+
+export type MediaPlaybackPreparationPhase = 'preparing' | 'converting';
+
+export interface IMediaPlaybackPreparationStatus {
+  phase: MediaPlaybackPreparationPhase;
+  progress: number;
+}
+
+export interface IMediaPlayback {
+  play(): Promise<boolean>;
+
+  prepareForPlayback?(): Promise<boolean>;
+
+  setPreparationStatusListener(listener?: (status?: IMediaPlaybackPreparationStatus) => void): void;
+
+  checkIfLoading(): boolean;
+
+  checkIfPlaying(): boolean;
+
+  checkIfEnded(): boolean;
+
+  getPlaybackProgress(): number;
+
+  seekPlayback(mediaPlaybackSeekPosition: number): Promise<boolean>;
+
+  pausePlayback(): Promise<boolean>;
+
+  resumePlayback(): Promise<boolean>;
+
+  stopPlayback(): Promise<boolean>;
+
+  changePlaybackVolume(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): Promise<boolean>;
+
+  mutePlaybackVolume(): Promise<boolean>;
+
+  unmutePlaybackVolume(): Promise<boolean>;
+}
+
+export interface IMediaPlaybackOptions {
+  mediaPlaybackVolume: number;
+  mediaPlaybackMaxVolume: number;
+  mediaPlaybackVolumeMuted: boolean;
+}
+
+export interface IMediaSettingsComponent extends React.FC<any> {
+}
+
+export interface IMediaLibraryService {
+  syncMediaTracks(): Promise<void>;
+
+  removeMediaTrack?(mediaTrack: IMediaTrack): Promise<boolean>;
+}
+
+export interface IMediaPlaybackService {
+  playMediaTrack(mediaTrack: IMediaTrack, mediaPlaybackOptions: IMediaPlaybackOptions): IMediaPlayback;
+}
+
+export interface IMediaSettingsService {
+  getDefaultSettings(): any;
+
+  getSettingsComponent(): IMediaSettingsComponent | undefined;
+}
+
+export interface IMediaProviderData {
+  identifier: string;
+  enabled: boolean;
+  settings: object;
+  options: object;
+  sync_started_at: number | null;
+  sync_finished_at: number | null;
+}
+
+export interface IMediaProvider {
+  mediaProviderIdentifier: string;
+  mediaLibraryService: IMediaLibraryService;
+  mediaPlaybackService: IMediaPlaybackService;
+  mediaSettingsService: IMediaSettingsService;
+
+  onMediaProviderRegistered?(): void;
+
+  onMediaProviderSettingsUpdated?(existingSettings: object, updatedSettings: object): void;
+}
+
+export interface IMediaProviderTrackData {
+  provider: string;
+  provider_id: string;
+}
+
+export interface IMediaCollectionItem {
+  id: string;
+  type: MediaCollectionItemType;
+  name: string;
+  picture?: IMediaPicture;
+  pictureLoading?: boolean;
+  hidden?: boolean;
+}
+
+export interface IMediaCollectionSearchResults {
+  tracks: IMediaTrack[],
+  artists: IMediaArtist[],
+  albums: IMediaAlbum[],
+  playlists: IMediaPlaylist[],
+}
+
+export interface IMediaPlaylistData {
+  id: string;
+  name: string;
+  name_normalized?: string;
+  tracks: IMediaPlaylistTrackData[];
+  cover_picture?: IMediaPicture;
+  created_at: number;
+  updated_at: number;
+  is_hidden_album?: boolean;
+  is_auto_generated?: boolean;
+  is_smart?: boolean;
+  smart_match_mode?: IMediaPlaylistSmartMatchMode;
+  smart_rules?: IMediaPlaylistSmartRuleData[];
+}
+
+export interface IMediaPlaylistTrackData extends IMediaProviderTrackData {
+  playlist_track_id: string;
+  added_at: number;
+}
+
+export interface IMediaPlaylist extends IMediaPlaylistData {
+}
+
+export interface IMediaPlaylistTrack extends IMediaPlaylistTrackData, IMediaTrack {
+}
+
+export interface IMediaPlaylistInputData {
+  name?: string;
+  tracks?: IMediaPlaylistTrackInputData[];
+  cover_picture?: IMediaPicture;
+  is_smart?: boolean;
+  smart_match_mode?: IMediaPlaylistSmartMatchMode;
+  smart_rules?: IMediaPlaylistSmartRuleData[];
+}
+
+export interface IMediaPlaylistTrackInputData extends IMediaProviderTrackData {
+}
+
+export interface IMediaPlaylistUpdateData {
+  name?: string;
+  tracks?: IMediaPlaylistTrackUpdateData[];
+  cover_picture?: IMediaPicture;
+  is_smart?: boolean;
+  smart_match_mode?: IMediaPlaylistSmartMatchMode;
+  smart_rules?: IMediaPlaylistSmartRuleData[];
+}
+
+export interface IMediaPlaylistTrackUpdateData {
+  playlist_track_id: string;
+}
+
+export type IMediaPlaylistSmartKeyword = 'track' | 'album' | 'artist' | 'genre' | 'path';
+
+export type IMediaPlaylistSmartMatchMode = 'all' | 'any';
+
+export interface IMediaPlaylistSmartRuleData {
+  keyword: IMediaPlaylistSmartKeyword;
+  pattern: string;
+}
+
+export interface IMediaLikedTrackData extends IMediaProviderTrackData {
+  id: string;
+  added_at: number;
+}
+
+export interface IMediaLikedTrackInputData extends IMediaProviderTrackData {
+}
+
+export interface IMediaLikedTrack extends IMediaLikedTrackData, IMediaTrack {
+  liked_track_id: string;
+}
+
+export interface IMediaPinnedItemData {
+  id: string;
+  collection_item_id: string;
+  collection_item_type: MediaCollectionItemType;
+  order: number;
+  pinned_at: number;
+}
+
+export interface IMediaPinnedItemInputData extends Pick<IMediaCollectionItem, 'id' | 'type'> {
+}
+
+export interface IMediaPinnedItem extends IMediaPinnedItemData, IMediaCollectionItem {
+  pinned_item_id: string;
+}
+
+export type IPodcastDirectorySource = 'global' | 'de' | 'eu';
+
+export interface IPodcastDirectorySearchFilters {
+  query: string;
+  publisher?: string;
+  genre?: string;
+  minRating?: number;
+  source?: IPodcastDirectorySource;
+}
+
+export interface IPodcastDirectoryEntry {
+  id: string;
+  title: string;
+  publisher: string;
+  genre: string;
+  rating: number;
+  imageUrl: string;
+  feedUrl: string;
+  source: IPodcastDirectorySource;
+}
+
+export interface IPodcastEpisode {
+  id: string;
+  title: string;
+  audioUrl: string;
+  publishedAt: number;
+  description?: string;
+  isNew: boolean;
+}
+
+export interface IPodcastSubscription {
+  id: string;
+  title: string;
+  publisher: string;
+  genre: string;
+  rating: number;
+  imageUrl: string;
+  feedUrl: string;
+  source: IPodcastDirectorySource;
+  hasNewEpisodes: boolean;
+  updatedAt: number;
+  episodes: IPodcastEpisode[];
+}

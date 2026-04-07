@@ -1,0 +1,331 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { Item, ItemParams, Separator as MenuSeparator } from 'react-contexify';
+import { useSelector } from 'react-redux';
+import { isEmpty } from 'lodash';
+import { useHistory } from 'react-router-dom';
+
+import { Icons, Routes } from '../../constants';
+import { useContextMenu, useModal } from '../../contexts';
+import { IMediaCollectionItem, IMediaTrack } from '../../interfaces';
+import { RootState } from '../../reducers';
+import { Events, StringUtils, useSearch } from '../../utils';
+import {
+  I18nService,
+  MediaAlbumService,
+  MediaCollectionService,
+  MediaPlaylistService,
+} from '../../services';
+import { MediaLibraryPlaylistDuplicateTracksError } from '../../services/media-playlist.service';
+
+import { Icon } from '../icon/icon.component';
+import { Text } from '../text/text.component';
+import { TextInput } from '../text-input/text-input.component';
+import { MediaPlaylistDeleteModal } from '../media-playlist-delete-modal/media-playlist-delete-modal.component';
+import { MediaPlaylistEditModal } from '../media-playlist-edit-modal/media-playlist-edit-modal.component';
+import { MediaPlaylistDuplicateTrackModal } from '../media-playlist-duplicate-track-modal/media-playlist-duplicate-track-modal.component';
+import { MediaPlaylistWizardModal } from '../media-playlist-wizard-modal/media-playlist-wizard-modal.component';
+
+export enum MediaPlaylistContextMenuItemAction {
+  SearchPlaylist = 'media/playlist/searchPlaylist',
+  CreatePlaylist = 'media/playlist/createPlaylist',
+  AddToPlaylist = 'media/playlist/addToPlaylist',
+  EditPlaylist = 'media/playlist/editPlaylist',
+  DeletePlaylist = 'media/playlist/deletePlaylist',
+  ExportPlaylistM3U = 'media/playlist/exportM3U',
+  ExportPlaylistM3U8 = 'media/playlist/exportM3U8',
+  ExportPlaylistM3U8DAP = 'media/playlist/exportM3U8DAP',
+  ToggleHidden = 'media/playlist/toggleHidden',
+}
+
+export type MediaPlaylistContextMenuItemProps = {
+  mediaTrack?: IMediaTrack;
+  mediaTracks?: IMediaTrack[];
+  mediaItem?: IMediaCollectionItem,
+};
+
+export type MediaPlaylistContextMenuItemData = {
+  mediaPlaylistId: string;
+};
+
+export type MediaPlaylistContextMenuProps = {
+  type: 'add' | 'manage';
+};
+
+export function MediaPlaylistContextMenu(props: MediaPlaylistContextMenuProps) {
+  const { type: mediaPlaylistContextMenuType } = props;
+  const mediaPlaylists = useSelector((state: RootState) => state.mediaLibrary.mediaPlaylists);
+  const [mediaPlaylistsSearchStr, setMediaPlaylistsSearchStr] = useState<string>('');
+  const history = useHistory();
+  const [searchInputFocus, setSearchInputFocus] = useState(false);
+  const { menuProps, hideAll } = useContextMenu<MediaPlaylistContextMenuItemProps>();
+  const mediaPlaylistsToShow = useSearch(mediaPlaylists, mediaPlaylistsSearchStr);
+  const { showModal } = useModal();
+
+  useEffect(() => {
+    MediaPlaylistService.loadMediaPlaylists();
+  }, []);
+
+  const handleMenuItemClick = useCallback(async (itemParams: ItemParams<MediaPlaylistContextMenuItemProps, MediaPlaylistContextMenuItemData>) => {
+    const itemAction: MediaPlaylistContextMenuItemAction = itemParams.id as MediaPlaylistContextMenuItemAction;
+    const mediaPlaylistId = itemParams.data?.mediaPlaylistId;
+    const { mediaTrack, mediaTracks, mediaItem } = menuProps;
+    hideAll();
+
+    async function getMediaTracks(): Promise<IMediaTrack[]> {
+      if (mediaTrack) {
+        return [mediaTrack];
+      }
+      if (mediaTracks && !isEmpty(mediaTracks)) {
+        return mediaTracks;
+      }
+      if (mediaItem) {
+        return MediaCollectionService.getMediaCollectionTracks(mediaItem);
+      }
+
+      throw new Error('MediaPlaylistContextMenu encountered error at getMediaTracks - Either mediaTrack or mediaItem is required for handling action');
+    }
+
+    switch (itemAction) {
+      case MediaPlaylistContextMenuItemAction.CreatePlaylist:
+        getMediaTracks().then((mediaTracksToAdd) => {
+          showModal(MediaPlaylistWizardModal, {
+            initialTracks: mediaTracksToAdd,
+          }, {
+            onComplete: (result) => {
+              if (!result?.createdPlaylist) {
+                return;
+              }
+
+              const pathToPlaylist = StringUtils.buildRoute(Routes.LibraryPlaylist, {
+                playlistId: result.createdPlaylist.id,
+              });
+              history.push(pathToPlaylist);
+            },
+          });
+        });
+        break;
+      case MediaPlaylistContextMenuItemAction.AddToPlaylist:
+        if (!mediaPlaylistId) {
+          throw new Error('MediaPlaylistContextMenu encountered error at AddToPlaylist - mediaPlaylistId is required');
+        }
+
+        getMediaTracks().then(async (mediaTracksToAdd) => {
+          try {
+            await MediaPlaylistService.addMediaPlaylistTracks(mediaPlaylistId, mediaTracksToAdd);
+          } catch (error) {
+            if (error instanceof MediaLibraryPlaylistDuplicateTracksError) {
+              // in case of duplicate track, explicitly ask user what to do
+              showModal(MediaPlaylistDuplicateTrackModal, {
+                mediaPlaylistId,
+                inputDataList: mediaTracksToAdd,
+                existingTrackDataList: error.existingTrackDataList,
+                newTrackDataList: error.newTrackDataList,
+              });
+            } else {
+              throw error;
+            }
+          }
+        });
+        break;
+      case MediaPlaylistContextMenuItemAction.EditPlaylist:
+        if (!mediaItem) {
+          throw new Error('MediaPlaylistContextMenu encountered error at EditPlaylist - mediaItem is required');
+        }
+        showModal(MediaPlaylistEditModal, {
+          mediaPlaylistId: mediaItem.id,
+        });
+        break;
+      case MediaPlaylistContextMenuItemAction.DeletePlaylist:
+        if (!mediaItem) {
+          throw new Error('MediaPlaylistContextMenu encountered error at DeletePlaylist - mediaItem is required');
+        }
+        showModal(MediaPlaylistDeleteModal, {
+          mediaPlaylistId: mediaItem.id,
+        });
+        break;
+      case MediaPlaylistContextMenuItemAction.ExportPlaylistM3U:
+      case MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8:
+      case MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP:
+        if (!mediaItem) {
+          throw new Error('MediaPlaylistContextMenu encountered error at ExportPlaylist - mediaItem is required');
+        }
+        if (itemAction === MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP) {
+          await MediaPlaylistService.exportMediaPlaylistToDap(mediaItem.id);
+          break;
+        }
+        await MediaPlaylistService.exportMediaPlaylist(
+          mediaItem.id,
+          itemAction === MediaPlaylistContextMenuItemAction.ExportPlaylistM3U ? 'm3u' : 'm3u8',
+        );
+        break;
+      case MediaPlaylistContextMenuItemAction.ToggleHidden:
+        if (!mediaItem) {
+          throw new Error('MediaPlaylistContextMenu encountered error at ToggleHidden - mediaItem is required');
+        }
+        await MediaAlbumService.updateMediaAlbum({
+          id: mediaItem.id,
+        }, {
+          hidden: false,
+        });
+        MediaAlbumService.loadMediaAlbums();
+        MediaPlaylistService.loadMediaPlaylists();
+        break;
+      default:
+      // unsupported action, do nothing
+    }
+  }, [
+    hideAll,
+    history,
+    menuProps,
+    showModal,
+  ]);
+
+  if (mediaPlaylistContextMenuType === 'add') {
+    return (
+      <>
+        <Item
+          key={MediaPlaylistContextMenuItemAction.SearchPlaylist}
+          closeOnClick={false}
+          className="contexify_item_inline"
+          onFocus={() => {
+            setSearchInputFocus(true);
+          }}
+          onBlur={() => {
+            setSearchInputFocus(false);
+          }}
+        >
+          <TextInput
+            focus={searchInputFocus}
+            placeholder={I18nService.getString('placeholder_playlist_context_menu_search_input')}
+            onInputValue={(value) => {
+              setMediaPlaylistsSearchStr(value);
+            }}
+            onKeyDown={(event) => {
+              // pressing space bar closes the context menu for unknown reasons
+              // adding this to handle such cases
+              if (Events.isSpaceKey(event)) {
+                event.stopPropagation();
+              }
+            }}
+          />
+        </Item>
+        <Item
+          key={MediaPlaylistContextMenuItemAction.CreatePlaylist}
+          id={MediaPlaylistContextMenuItemAction.CreatePlaylist}
+          className="contexify_item_inline"
+          onClick={handleMenuItemClick}
+        >
+          <Icon name={Icons.AddCircle}/>
+          {I18nService.getString('button_create_playlist')}
+        </Item>
+        <MenuSeparator/>
+        {isEmpty(mediaPlaylists) && (
+          <Item disabled>
+            {I18nService.getString('label_playlists_empty')}
+          </Item>
+        )}
+        {/* react contextify does not have inbuilt support for handling scroll, so this is being set manually for the list */}
+        <div className="app-scrollable" style={{ maxHeight: 'var(--context-menu-max-overflow-height)' }}>
+          {mediaPlaylistsToShow.map(mediaPlaylist => (
+            <Item
+              style={{ maxWidth: 'var(--context-menu-max-overflow-width)', overflowY: 'hidden' }}
+              key={mediaPlaylist.id}
+              id={MediaPlaylistContextMenuItemAction.AddToPlaylist}
+              onClick={handleMenuItemClick}
+              data={{ mediaPlaylistId: mediaPlaylist.id }}
+            >
+              <Text>
+                {mediaPlaylist.name}
+              </Text>
+            </Item>
+          ))}
+        </div>
+      </>
+    );
+  }
+  if (mediaPlaylistContextMenuType === 'manage') {
+    const mediaPlaylist = mediaPlaylists.find(p => p.id === menuProps?.mediaItem?.id);
+    const isHiddenAlbum = mediaPlaylist?.is_hidden_album;
+
+    if (isHiddenAlbum) {
+      return (
+        <>
+          <Item
+            key={MediaPlaylistContextMenuItemAction.ToggleHidden}
+            id={MediaPlaylistContextMenuItemAction.ToggleHidden}
+            onClick={handleMenuItemClick}
+          >
+            {I18nService.getString('label_submenu_media_collection_show')}
+          </Item>
+          <MenuSeparator/>
+          <Item
+            key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U}
+            id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U}
+            onClick={handleMenuItemClick}
+          >
+            {I18nService.getString('label_playlist_export_m3u')}
+          </Item>
+          <Item
+            key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8}
+            id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8}
+            onClick={handleMenuItemClick}
+          >
+            {I18nService.getString('label_playlist_export_m3u8')}
+          </Item>
+          <Item
+            key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP}
+            id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP}
+            onClick={handleMenuItemClick}
+          >
+            {I18nService.getString('label_playlist_export_m3u8_dap')}
+          </Item>
+        </>
+      );
+    }
+
+    return (
+      <>
+        <Item
+          key={MediaPlaylistContextMenuItemAction.EditPlaylist}
+          id={MediaPlaylistContextMenuItemAction.EditPlaylist}
+          onClick={handleMenuItemClick}
+        >
+          {I18nService.getString('label_playlist_edit')}
+        </Item>
+        <Item
+          key={MediaPlaylistContextMenuItemAction.DeletePlaylist}
+          id={MediaPlaylistContextMenuItemAction.DeletePlaylist}
+          onClick={handleMenuItemClick}
+        >
+          {I18nService.getString('label_playlist_delete')}
+        </Item>
+        <MenuSeparator/>
+        <Item
+          key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U}
+          id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U}
+          onClick={handleMenuItemClick}
+        >
+          {I18nService.getString('label_playlist_export_m3u')}
+        </Item>
+        <Item
+          key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8}
+          id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8}
+          onClick={handleMenuItemClick}
+        >
+          {I18nService.getString('label_playlist_export_m3u8')}
+        </Item>
+        <Item
+          key={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP}
+          id={MediaPlaylistContextMenuItemAction.ExportPlaylistM3U8DAP}
+          onClick={handleMenuItemClick}
+        >
+          {I18nService.getString('label_playlist_export_m3u8_dap')}
+        </Item>
+      </>
+    );
+  }
+
+  return (
+    <></>
+  );
+}

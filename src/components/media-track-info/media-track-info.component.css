@@ -1,0 +1,59 @@
+.media-track-info {
+  display: flex;
+  flex-flow: column;
+  align-items: flex-start;
+  overflow: visible;
+  padding: var(--selectable-focus-ring-size); /* this is to not clip focus ring */
+  gap: 5px;
+  min-width: 0;
+  flex-grow: 1;
+}
+
+.media-track-info-title,
+.media-track-info-subtitle {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.media-track-info-title {
+  font-size: 15px;
+  color: var(--text-light-color);
+}
+
+.media-track-info-subtitle {
+  font-size: 13px;
+  color: var(--text-dark-color);
+}
+
+.media-track-title-action {
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}
+
+.media-track-album-link,
+.media-track-artist-link {
+  display: inline-flex;
+  font-size: inherit;
+  color: inherit !important;
+  padding: 0;
+  text-decoration: none;
+  transition: var(--selectable-item-transition);
+  background: none;
+  border: none;
+}
+
+.media-track-album-link:hover,
+.media-track-artist-link:hover {
+  color: var(--text-light-color) !important;
+  text-decoration: underline;
+}
+
+.media-track-info-subtitle .media-track-artist-link:not(:first-child) {
+  margin-left: 5px;
+}

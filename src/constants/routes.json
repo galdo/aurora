@@ -1,0 +1,18 @@
+{
+  "Library": "/library",
+  "LibraryTracks": "/library/tracks",
+  "LibraryArtists": "/library/artists",
+  "LibraryArtist": "/library/artists/:artistId",
+  "LibraryAlbums": "/library/albums",
+  "LibraryAlbum": "/library/albums/:albumId",
+  "LibraryPlaylists": "/library/playlists",
+  "LibraryPlaylist": "/library/playlists/:playlistId",
+  "LibraryLikedTracks": "/library/liked-tracks",
+  "Player": "/player",
+  "PlayerQueue": "/player/queue",
+  "Podcasts": "/podcasts",
+  "Equalizer": "/equalizer",
+  "Settings": "/settings",
+  "Search": "/search",
+  "AudioCd": "/audio-cd"
+}

@@ -1,0 +1,24 @@
+.action-list {
+  border-radius: 5px;
+  border: 1px solid var(--selectable-outline-color);
+  color: var(--selectable-active-color);
+}
+
+.action-list-item {
+  display: flex;
+  padding: 10px 15px;
+  gap: 10px;
+  align-items: center;
+}
+
+.action-list > .action-list-item:not(:last-child) {
+  border-bottom: 1px solid var(--selectable-outline-color);
+}
+
+.action-list-item-label {
+  flex-grow: 2;
+}
+
+.action-list-item.empty > .action-list-item-label {
+  color: var(--text-disabled-color);
+}

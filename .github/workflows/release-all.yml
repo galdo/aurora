@@ -1,0 +1,325 @@
+name: release-all
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.5.2 or 1.5.2)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-all-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    name: Resolve release version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+  build_macos:
+    name: Build macOS (${{ matrix.arch }})
+    needs: meta
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'yarn'
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Remove npm lockfiles
+        shell: bash
+        run: |
+          rm -f package-lock.json src/package-lock.json
+
+      - name: Force GitHub HTTPS for git dependencies
+        shell: bash
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          yarn install --non-interactive --silent
+
+      - name: Sync app version
+        shell: bash
+        run: |
+          npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build macOS app
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          npm run "prepare:sharp:mac:${ARCH}"
+          npm run "prepare:mpv:mac:${ARCH}"
+          npm run package -- --mac --${ARCH} --c.mac.identity=null
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/latest-mac*.yml
+            release/*.blockmap
+          if-no-files-found: error
+          overwrite: true
+
+  build_windows:
+    name: Build Windows
+    needs:
+      - meta
+      - build_macos
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'yarn'
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Remove npm lockfiles
+        shell: bash
+        run: |
+          rm -f package-lock.json src/package-lock.json
+
+      - name: Force GitHub HTTPS for git dependencies
+        shell: bash
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          yarn install --non-interactive --silent
+
+      - name: Sync app version
+        shell: bash
+        run: |
+          npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Package Windows app
+        shell: bash
+        run: |
+          yarn package:win
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            release/*.exe
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
+          overwrite: true
+
+  build_linux_flatpak:
+    name: Build Linux Flatpak
+    needs:
+      - meta
+      - build_windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'yarn'
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install flatpak toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Configure flathub remote
+        run: |
+          sudo flatpak --system remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Preinstall flatpak runtime dependencies
+        run: |
+          sudo flatpak --system install -y flathub org.freedesktop.Platform//23.08
+          sudo flatpak --system install -y flathub org.freedesktop.Sdk//23.08
+          sudo flatpak --system install -y flathub org.electronjs.Electron2.BaseApp//23.08
+
+      - name: Verify flatpak runtime availability
+        run: |
+          flatpak remotes --system
+          flatpak list --system | grep -E 'org.freedesktop.Platform|org.freedesktop.Sdk|org.electronjs.Electron2.BaseApp'
+
+      - name: Remove npm lockfiles
+        shell: bash
+        run: |
+          rm -f package-lock.json src/package-lock.json
+
+      - name: Force GitHub HTTPS for git dependencies
+        shell: bash
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          yarn install --non-interactive --silent
+
+      - name: Sync app version
+        shell: bash
+        run: |
+          npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build Linux Flatpak
+        shell: bash
+        run: |
+          yarn package:linux:flatpak:x64
+
+      - name: Upload Linux Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-flatpak
+          path: release/*.flatpak
+          if-no-files-found: error
+          overwrite: true
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - meta
+      - build_macos
+      - build_windows
+      - build_linux_flatpak
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+
+      - name: Ensure tag exists
+        shell: bash
+        run: |
+          TAG="${{ needs.meta.outputs.tag }}"
+          git fetch --tags
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag already exists"
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: Release ${{ needs.meta.outputs.tag }}
+          prerelease: ${{ needs.meta.outputs.prerelease }}
+          body: |
+            ## AuroraPulse 1.5.1-beta.3
+
+            ### Scope
+            - This prerelease includes all functional changes from **1.5.1-beta.2** plus the DLNA and remote playback fixes delivered in **1.5.1-beta.3**.
+            - Baseline comparison: **1.5.0 -> 1.5.1-beta.3**.
+
+            ### DLNA & Remote Playback (beta.3)
+            - Added explicit **DLNA Support for Aurora Pulse Launcher (Android Launcher)** with queue-context gating so launcher-specific commands are only used where supported.
+            - Fixed manual next/previous behavior from the UI on standard DLNA renderers by falling back to Aurora queue-driven switching when renderer-native `Next`/`Previous` is not reliable.
+            - Improved automatic transition handling for `current -> next -> overnext` by promoting pending next-track context when renderers do not report a fresh track URI fast enough.
+            - Stabilized Play/Pause state and progress-time visualization during short `STOPPED`/`TRANSITIONING` windows between tracks.
+            - Hardened renderer snapshot/event reconciliation to reduce false `00:00` resets and reduce state flicker during transitions.
+
+            ### DAP Sync & Library Stability (beta.2)
+            - Reworked DAP planning progress so UI status remains meaningful during large sync sessions.
+            - Reduced heavy sync contention via controlled parallelism and throttled persistence updates.
+            - Improved cancellation and restart behavior for interrupted sync, verification, and device-removal scenarios.
+            - Improved startup/player surface stability and dashboard toplist behavior.
+
+            ### Installation Notes
+            - **macOS:** Open the DMG, move AuroraPulse to Applications, then launch from Applications. If Gatekeeper blocks first launch, right-click AuroraPulse.app and choose Open.
+            - **Windows:** Download the `.exe` installer and run it. If SmartScreen appears, choose More info > Run anyway.
+            - **Linux (Flatpak):** Install the provided `.flatpak` package using your Flatpak manager or `flatpak install`.
+          files: |
+            release/macos-arm64/*.dmg
+            release/macos-arm64/*.zip
+            release/macos-arm64/*.blockmap
+            release/macos-arm64/latest-mac.yml
+            release/macos-x64/*.dmg
+            release/macos-x64/*.zip
+            release/macos-x64/*.blockmap
+            release/windows/*.exe
+            release/windows/*.blockmap
+            release/windows/latest.yml
+            release/windows/builder-debug.yml
+            release/linux-flatpak/*.flatpak
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,60 @@
+import { Routes } from '../../constants';
+
+import { ArtistPage } from '../artist/artist.component';
+import { ArtistsPage } from '../artists/artists.component';
+import { AlbumPage } from '../album/album.component';
+import { AlbumsPage } from '../albums/albums.component';
+import { PlaylistsPage } from '../playlists/playlists.component';
+import { PlaylistPage } from '../playlist/playlist.component';
+import { LikedTracksPage } from '../liked-tracks/liked-tracks.component';
+import { TracksPage } from '../tracks/tracks.component';
+
+export default [
+  {
+    path: Routes.LibraryTracks,
+    component: TracksPage,
+    tHeaderName: 'search_result_heading_tracks',
+    exact: true,
+  },
+  {
+    path: Routes.LibraryArtists,
+    component: ArtistsPage,
+    tHeaderName: 'link_library_artists',
+    exact: true,
+  },
+  {
+    path: Routes.LibraryAlbums,
+    component: AlbumsPage,
+    tHeaderName: 'link_library_albums',
+    exact: true,
+  },
+  {
+    path: Routes.LibraryPlaylists,
+    component: PlaylistsPage,
+    tHeaderName: 'link_library_playlists',
+    exact: true,
+  },
+  {
+    path: Routes.LibraryPlaylist,
+    component: PlaylistPage,
+    exact: true,
+  },
+  {
+    path: Routes.LibraryAlbum,
+    component: AlbumPage,
+    exact: true,
+  },
+  {
+    path: Routes.LibraryArtist,
+    component: ArtistPage,
+    exact: true,
+  },
+  {
+    path: Routes.Library,
+    redirect: Routes.LibraryAlbums,
+  },
+  {
+    path: Routes.LibraryLikedTracks,
+    component: LikedTracksPage,
+  },
+];

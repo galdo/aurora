@@ -1,0 +1,257 @@
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { Row } from 'react-bootstrap';
+import { useSelector } from 'react-redux';
+import classNames from 'classnames/bind';
+
+import { Icons, Routes } from '../../constants';
+import { RootState } from '../../reducers';
+import { DlnaService, MediaPlayerService } from '../../services';
+import { I18nService } from '../../services/i18n.service';
+
+import { Icon } from '../icon/icon.component';
+import { Button } from '../button/button.component';
+import { RouterLinkToggle } from '../router-link-toggle/router-link-toggle.component';
+import { Slider } from '../slider/slider.component';
+import { MediaTrackLikeButton } from '../media-track-like-button/media-track-like-button.component';
+
+import styles from './media-player.component.css';
+
+const cx = classNames.bind(styles);
+
+export function MediaPlayerSide() {
+  const {
+    mediaPlaybackCurrentPlayingInstance,
+    mediaPlaybackCurrentMediaTrack,
+    mediaPlaybackVolumeCurrent,
+    mediaPlaybackVolumeMaxLimit,
+    mediaPlaybackVolumeMuted,
+  } = useSelector((state: RootState) => state.mediaPlayer);
+
+  const mediaPlaybackVolumeMidThreshold = useRef<number>(mediaPlaybackVolumeMaxLimit / 2);
+
+  // TODO: Add implementation for setMediaVolumeDragStartValue
+  const [mediaVolumeDragStartValue] = useState<number | undefined>(undefined);
+  const [dlnaState, setDlnaState] = useState(() => DlnaService.getState());
+  const [showOutputMenu, setShowOutputMenu] = useState(false);
+  const outputMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    DlnaService.initialize();
+    setDlnaState(DlnaService.getState());
+    const unsubscribeDlna = DlnaService.subscribe((state) => {
+      setDlnaState(state);
+    });
+    return () => {
+      unsubscribeDlna();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (!outputMenuRef.current) {
+        return;
+      }
+      if (outputMenuRef.current.contains(event.target as Node)) {
+        return;
+      }
+      setShowOutputMenu(false);
+    };
+    if (showOutputMenu) {
+      window.addEventListener('mousedown', handleDocumentClick);
+    }
+    return () => {
+      window.removeEventListener('mousedown', handleDocumentClick);
+    };
+  }, [showOutputMenu]);
+
+  const handleVolumeChangeDragCommit = useCallback((value: number) => {
+    MediaPlayerService.changeMediaPlayerVolume(value);
+  }, []);
+
+  const handleVolumeButtonSubmit = useCallback(() => {
+    // in case the drag brought down the volume all the way to 0, we will try to raise the volume to either:
+    // (a) maximum value from where the first drag started originally started, or
+    // (b) maximum volume
+    // otherwise in case we already have a volume > 0, simply unmute
+    if (mediaPlaybackVolumeCurrent === 0) {
+      MediaPlayerService.changeMediaPlayerVolume(mediaVolumeDragStartValue || mediaPlaybackVolumeMaxLimit);
+    } else if (!mediaPlaybackVolumeMuted) {
+      MediaPlayerService.muteMediaPlayerVolume();
+    } else {
+      MediaPlayerService.unmuteMediaPlayerVolume();
+    }
+  }, [
+    mediaVolumeDragStartValue,
+    mediaPlaybackVolumeCurrent,
+    mediaPlaybackVolumeMaxLimit,
+    mediaPlaybackVolumeMuted,
+  ]);
+
+  let mediaVolumeButtonIcon;
+  if (!mediaPlaybackVolumeMuted && mediaPlaybackVolumeCurrent !== 0) {
+    if (mediaPlaybackVolumeCurrent >= mediaPlaybackVolumeMidThreshold.current) {
+      mediaVolumeButtonIcon = Icons.PlayerVolume1;
+    } else {
+      mediaVolumeButtonIcon = Icons.PlayerVolume2;
+    }
+  } else {
+    mediaVolumeButtonIcon = Icons.PlayerVolumeMuted;
+  }
+
+  const getAudioDetailsLabel = (mediaTrack: any): string => {
+    const format = (mediaTrack?.format || {}) as {
+      sampleRate?: number;
+      bitsPerSample?: number;
+      bitrate?: number;
+      container?: string;
+    };
+    const extra = (mediaTrack?.extra || {}) as {
+      file_path?: string;
+      audio_sample_rate_hz?: number;
+      audio_bit_depth?: number;
+      audio_bitrate_kbps?: number;
+      audio_file_type?: string;
+    };
+
+    const sampleRateHz = Number(extra.audio_sample_rate_hz || format.sampleRate);
+    const bitDepth = Number(extra.audio_bit_depth || format.bitsPerSample);
+    const bitrateKbps = Number(extra.audio_bitrate_kbps || (format.bitrate ? Math.round(format.bitrate / 1000) : 0));
+    const fileType = String(
+      extra.audio_file_type
+      || format.container
+      || String(extra.file_path || '').split('.').pop()
+      || '',
+    ).trim().toLowerCase();
+
+    const details: string[] = [];
+    if (Number.isFinite(bitDepth) && bitDepth > 0) {
+      details.push(`${bitDepth} Bit`);
+    }
+    if (Number.isFinite(sampleRateHz) && sampleRateHz > 0) {
+      details.push(`${(sampleRateHz / 1000).toFixed(1).replace('.', ',')} kHz`);
+    }
+    if (Number.isFinite(bitrateKbps) && bitrateKbps > 0) {
+      details.push(`${bitrateKbps} kbps`);
+    }
+    if (fileType) {
+      details.push(fileType.toUpperCase());
+    }
+
+    if (details.length <= 1 && fileType) {
+      return I18nService.getString('label_player_audio_details_unavailable');
+    }
+
+    return details.join(' • ');
+  };
+  const audioDetailsLabel = mediaPlaybackCurrentMediaTrack
+    ? getAudioDetailsLabel(mediaPlaybackCurrentMediaTrack)
+    : '';
+
+  return (
+    <Row className={cx('media-player-side-container')}>
+      <div className={cx('media-player-side-controls-column')}>
+        <div className={cx('media-player-side-controls-row')}>
+          {mediaPlaybackCurrentMediaTrack ? (
+            <MediaTrackLikeButton
+              mediaTrack={mediaPlaybackCurrentMediaTrack}
+              className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'media-player-like-button')}
+            />
+          ) : (
+            <Button
+              disabled
+              className={cx('media-player-control', 'media-player-control-sm', 'media-player-like-button', 'disabled')}
+            >
+              <Icon name={Icons.MediaLike}/>
+            </Button>
+          )}
+          <RouterLinkToggle
+            to={Routes.PlayerQueue}
+            activeClassName={cx('active')}
+            className={cx('media-player-control', 'media-player-control-sm', 'media-player-toggle', 'app-nav-link')}
+          >
+            <Icon name={Icons.PlayerQueue}/>
+          </RouterLinkToggle>
+          <Button
+            className={cx('media-player-control', 'media-player-control-sm', 'media-player-volume-button')}
+            onButtonSubmit={handleVolumeButtonSubmit}
+          >
+            <Icon name={mediaVolumeButtonIcon}/>
+          </Button>
+          <div className={cx('media-player-volume-bar-container')}>
+            <Slider
+              autoCommitOnUpdate
+              value={mediaPlaybackVolumeMuted
+                ? 0
+                : mediaPlaybackVolumeCurrent}
+              maxValue={mediaPlaybackVolumeMaxLimit}
+              onDragCommit={handleVolumeChangeDragCommit}
+            />
+          </div>
+          <div className={cx('media-player-output-selector')} ref={outputMenuRef}>
+            <Button
+              className={cx('media-player-control', 'media-player-control-sm', 'media-player-output-button', {
+                active: dlnaState.outputMode === 'remote',
+                connected: dlnaState.outputMode === 'remote' && !!dlnaState.selectedRendererId,
+              })}
+              onButtonSubmit={() => {
+                const nextShowOutputMenu = !showOutputMenu;
+                setShowOutputMenu(nextShowOutputMenu);
+                if (nextShowOutputMenu) {
+                  DlnaService.refreshRendererDevices().catch(console.error);
+                }
+              }}
+            >
+              <Icon name={Icons.PlayerCast}/>
+            </Button>
+            {showOutputMenu && (
+              <div className={cx('media-player-output-menu')}>
+                <button
+                  type="button"
+                  className={cx('media-player-output-item', {
+                    active: dlnaState.outputMode === 'local',
+                  })}
+                  onClick={() => {
+                    MediaPlayerService.switchOutputDevice('local').catch(console.error);
+                    setShowOutputMenu(false);
+                  }}
+                >
+                  {I18nService.getString('label_player_output_local')}
+                </button>
+                {dlnaState.rendererDevices.map(renderer => (
+                  <button
+                    key={renderer.id}
+                    type="button"
+                    className={cx('media-player-output-item', {
+                      active: dlnaState.outputMode === 'remote' && dlnaState.selectedRendererId === renderer.id,
+                    })}
+                    onClick={() => {
+                      MediaPlayerService.switchOutputDevice(renderer.id).catch(console.error);
+                      setShowOutputMenu(false);
+                    }}
+                  >
+                    {renderer.name}
+                  </button>
+                ))}
+                {dlnaState.rendererDevices.length === 0 && (
+                  <div className={cx('media-player-output-empty')}>
+                    {I18nService.getString('label_player_output_device_none')}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+        {!!mediaPlaybackCurrentPlayingInstance && !!audioDetailsLabel && (
+          <div className={cx('media-player-side-audio-details')}>
+            {audioDetailsLabel}
+          </div>
+        )}
+      </div>
+    </Row>
+  );
+}

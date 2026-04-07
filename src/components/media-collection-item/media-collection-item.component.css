@@ -1,0 +1,106 @@
+.collection-item {
+  transition: var(--selectable-item-transition);
+  border-radius: 5px;
+  display: block;
+}
+
+.collection-item:focus,
+.collection-item:hover,
+.collection-item.active,
+.collection-item.selected {
+  background-color: var(--selectable-hovered-bg-color);
+}
+
+.collection-item:hover .collection-item-playback-button {
+  color: var(--selectable-hovered-color);
+}
+
+.collection-item.compact:hover .collection-item-cover-content {
+  opacity: 1 !important;
+}
+
+.collection-item.compact .collection-item-cover-content {
+  background-color: transparent !important;
+  align-items: flex-end !important;
+  justify-content: flex-end !important;
+  padding: 6px;
+}
+
+.collection-item.compact .collection-item-cover {
+  box-shadow: none !important;
+  border-radius: 6px;
+}
+
+.collection-item.compact .collection-item-cover img {
+  border-radius: 6px;
+}
+
+.collection-item.compact .collection-item-playback-button {
+  --size: 2.2rem;
+  box-shadow: none;
+}
+
+.collection-item-content {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 20px;
+  padding: 10px;
+  min-width: 0; /* allow children to shrink when needed */
+}
+
+.collection-item.compact .collection-item-content {
+  gap: 10px;
+}
+
+.collection-item-cover {
+  width: 50px;
+  height: 50px;
+}
+
+.collection-item-cover-wrapper {
+  position: relative;
+}
+
+.collection-item-chip {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  z-index: 2;
+}
+
+.collection-item-info {
+  flex-flow: column;
+  display: flex;
+  flex-flow: column;
+  align-items: flex-start;
+  gap: 5px;
+  flex: 1 1 auto; /* take remaining horizontal space and be allowed to shrink */
+  min-width: 0;
+  overflow: visible; /* children handle their own overflow */
+}
+
+.collection-item-info-title {
+  font-size: 15px;
+  color: var(--text-light-color);
+}
+
+.collection-item-info-subtitle {
+  font-size: 13px;
+  color: var(--text-dark-color);
+}
+
+.collection-item.current .collection-item-info-title {
+  font-weight: bold;
+}
+
+.collection-item-info-title,
+.collection-item-info-subtitle {
+  max-width: 100%;
+  overflow: hidden;
+}

@@ -1,0 +1,147 @@
+import moment from 'moment';
+
+import {
+  IMediaAlbum,
+  IMediaArtist,
+  IMediaLikedTrack,
+  IMediaLikedTrackInputData,
+  IMediaPinnedItem,
+  IMediaPinnedItemInputData,
+  IMediaPlaylist,
+  IMediaTrack,
+} from '../interfaces';
+
+export function mediaNameSanitizerForComparator(mediaName: string): string {
+  return mediaName.replace(/[^A-Z0-9]/ig, '');
+}
+
+export function mediaAlbumComparator(
+  mediaAlbumA: IMediaAlbum,
+  mediaAlbumB: IMediaAlbum,
+) {
+  return mediaNameSanitizerForComparator(mediaAlbumA.album_name) < mediaNameSanitizerForComparator(mediaAlbumB.album_name) ? -1 : 1;
+}
+
+export function mediaArtistComparator(
+  mediaArtistA: IMediaArtist,
+  mediaArtistB: IMediaArtist,
+) {
+  return mediaNameSanitizerForComparator(mediaArtistA.artist_name) < mediaNameSanitizerForComparator(mediaArtistB.artist_name) ? -1 : 1;
+}
+
+export function mediaTrackComparator(
+  mediaTrackA: IMediaTrack,
+  mediaTrackB: IMediaTrack,
+) {
+  const discNumberA = Number((mediaTrackA.extra as any)?.disc_number || 0);
+  const discNumberB = Number((mediaTrackB.extra as any)?.disc_number || 0);
+  if (discNumberA !== discNumberB) {
+    return discNumberA - discNumberB;
+  }
+
+  const trackNumberA = Number(mediaTrackA.track_number || 0);
+  const trackNumberB = Number(mediaTrackB.track_number || 0);
+  if (trackNumberA !== trackNumberB) {
+    return trackNumberA - trackNumberB;
+  }
+
+  const titleCompare = String(mediaTrackA.track_name || '').localeCompare(String(mediaTrackB.track_name || ''), 'de', { sensitivity: 'base' });
+  if (titleCompare !== 0) {
+    return titleCompare;
+  }
+
+  return String(mediaTrackA.id).localeCompare(String(mediaTrackB.id), 'de', { sensitivity: 'base' });
+}
+
+export function mediaArtistTrackComparator(
+  mediaTrackA: IMediaTrack,
+  mediaTrackB: IMediaTrack,
+) {
+  return `${mediaNameSanitizerForComparator(mediaTrackA.track_album.album_name)}-${mediaTrackA.track_number}`
+  < `${mediaNameSanitizerForComparator(mediaTrackB.track_album.album_name)}-${mediaTrackB.track_number}` ? -1 : 1;
+}
+
+export function mediaPlaylistComparator(
+  mediaPlaylistA: IMediaPlaylist,
+  mediaPlaylistB: IMediaPlaylist,
+) {
+  return String(mediaPlaylistA.name).localeCompare(String(mediaPlaylistB.name), 'de', { sensitivity: 'base' });
+}
+
+export function mediaLikedTracksComparator(
+  mediaLikedTrackA: IMediaLikedTrack,
+  mediaLikedTrackB: IMediaLikedTrack,
+) {
+  return mediaLikedTrackA.added_at > mediaLikedTrackB.added_at ? -1 : 1;
+}
+
+export function mediaPinnedItemsComparator(
+  itemA: IMediaPinnedItem,
+  itemB: IMediaPinnedItem,
+) {
+  return itemA.order < itemB.order ? -1 : 1;
+}
+
+export function sortMediaAlbumTracks(
+  mediaAlbumTracks: IMediaTrack[],
+): IMediaTrack[] {
+  return mediaAlbumTracks.sort(mediaTrackComparator);
+}
+
+export function sortMediaAlbums(mediaAlbums: IMediaAlbum[]): IMediaAlbum[] {
+  return mediaAlbums.sort(mediaAlbumComparator);
+}
+
+export function sortMediaArtists(mediaArtists: IMediaArtist[]): IMediaArtist[] {
+  return mediaArtists.sort(mediaArtistComparator);
+}
+
+export function sortMediaArtistTracks(
+  mediaTracks: IMediaTrack[],
+): IMediaTrack[] {
+  return mediaTracks.sort(mediaArtistTrackComparator);
+}
+
+export function sortMediaPlaylists(
+  mediaPlaylists: IMediaPlaylist[],
+): IMediaPlaylist[] {
+  return mediaPlaylists.sort(mediaPlaylistComparator);
+}
+
+export function sortMediaLikedTracks(
+  mediaLikedTracks: IMediaLikedTrack[],
+) {
+  return mediaLikedTracks.sort(mediaLikedTracksComparator);
+}
+
+export function sortMediaPinnedItems(
+  mediaPinnedItems: IMediaPinnedItem[],
+) {
+  return mediaPinnedItems.sort(mediaPinnedItemsComparator);
+}
+
+export function getPinnedItemKey(item: IMediaPinnedItem) {
+  return `${item.collection_item_type}_${item.collection_item_id}`;
+}
+
+export function getPinnedItemKeyFromInput(input: IMediaPinnedItemInputData) {
+  return `${input.type}_${input.id}`;
+}
+
+export function getLikedTrackKey(track: IMediaLikedTrack) {
+  return `${track.provider}_${track.provider_id}`;
+}
+
+export function getLikedTrackKeyFromInput(input: IMediaLikedTrackInputData) {
+  return `${input.provider}_${input.provider_id}`;
+}
+
+// expected duration to be in seconds
+export function formatMediaTrackDuration(duration: number) {
+  const formatted = moment
+    .utc(duration * 1000, 'x')
+    .format('HH:mm:ss');
+
+  // remove 00s belonging to hours component if empty
+  return formatted.replace(/^00:/, '');
+}
