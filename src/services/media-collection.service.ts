@@ -22,6 +22,9 @@ export class MediaCollectionService {
   private static readonly tracksCacheTtlMs = 15000;
   private static readonly tracksCache = new Map<string, { expiresAt: number; tracks: IMediaTrack[] }>();
   private static readonly tracksInFlight = new Map<string, Promise<IMediaTrack[]>>();
+  private static readonly searchCacheTtlMs = 5000;
+  private static readonly searchCache = new Map<string, { expiresAt: number; result: IMediaCollectionSearchResults }>();
+  private static readonly searchInFlight = new Map<string, Promise<IMediaCollectionSearchResults>>();
 
   static async searchCollection(query: string): Promise<IMediaCollectionSearchResults> {
     const searchQuery = String(query || '').trim();
@@ -33,20 +36,43 @@ export class MediaCollectionService {
         playlists: [],
       };
     }
+    const cacheKey = searchQuery.toLowerCase();
+    const now = Date.now();
+    const cachedEntry = this.searchCache.get(cacheKey);
+    if (cachedEntry && cachedEntry.expiresAt > now) {
+      return cachedEntry.result;
+    }
+    const inFlightSearch = this.searchInFlight.get(cacheKey);
+    if (inFlightSearch) {
+      return inFlightSearch;
+    }
 
-    const [tracks, albums, artists, playlists] = await Promise.all([
+    const requestPromise = Promise.all([
       MediaTrackService.searchTracksByName(searchQuery),
       MediaAlbumService.searchAlbumsByName(searchQuery),
       MediaArtistService.searchArtistsByName(searchQuery),
       MediaPlaylistService.searchPlaylistsByName(searchQuery),
-    ]);
-
-    return {
-      tracks,
-      albums,
-      artists,
-      playlists,
-    };
+    ])
+      .then(([tracks, albums, artists, playlists]) => {
+        const result: IMediaCollectionSearchResults = {
+          tracks,
+          albums,
+          artists,
+          playlists,
+        };
+        this.searchCache.set(cacheKey, {
+          result,
+          expiresAt: Date.now() + this.searchCacheTtlMs,
+        });
+        this.searchInFlight.delete(cacheKey);
+        return result;
+      })
+      .catch((error) => {
+        this.searchInFlight.delete(cacheKey);
+        throw error;
+      });
+    this.searchInFlight.set(cacheKey, requestPromise);
+    return requestPromise;
   }
 
   static async getMediaCollectionTracks(mediaCollectionItem: IMediaCollectionItem): Promise<IMediaTrack[]> {
@@ -141,6 +167,9 @@ export class MediaCollectionService {
       case MediaCollectionItemType.Album:
         return Icons.AlbumPlaceholder;
       case MediaCollectionItemType.Playlist:
+        if (mediaCollectionItem.id === MediaPlaylistService.mostPlayedPlaylistId) {
+          return Icons.PlaylistMostPlayed;
+        }
         return Icons.PlaylistPlaceholder;
       case MediaCollectionItemType.LikedTracks:
         return Icons.MediaLike;

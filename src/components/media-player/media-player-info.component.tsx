@@ -6,7 +6,7 @@ import { useSelector } from 'react-redux';
 import { Icons } from '../../constants';
 import { useContextMenu } from '../../contexts';
 import { RootState } from '../../reducers';
-import { PodcastService } from '../../services';
+import { DlnaService, PodcastService } from '../../services';
 
 import { MediaCoverPicture } from '../media-cover-picture/media-cover-picture.component';
 import { MediaTrackInfo } from '../media-track-info/media-track-info.component';
@@ -19,7 +19,9 @@ const cx = classNames.bind(styles);
 export function MediaPlayerInfo({ onShowAlbum }: { onShowAlbum: (albumId: string) => void }) {
   const { showMenu } = useContextMenu();
   const mediaPlaybackCurrentMediaTrack = useSelector((state: RootState) => state.mediaPlayer.mediaPlaybackCurrentMediaTrack);
+  const mediaPlaybackState = useSelector((state: RootState) => state.mediaPlayer.mediaPlaybackState);
   const [podcastPlaybackSnapshot, setPodcastPlaybackSnapshot] = useState(() => PodcastService.getPlaybackSnapshot());
+  const [dlnaState, setDlnaState] = useState(() => DlnaService.getState());
   const mediaTrackContextMenuId = 'media_player_playing_track_context_menu';
 
   useEffect(() => {
@@ -29,6 +31,16 @@ export function MediaPlayerInfo({ onShowAlbum }: { onShowAlbum: (albumId: string
     setPodcastPlaybackSnapshot(PodcastService.getPlaybackSnapshot());
     return () => {
       unsubscribePlayback();
+    };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribeDlna = DlnaService.subscribe((state) => {
+      setDlnaState(state);
+    });
+    setDlnaState(DlnaService.getState());
+    return () => {
+      unsubscribeDlna();
     };
   }, []);
 
@@ -87,6 +99,19 @@ export function MediaPlayerInfo({ onShowAlbum }: { onShowAlbum: (albumId: string
   }
 
   const currentMediaTrack = mediaPlaybackCurrentMediaTrack;
+  const isRemotePlaybackWithoutTrack = !currentMediaTrack
+    && dlnaState.outputMode === 'remote'
+    && !!dlnaState.selectedRendererId;
+  const selectedRendererName = dlnaState.rendererDevices.find(renderer => renderer.id === dlnaState.selectedRendererId)?.name
+    || 'Remote Renderer';
+  let playbackStateLabel = 'Stopped';
+  if (mediaPlaybackState === 'media/playback/playing') {
+    playbackStateLabel = 'Playing';
+  } else if (mediaPlaybackState === 'media/playback/loading') {
+    playbackStateLabel = 'Loading';
+  } else if (mediaPlaybackState === 'media/playback/paused') {
+    playbackStateLabel = 'Paused';
+  }
   return (
     <Row className={cx('media-player-info-container')}>
       <Col className={cx('col-12', 'media-player-info-column')}>
@@ -109,10 +134,10 @@ export function MediaPlayerInfo({ onShowAlbum }: { onShowAlbum: (albumId: string
         ) : (
           <div className={cx('media-player-track-info-container')}>
             <div className={cx('media-player-podcast-episode')}>
-              No track selected
+              {isRemotePlaybackWithoutTrack ? selectedRendererName : 'No track selected'}
             </div>
             <div className={cx('media-player-podcast-show')}>
-              -
+              {isRemotePlaybackWithoutTrack ? playbackStateLabel : '-'}
             </div>
           </div>
         )}

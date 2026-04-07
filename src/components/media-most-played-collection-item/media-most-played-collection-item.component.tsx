@@ -41,7 +41,7 @@ export function MediaMostPlayedCollectionItem(props: {
         })}
         disablePlayback={mostPlayedPlaylist.tracks.length === 0}
         className={className}
-        coverPlaceholderIcon={Icons.PlaylistPlaceholder}
+        coverPlaceholderIcon={Icons.PlaylistMostPlayed}
       />
       <MediaCollectionContextMenu
         id={contextMenuId}

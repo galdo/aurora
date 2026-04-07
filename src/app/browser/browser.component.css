@@ -29,7 +29,7 @@
   align-items: flex-end;
   padding-top: 0;
   padding-bottom: 8px;
-  padding-right: 0;
+  padding-right: calc(var(--windows-controls-safe-width, 176px) + 8px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -42,7 +42,7 @@
 
 .browser-header-actions-windows {
   gap: 5px;
-  margin-right: var(--windows-controls-safe-width, 152px);
+  margin-right: 0;
   min-width: 0;
   flex-shrink: 0;
 }

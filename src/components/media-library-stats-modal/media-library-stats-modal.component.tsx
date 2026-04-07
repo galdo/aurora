@@ -150,7 +150,7 @@ export const MediaLibraryStatsModal: ModalComponent<MediaLibraryStatsModalProps>
     };
   }, []);
 
-  const toplistPageSize = 5;
+  const toplistPageSize = 3;
   const topSongsPage = stats.topSongs.slice(0, toplistPageSize);
   const topAlbumsPage = stats.topAlbums.slice(0, toplistPageSize);
   const toplistPages = [

@@ -28,6 +28,7 @@ import { AppService } from './app.service';
 import { ArtistViewMode, MediaArtistService } from './media-artist.service';
 import { MediaLikedTrackService } from './media-liked-track.service';
 import { PodcastService } from './podcast.service';
+import { DlnaControlStackService } from './dlna-control-stack.service';
 
 type DlnaTrack = {
   id: string;
@@ -51,9 +52,13 @@ type DlnaRendererDevice = {
   friendlyName: string;
   modelName: string;
   avTransportControlUrl: string;
+  avTransportEventUrl?: string;
   avTransportServiceType: string;
   renderingControlUrl: string;
+  renderingControlEventUrl?: string;
   renderingControlServiceType: string;
+  connectionManagerControlUrl?: string;
+  connectionManagerServiceType?: string;
   lastSeenAt: number;
 };
 
@@ -108,6 +113,11 @@ export type DlnaRendererSnapshot = {
   muted?: boolean;
 };
 
+export type DlnaRendererEventSnapshot = DlnaRendererSnapshot & {
+  rendererId: string;
+  capturedAt: number;
+};
+
 type DlnaRendererMetadataMode = 'full' | 'compatibility' | 'empty';
 
 const debug = require('debug')('aurora:service:dlna');
@@ -117,13 +127,17 @@ export class DlnaService {
   private static readonly uiSettingsStorageKey = 'aurora:ui-settings';
   private static readonly uiSettingsChangedEventName = 'aurora:settings-changed';
   private static readonly eventName = 'aurora:dlna-state-changed';
+  private static readonly rendererSnapshotEventName = 'aurora:dlna-renderer-snapshot';
   private static readonly multicastIp = '239.255.255.250';
   private static readonly multicastPort = 1900;
   private static readonly serviceType = 'urn:schemas-upnp-org:device:MediaServer:1';
-  private static readonly rootDeviceUdn = 'uuid:aurora-pulse-media-server';
+  private static readonly upnpMediaServerV2ServiceType = 'urn:schemas-upnp-org:device:MediaServer:2';
+  /** UPnP requires a UUID-form UDN; strict renderers/clients ignore non-conforming values. */
+  private static readonly rootDeviceUdn = 'uuid:a7f3c2b1-9d4e-4f8a-bc12-ef3456789012';
   private static readonly contentDirectoryServiceType = 'urn:schemas-upnp-org:service:ContentDirectory:1';
   private static readonly connectionManagerServiceType = 'urn:schemas-upnp-org:service:ConnectionManager:1';
   private static readonly usn = `${this.rootDeviceUdn}::${this.serviceType}`;
+  private static readonly upnpMediaServerV2Usn = `${this.rootDeviceUdn}::${this.upnpMediaServerV2ServiceType}`;
   private static readonly defaultPort = 58200;
   private static readonly bufferBytes = 512 * 1024;
   private static readonly suggestedClientPrebufferSeconds = 3;
@@ -136,15 +150,27 @@ export class DlnaService {
   private static readonly rendererDiscoveryWithDeviceIntervalMs = 12000;
   private static readonly rendererDiscoverySelectedRemoteIntervalMs = 4000;
   private static readonly rendererDiscoveryStartupProbeDelaysMs = [1500, 4000, 9000];
-  private static readonly rendererMaxAgeMs = 15000;
+  private static readonly selectedRendererDisconnectGraceMs = 90000;
+  private static readonly rendererMaxAgeMs = 60000;
   private static readonly avTransportServiceType = 'urn:schemas-upnp-org:service:AVTransport:1';
   private static readonly renderingControlServiceType = 'urn:schemas-upnp-org:service:RenderingControl:1';
-  private static readonly soapRequestTimeoutMs = 4000;
+  private static readonly soapRequestTimeoutMs = 7000;
   private static readonly transportSetupSoapRequestTimeoutMs = 5000;
-  private static readonly snapshotTransportSoapRequestTimeoutMs = 1800;
-  private static readonly snapshotPositionSoapRequestTimeoutMs = 2200;
-  private static readonly snapshotOutputSoapRequestTimeoutMs = 1400;
+  private static readonly snapshotTransportSoapRequestTimeoutMs = 3200;
+  private static readonly snapshotPositionSoapRequestTimeoutMs = 3600;
+  private static readonly snapshotMediaSoapRequestTimeoutMs = 3200;
+  private static readonly snapshotOutputSoapRequestTimeoutMs = 2600;
   private static readonly snapshotOutputRefreshIntervalMs = 8000;
+  private static readonly snapshotMinIntervalMs = 260;
+  private static readonly snapshotCacheTtlMs = 2200;
+  private static readonly snapshotFailureBackoffBaseMs = 350;
+  private static readonly snapshotFailureBackoffMaxMs = 2400;
+  private static readonly rendererEventRenewIntervalMs = 20000;
+  private static readonly queueContextPublishTimeoutMs = 5200;
+  private static readonly queueContextPublishMaxAttempts = 2;
+  private static readonly ssdpRestartDelayMs = 2500;
+  private static readonly queueContextUnsupportedRetryMs = 15000;
+  private static readonly controlRuntimeEnabled = true;
   private static readonly dlnaLogFileName = 'dlna.log';
   private static readonly dlnaArtworkCacheDirName = 'dlna-artwork-cache';
 
@@ -175,13 +201,43 @@ export class DlnaService {
   private static rendererCurrentTrackIdByRendererId: Map<string, string> = new Map();
   private static rendererPendingNextTrackIdByRendererId: Map<string, string> = new Map();
   private static rendererQueueContextSizeByRendererId: Map<string, number> = new Map();
+  private static rendererQueueContextSupportedByRendererId: Map<string, boolean> = new Map();
+  private static rendererQueueContextUnsupportedAtByRendererId: Map<string, number> = new Map();
+  private static rendererControlStackByRendererId: Map<string, DlnaControlStackService> = new Map();
+  private static rendererEventSubscriptionSidByRendererId: Map<string, string> = new Map();
+  private static rendererEventSubscriptionExpiresAtByRendererId: Map<string, number> = new Map();
+  private static rendererEventSubscriptionUnsupportedUntilByRendererId: Map<string, number> = new Map();
+  private static rendererEventSnapshotByRendererId: Map<string, {
+    capturedAt: number;
+    transportState?: string;
+    positionSeconds?: number;
+    currentTrackUri?: string;
+    volumePercent?: number;
+    muted?: boolean;
+  }> = new Map();
+
+  private static rendererSnapshotLogAtByRendererId: Map<string, number> = new Map();
+
   private static rendererMuteControlUnsupportedIds: Set<string> = new Set();
   private static rendererStoppedAtByRendererId: Map<string, number> = new Map();
+  private static rendererStopRequestedAtByRendererId: Map<string, number> = new Map();
+  private static selectedRendererSnapshotInFlightPromise?: Promise<DlnaRendererSnapshot | undefined>;
+  private static selectedRendererSnapshotInFlightRendererId?: string;
+  private static selectedRendererSnapshotLastAttemptAtByRendererId: Map<string, number> = new Map();
+  private static selectedRendererSnapshotBackoffUntilByRendererId: Map<string, number> = new Map();
+  private static selectedRendererSnapshotCacheByRendererId: Map<string, {
+    capturedAt: number;
+    snapshot: DlnaRendererSnapshot;
+  }> = new Map();
+
   private static selectedRendererSnapshotFailureCount = 0;
   private static selectedRendererSnapshotFailureRendererId?: string;
   private static rendererDiscoverySocket?: dgram.Socket;
   private static rendererDiscoveryInterval?: ReturnType<typeof setTimeout>;
   private static rendererDiscoveryStartupProbes: Array<ReturnType<typeof setTimeout>> = [];
+  private static rendererEventRenewInterval?: ReturnType<typeof setInterval>;
+  private static ssdpRestartTimeout?: ReturnType<typeof setTimeout>;
+  private static selectedRendererMissingSince = 0;
   private static dlnaLogPathCache?: string;
   private static dlnaArtworkCachePath?: string;
 
@@ -194,6 +250,12 @@ export class DlnaService {
     this.loadControlSettings();
     this.registerUiSettingsListener();
     this.startRendererDiscovery();
+    if (this.isRemoteOutputRequested()) {
+      this.startRendererEventRenewal();
+      setTimeout(() => {
+        this.ensureSelectedRendererEventSubscription().catch(() => undefined);
+      }, 800);
+    }
     if (this.enabled) {
       this.startServer();
     } else {
@@ -209,6 +271,20 @@ export class DlnaService {
     };
   }
 
+  static subscribeRendererSnapshot(listener: (snapshot: DlnaRendererEventSnapshot) => void): () => void {
+    const eventListener = (event: Event) => {
+      const { detail } = event as CustomEvent<DlnaRendererEventSnapshot>;
+      if (!detail) {
+        return;
+      }
+      listener(detail);
+    };
+    window.addEventListener(this.rendererSnapshotEventName, eventListener);
+    return () => {
+      window.removeEventListener(this.rendererSnapshotEventName, eventListener);
+    };
+  }
+
   static getState(): DlnaState {
     const hostname = os.hostname();
     const ipAddresses = this.getIpAddresses();
@@ -220,7 +296,7 @@ export class DlnaService {
       : undefined;
     return {
       enabled: this.enabled,
-      running: !!this.httpServer,
+      running: !!this.httpServer && !!this.ssdpSocket,
       friendlyName: `Aurora Pulse DLNA (${hostname})`,
       hostname,
       port: this.port,
@@ -247,6 +323,10 @@ export class DlnaService {
           modelName: renderer.modelName,
         })),
     };
+  }
+
+  static recordControllerDiagnostic(event: string, details?: Record<string, any>) {
+    this.writeDlnaLog('info', `controller_${String(event || '').trim()}`, details || {});
   }
 
   static getSelectedRendererOutputState(): { volumePercent?: number; muted?: boolean } | undefined {
@@ -290,11 +370,59 @@ export class DlnaService {
   }
 
   static isRemoteOutputRequested(): boolean {
-    return this.outputMode === 'remote' && !!this.selectedRendererId;
+    return this.controlRuntimeEnabled
+      && this.outputMode === 'remote'
+      && !!this.selectedRendererId;
+  }
+
+  private static getRendererControlStack(renderer: DlnaRendererDevice): DlnaControlStackService {
+    const cachedStack = this.rendererControlStackByRendererId.get(renderer.id);
+    if (cachedStack) {
+      return cachedStack;
+    }
+    const stack = new DlnaControlStackService({
+      avTransport: renderer.avTransportControlUrl,
+      renderingControl: renderer.renderingControlUrl,
+      connectionManager: renderer.connectionManagerControlUrl,
+    }, {
+      timeout: this.transportSetupSoapRequestTimeoutMs,
+    });
+    this.rendererControlStackByRendererId.set(renderer.id, stack);
+    return stack;
+  }
+
+  static resetOutputToLocalState(): void {
+    this.unsubscribeSelectedRendererEvents().catch(() => undefined);
+    this.stopRendererEventRenewal();
+    this.outputMode = 'local';
+    this.selectedRendererId = undefined;
+    this.selectedRendererMissingSince = 0;
+    this.selectedRendererSnapshotFailureCount = 0;
+    this.selectedRendererSnapshotFailureRendererId = undefined;
+    this.persistControlSettings();
+    this.emitState();
   }
 
   static async setOutputDevice(outputDeviceId: string): Promise<void> {
     const normalizedOutputDeviceId = String(outputDeviceId || '').trim();
+    if (!this.controlRuntimeEnabled) {
+      if (!normalizedOutputDeviceId || normalizedOutputDeviceId === 'local') {
+        this.resetOutputToLocalState();
+        return;
+      }
+      const renderer = this.rendererDevices.get(normalizedOutputDeviceId);
+      if (!renderer) {
+        throw new Error(`Renderer with id "${normalizedOutputDeviceId}" was not found`);
+      }
+      this.outputMode = 'remote';
+      this.selectedRendererId = renderer.id;
+      this.selectedRendererMissingSince = 0;
+      this.selectedRendererSnapshotFailureCount = 0;
+      this.selectedRendererSnapshotFailureRendererId = renderer.id;
+      this.persistControlSettings();
+      this.emitState();
+      return;
+    }
     const previousRenderer = this.getSelectedRenderer();
     const shouldStopPreviousRenderer = !!previousRenderer
       && (
@@ -310,12 +438,7 @@ export class DlnaService {
       });
     }
     if (!normalizedOutputDeviceId || normalizedOutputDeviceId === 'local') {
-      this.outputMode = 'local';
-      this.selectedRendererId = undefined;
-      this.selectedRendererSnapshotFailureCount = 0;
-      this.selectedRendererSnapshotFailureRendererId = undefined;
-      this.persistControlSettings();
-      this.emitState();
+      this.resetOutputToLocalState();
       return;
     }
 
@@ -327,10 +450,167 @@ export class DlnaService {
     await this.startServer();
     this.outputMode = 'remote';
     this.selectedRendererId = renderer.id;
+    this.selectedRendererMissingSince = 0;
     this.selectedRendererSnapshotFailureCount = 0;
     this.selectedRendererSnapshotFailureRendererId = renderer.id;
     this.persistControlSettings();
     this.emitState();
+    this.startRendererEventRenewal();
+    this.ensureSelectedRendererEventSubscription().catch(() => undefined);
+  }
+
+  private static startRendererEventRenewal(): void {
+    if (this.rendererEventRenewInterval) {
+      return;
+    }
+    this.rendererEventRenewInterval = setInterval(() => {
+      if (!this.isRemoteOutputRequested()) {
+        return;
+      }
+      this.ensureSelectedRendererEventSubscription().catch(() => undefined);
+    }, this.rendererEventRenewIntervalMs);
+  }
+
+  private static stopRendererEventRenewal(): void {
+    if (!this.rendererEventRenewInterval) {
+      return;
+    }
+    clearInterval(this.rendererEventRenewInterval);
+    this.rendererEventRenewInterval = undefined;
+  }
+
+  private static async ensureSelectedRendererEventSubscription(): Promise<void> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return;
+    }
+    const unsupportedUntil = Number(this.rendererEventSubscriptionUnsupportedUntilByRendererId.get(renderer.id) || 0);
+    if (unsupportedUntil > Date.now()) {
+      return;
+    }
+    const now = Date.now();
+    const expiresAt = Number(this.rendererEventSubscriptionExpiresAtByRendererId.get(renderer.id) || 0);
+    if (expiresAt > (now + 15000)) {
+      return;
+    }
+    if (!renderer.avTransportEventUrl) {
+      return;
+    }
+    await this.startServer();
+    const callbackUrl = this.getRendererEventCallbackUrl(renderer);
+    if (!callbackUrl) {
+      return;
+    }
+    const sid = this.rendererEventSubscriptionSidByRendererId.get(renderer.id);
+    this.writeDlnaLog('info', 'renderer_event_subscribe_request', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+      callbackUrl,
+      eventUrl: renderer.avTransportEventUrl,
+      hasSid: !!sid,
+    });
+    const requestHeaders: Record<string, string> = {
+      Timeout: 'Second-300',
+    };
+    if (sid) {
+      requestHeaders.SID = sid;
+    } else {
+      requestHeaders.CALLBACK = `<${callbackUrl}>`;
+      requestHeaders.NT = 'upnp:event';
+    }
+    let response: Response | undefined;
+    try {
+      response = await fetch(renderer.avTransportEventUrl, {
+        method: 'SUBSCRIBE',
+        headers: requestHeaders,
+      });
+    } catch (error: any) {
+      this.writeDlnaLog('warn', 'renderer_event_subscribe_error', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        message: String(error?.message || error || ''),
+      });
+      return;
+    }
+    if (!response) {
+      return;
+    }
+    if (!response.ok) {
+      this.writeDlnaLog('warn', 'renderer_event_subscribe_failed', {
+        rendererId: renderer.id,
+        rendererName: renderer.friendlyName,
+        status: response.status,
+      });
+      if (response.status === 404 || response.status === 405 || response.status === 501) {
+        this.rendererEventSubscriptionUnsupportedUntilByRendererId.set(renderer.id, Date.now() + (10 * 60 * 1000));
+      }
+      return;
+    }
+    this.rendererEventSubscriptionUnsupportedUntilByRendererId.delete(renderer.id);
+    const nextSid = String(response.headers.get('sid') || sid || '').trim();
+    if (nextSid) {
+      this.rendererEventSubscriptionSidByRendererId.set(renderer.id, nextSid);
+    }
+    const timeoutHeader = String(response.headers.get('timeout') || '').trim();
+    const timeoutSeconds = this.parseSubscriptionTimeoutSeconds(timeoutHeader);
+    this.rendererEventSubscriptionExpiresAtByRendererId.set(renderer.id, now + (timeoutSeconds * 1000));
+    this.writeDlnaLog('info', 'renderer_event_subscribe_ack', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+      sid: nextSid || sid || '',
+      timeoutSeconds,
+    });
+  }
+
+  private static async unsubscribeSelectedRendererEvents(): Promise<void> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return;
+    }
+    const sid = String(this.rendererEventSubscriptionSidByRendererId.get(renderer.id) || '').trim();
+    if (!sid || !renderer.avTransportEventUrl) {
+      this.rendererEventSubscriptionSidByRendererId.delete(renderer.id);
+      this.rendererEventSubscriptionExpiresAtByRendererId.delete(renderer.id);
+      this.rendererEventSnapshotByRendererId.delete(renderer.id);
+      return;
+    }
+    await fetch(renderer.avTransportEventUrl, {
+      method: 'UNSUBSCRIBE',
+      headers: {
+        SID: sid,
+      },
+    }).catch(() => undefined);
+    this.rendererEventSubscriptionSidByRendererId.delete(renderer.id);
+    this.rendererEventSubscriptionExpiresAtByRendererId.delete(renderer.id);
+    this.rendererEventSnapshotByRendererId.delete(renderer.id);
+    this.rendererEventSubscriptionUnsupportedUntilByRendererId.delete(renderer.id);
+  }
+
+  private static getRendererEventCallbackUrl(renderer: DlnaRendererDevice): string {
+    const rendererUrl = String(renderer.location || '').trim();
+    let rendererIp = '';
+    try {
+      rendererIp = String(new URL(rendererUrl).hostname || '').replace(/^::ffff:/, '');
+    } catch (_error) {
+      rendererIp = '';
+    }
+    const servingIp = rendererIp ? this.getBestServingIpForClient(rendererIp) : (this.getIpAddresses()[0] || '127.0.0.1');
+    return `http://${servingIp}:${this.port}/upnp/event/renderer`;
+  }
+
+  private static parseSubscriptionTimeoutSeconds(timeoutHeader: string): number {
+    const normalized = String(timeoutHeader || '').toLowerCase().trim();
+    if (!normalized) {
+      return 300;
+    }
+    if (normalized === 'second-infinite') {
+      return 1800;
+    }
+    const value = Number(normalized.replace('second-', ''));
+    if (!Number.isFinite(value) || value <= 0) {
+      return 300;
+    }
+    return Math.max(60, Math.min(1800, Math.floor(value)));
   }
 
   static async playMediaTrackOnSelectedRenderer(
@@ -373,8 +653,9 @@ export class DlnaService {
       this.rendererCurrentTrackIdByRendererId.set(renderer.id, mediaTrackId);
       this.rendererPendingNextTrackIdByRendererId.delete(renderer.id);
       const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
-      const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full');
-      const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility');
+      const metadataNonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full', metadataNonce);
+      const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility', metadataNonce);
       this.writeDlnaLog('info', 'play_track_requested', {
         rendererId: renderer.id,
         rendererName: renderer.friendlyName,
@@ -430,6 +711,17 @@ export class DlnaService {
       if (playbackStarted) {
         return true;
       }
+      const postStartSnapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
+      const postStartTransportState = String(postStartSnapshot?.transportState || '').toUpperCase();
+      if (postStartTransportState === 'PLAYING' || postStartTransportState === 'TRANSITIONING') {
+        this.writeDlnaLog('info', 'playback_start_unverified_but_detected', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          transportState: postStartTransportState,
+          seekPositionSeconds,
+        });
+        return true;
+      }
       await this.stopRenderer(renderer).catch(() => undefined);
       await this.wait(80);
       if (!this.isRendererPlaybackOperationCurrent(renderer.id, operationToken)) {
@@ -472,18 +764,10 @@ export class DlnaService {
       if (!mediaTrackId) {
         return false;
       }
-      const currentTrackId = String(this.rendererCurrentTrackIdByRendererId.get(renderer.id) || '');
-      if (currentTrackId && currentTrackId === mediaTrackId) {
-        this.writeDlnaLog('info', 'set_next_uri_skipped_same_as_current', {
-          rendererId: renderer.id,
-          rendererName: renderer.friendlyName,
-          mediaTrackId,
-        });
-        return true;
-      }
       const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
-      const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full');
-      const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility');
+      const metadataNonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full', metadataNonce);
+      const compatibilityMetadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'compatibility', metadataNonce);
       return this.setRendererNextTransportUri(renderer, streamUrl, metadata, compatibilityMetadata)
         .then((result) => {
           if (result) {
@@ -503,10 +787,21 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
+    if (!this.shouldUseSelectedRendererQueueContext()) {
+      return false;
+    }
     await this.startServer();
     const rendererBaseUrl = this.getRendererBaseUrl(renderer);
     if (!rendererBaseUrl) {
       return false;
+    }
+    if (this.rendererQueueContextSupportedByRendererId.get(renderer.id) === false) {
+      const unsupportedAt = Number(this.rendererQueueContextUnsupportedAtByRendererId.get(renderer.id) || 0);
+      if ((Date.now() - unsupportedAt) < this.queueContextUnsupportedRetryMs) {
+        return false;
+      }
+      // Re-try periodically; compatible renderers may appear later or after reconnect.
+      this.rendererQueueContextSupportedByRendererId.delete(renderer.id);
     }
     const normalizedTracks = (mediaTracks || [])
       .map((track) => {
@@ -545,23 +840,13 @@ export class DlnaService {
     const queueContextKey = `${renderer.id}:${normalizedContextId || 'mixed'}`;
     const nextQueueSize = normalizedTracks.length;
     const previousQueueSize = Number(this.rendererQueueContextSizeByRendererId.get(queueContextKey) || 0);
-    const rendererAnyContextHasMultiTrack = Array.from(this.rendererQueueContextSizeByRendererId.entries())
-      .some(([key, value]) => key.startsWith(`${renderer.id}:`) && Number(value || 0) > 1);
-    if (nextQueueSize <= 1 && (previousQueueSize > 1 || rendererAnyContextHasMultiTrack)) {
-      this.writeDlnaLog('warn', 'queue_context_rejected_shrinking_to_single', {
-        rendererId: renderer.id,
-        contextId: normalizedContextId || 'mixed',
-        previousQueueSize,
-        nextQueueSize,
-        rendererAnyContextHasMultiTrack,
-      });
-      return true;
-    }
     const currentTrack = normalizedTracks.find(track => track.id === normalizedCurrentTrackId);
     const payload = {
       contextId: normalizedContextId,
       currentTrackId: normalizedCurrentTrackId,
       currentUri: currentTrack?.uri || '',
+      mode: 'replace',
+      reset: true,
       tracks: normalizedTracks,
     };
     this.writeDlnaLog('info', 'queue_context_publish_requested', {
@@ -573,44 +858,102 @@ export class DlnaService {
       previousQueueSize,
       rendererBaseUrl,
     });
-    const abortController = new AbortController();
-    const timeoutHandle = setTimeout(() => abortController.abort(), 2000);
-    try {
-      const response = await fetch(`${rendererBaseUrl}/aurora/queue`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: abortController.signal,
-      });
-      if (response.ok) {
+    if (normalizedTracks.length > 0) {
+      const controlStack = this.getRendererControlStack(renderer);
+      try {
+        await controlStack.setPlaylist(normalizedTracks.map((track) => {
+          const mimeType = String(this.trackMap.get(track.id)?.mimeType || 'audio/mpeg');
+          return {
+            uri: track.uri,
+            metadata: {
+              title: String(track.title || 'Track'),
+              artist: String(track.artist || ''),
+              albumArtUri: String(track.albumArt || ''),
+              mimeType,
+              protocolInfo: `http-get:*:${mimeType}:*`,
+            },
+          };
+        }));
+        this.rendererQueueContextSupportedByRendererId.set(renderer.id, true);
+        this.rendererQueueContextUnsupportedAtByRendererId.delete(renderer.id);
         this.rendererQueueContextSizeByRendererId.set(queueContextKey, nextQueueSize);
         this.writeDlnaLog('info', 'queue_context_publish_ack', {
           rendererId: renderer.id,
           contextId: normalizedContextId || 'mixed',
           queueSize: normalizedTracks.length,
+          attempt: 1,
+          source: 'x_set_playlist',
         });
-      } else {
+        return true;
+      } catch (error: any) {
+        this.writeDlnaLog('warn', 'queue_context_publish_failed', {
+          rendererId: renderer.id,
+          contextId: normalizedContextId || 'mixed',
+          queueSize: normalizedTracks.length,
+          error: String(error?.message || error || ''),
+          attempt: 1,
+          source: 'x_set_playlist',
+        });
+      }
+    }
+    const publishAttempt = async (attempt: number): Promise<boolean> => {
+      const abortController = new AbortController();
+      const timeoutHandle = setTimeout(() => abortController.abort(), this.queueContextPublishTimeoutMs);
+      try {
+        const response = await fetch(`${rendererBaseUrl}/aurora/queue`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: abortController.signal,
+        });
+        if (response.ok) {
+          this.rendererQueueContextSupportedByRendererId.set(renderer.id, true);
+          this.rendererQueueContextUnsupportedAtByRendererId.delete(renderer.id);
+          this.rendererQueueContextSizeByRendererId.set(queueContextKey, nextQueueSize);
+          this.writeDlnaLog('info', 'queue_context_publish_ack', {
+            rendererId: renderer.id,
+            contextId: normalizedContextId || 'mixed',
+            queueSize: normalizedTracks.length,
+            attempt,
+          });
+          return true;
+        }
+        if (response.status === 404 || response.status === 500 || response.status === 501) {
+          this.rendererQueueContextSupportedByRendererId.set(renderer.id, false);
+          this.rendererQueueContextUnsupportedAtByRendererId.set(renderer.id, Date.now());
+        }
         this.writeDlnaLog('warn', 'queue_context_publish_http_failed', {
           rendererId: renderer.id,
           contextId: normalizedContextId || 'mixed',
           queueSize: normalizedTracks.length,
           status: response.status,
+          attempt,
         });
+      } catch (error) {
+        const message = String((error as any)?.message || error || '');
+        if (message.toLowerCase().includes('404') || message.toLowerCase().includes('500')) {
+          this.rendererQueueContextSupportedByRendererId.set(renderer.id, false);
+          this.rendererQueueContextUnsupportedAtByRendererId.set(renderer.id, Date.now());
+        }
+        this.writeDlnaLog('warn', 'queue_context_publish_failed', {
+          rendererId: renderer.id,
+          contextId: normalizedContextId || 'mixed',
+          queueSize: normalizedTracks.length,
+          error: message,
+          attempt,
+        });
+      } finally {
+        clearTimeout(timeoutHandle);
       }
-      return response.ok;
-    } catch (error) {
-      this.writeDlnaLog('warn', 'queue_context_publish_failed', {
-        rendererId: renderer.id,
-        contextId: normalizedContextId || 'mixed',
-        queueSize: normalizedTracks.length,
-        error: String((error as any)?.message || error || ''),
-      });
+      if (attempt < this.queueContextPublishMaxAttempts) {
+        await this.wait(220);
+        return publishAttempt(attempt + 1);
+      }
       return false;
-    } finally {
-      clearTimeout(timeoutHandle);
-    }
+    };
+    return publishAttempt(1);
   }
 
   static getSelectedRendererCurrentTrackId(): string | undefined {
@@ -631,6 +974,77 @@ export class DlnaService {
 
   static hasPendingNextTrackOnSelectedRenderer(): boolean {
     return !!this.getSelectedRendererPendingNextTrackId();
+  }
+
+  private static maybePromotePendingNextTrack(
+    rendererId: string,
+    options?: {
+      renderer?: DlnaRendererDevice;
+      transportState?: string;
+      positionSeconds?: number;
+      incomingTrackUri?: string;
+      reason?: string;
+    },
+  ): { currentTrackId: string; currentTrackUri?: string } | undefined {
+    const pendingTrackId = String(this.rendererPendingNextTrackIdByRendererId.get(rendererId) || '').trim();
+    if (!pendingTrackId) {
+      return undefined;
+    }
+    const currentTrackId = String(this.rendererCurrentTrackIdByRendererId.get(rendererId) || '').trim();
+    if (currentTrackId === pendingTrackId) {
+      return {
+        currentTrackId: pendingTrackId,
+      };
+    }
+    if (String(options?.incomingTrackUri || '').trim()) {
+      return undefined;
+    }
+    const transportState = String(options?.transportState || '').toUpperCase();
+    if (transportState !== 'PLAYING' && transportState !== 'TRANSITIONING') {
+      return undefined;
+    }
+    const positionSeconds = Number(options?.positionSeconds);
+    const earlyPlayback = !Number.isFinite(positionSeconds) || positionSeconds <= 2.5;
+    if (!earlyPlayback) {
+      return undefined;
+    }
+    const renderer = options?.renderer || this.rendererDevices.get(rendererId);
+    const promotedTrackUri = renderer
+      ? this.getTrackStreamUrlForRenderer(renderer, pendingTrackId)
+      : undefined;
+    this.rendererCurrentTrackIdByRendererId.set(rendererId, pendingTrackId);
+    this.rendererPendingNextTrackIdByRendererId.delete(rendererId);
+    this.writeDlnaLog('info', 'renderer_pending_next_promoted', {
+      rendererId,
+      rendererName: renderer?.friendlyName,
+      previousCurrentTrackId: currentTrackId || undefined,
+      currentTrackId: pendingTrackId,
+      transportState: transportState || undefined,
+      positionSeconds: Number.isFinite(positionSeconds) ? positionSeconds : undefined,
+      reason: String(options?.reason || '').trim() || undefined,
+    });
+    return {
+      currentTrackId: pendingTrackId,
+      currentTrackUri: promotedTrackUri,
+    };
+  }
+
+  private static isLikelyAuroraPulseLauncherRenderer(renderer?: DlnaRendererDevice): boolean {
+    const rendererDescriptor = `${String(renderer?.friendlyName || '')} ${String(renderer?.modelName || '')}`.toLowerCase();
+    return rendererDescriptor.includes('aurora pulse launcher')
+      || rendererDescriptor.includes('pulse launcher');
+  }
+
+  static shouldUseSelectedRendererQueueContext(): boolean {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    const knownSupport = this.rendererQueueContextSupportedByRendererId.get(renderer.id);
+    if (typeof knownSupport === 'boolean') {
+      return knownSupport;
+    }
+    return this.isLikelyAuroraPulseLauncherRenderer(renderer);
   }
 
   static async pauseSelectedRenderer(): Promise<boolean> {
@@ -795,6 +1209,12 @@ export class DlnaService {
     if (!renderer) {
       return false;
     }
+    const now = Date.now();
+    const lastStopRequestedAt = Number(this.rendererStopRequestedAtByRendererId.get(renderer.id) || 0);
+    if ((now - lastStopRequestedAt) <= 1200) {
+      return true;
+    }
+    this.rendererStopRequestedAtByRendererId.set(renderer.id, now);
     this.writeDlnaLog('info', 'stop_requested', {
       rendererId: renderer.id,
       rendererName: renderer.friendlyName,
@@ -828,144 +1248,301 @@ export class DlnaService {
     if (!renderer) {
       return undefined;
     }
-
-    const [transportInfoResponse, positionInfoResponse] = await Promise.all([
-      this.sendSoapRequest(
-        renderer.avTransportControlUrl,
-        renderer.avTransportServiceType,
-        'GetTransportInfo',
-        {
-          InstanceID: '0',
-        },
-        this.snapshotTransportSoapRequestTimeoutMs,
-      ).catch(() => ''),
-      this.sendSoapRequest(
-        renderer.avTransportControlUrl,
-        renderer.avTransportServiceType,
-        'GetPositionInfo',
-        {
-          InstanceID: '0',
-        },
-        this.snapshotPositionSoapRequestTimeoutMs,
-      ).catch(() => ''),
-    ]);
-    let volumeResponse = '';
-    let muteResponse = '';
+    this.ensureSelectedRendererEventSubscription().catch(() => undefined);
     const now = Date.now();
-    const lastOutputRefreshAt = Number(this.rendererOutputStateLastRefreshAtByRendererId.get(renderer.id) || 0);
-    const shouldRefreshOutputState = (now - lastOutputRefreshAt) >= this.snapshotOutputRefreshIntervalMs;
-    if (shouldRefreshOutputState) {
-      const [volumeStateResponse, muteStateResponse] = await Promise.all([
+    const rendererId = renderer.id;
+    const recentEventSnapshot = this.rendererEventSnapshotByRendererId.get(rendererId);
+    const recentEventSnapshotFresh = !!recentEventSnapshot && (now - recentEventSnapshot.capturedAt) <= 3000;
+    const cachedSnapshotEntry = this.selectedRendererSnapshotCacheByRendererId.get(rendererId);
+    const cachedSnapshotFresh = !!cachedSnapshotEntry
+      && (now - cachedSnapshotEntry.capturedAt) <= this.snapshotCacheTtlMs;
+    const backoffUntil = Number(this.selectedRendererSnapshotBackoffUntilByRendererId.get(rendererId) || 0);
+    if (backoffUntil > now) {
+      if (recentEventSnapshotFresh) {
+        return {
+          transportState: recentEventSnapshot?.transportState,
+          positionSeconds: recentEventSnapshot?.positionSeconds,
+          currentTrackUri: recentEventSnapshot?.currentTrackUri,
+          volumePercent: recentEventSnapshot?.volumePercent,
+          muted: recentEventSnapshot?.muted,
+        };
+      }
+      if (cachedSnapshotFresh) {
+        return cachedSnapshotEntry?.snapshot;
+      }
+      return cachedSnapshotEntry?.snapshot;
+    }
+    if (this.selectedRendererSnapshotInFlightPromise && this.selectedRendererSnapshotInFlightRendererId === rendererId) {
+      return this.selectedRendererSnapshotInFlightPromise;
+    }
+    const lastAttemptAt = Number(this.selectedRendererSnapshotLastAttemptAtByRendererId.get(rendererId) || 0);
+    if ((now - lastAttemptAt) < this.snapshotMinIntervalMs) {
+      if (recentEventSnapshotFresh) {
+        return {
+          transportState: recentEventSnapshot?.transportState,
+          positionSeconds: recentEventSnapshot?.positionSeconds,
+          currentTrackUri: recentEventSnapshot?.currentTrackUri,
+          volumePercent: recentEventSnapshot?.volumePercent,
+          muted: recentEventSnapshot?.muted,
+        };
+      }
+      if (cachedSnapshotFresh) {
+        return cachedSnapshotEntry?.snapshot;
+      }
+      return cachedSnapshotEntry?.snapshot;
+    }
+    this.selectedRendererSnapshotLastAttemptAtByRendererId.set(rendererId, now);
+
+    const snapshotPromise = (async (): Promise<DlnaRendererSnapshot | undefined> => {
+      const [transportInfoResponse, positionInfoResponse, mediaInfoResponse] = await Promise.all([
         this.sendSoapRequest(
-          renderer.renderingControlUrl,
-          renderer.renderingControlServiceType,
-          'GetVolume',
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'GetTransportInfo',
           {
             InstanceID: '0',
-            Channel: 'Master',
           },
-          this.snapshotOutputSoapRequestTimeoutMs,
+          this.snapshotTransportSoapRequestTimeoutMs,
         ).catch(() => ''),
-        (this.rendererMuteControlUnsupportedIds.has(renderer.id)
-          ? Promise.resolve('')
-          : this.sendSoapRequest(
+        this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'GetPositionInfo',
+          {
+            InstanceID: '0',
+          },
+          this.snapshotPositionSoapRequestTimeoutMs,
+        ).catch(() => ''),
+        this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'GetMediaInfo',
+          {
+            InstanceID: '0',
+          },
+          this.snapshotMediaSoapRequestTimeoutMs,
+        ).catch(() => ''),
+      ]);
+      let volumeResponse = '';
+      let muteResponse = '';
+      const snapshotAt = Date.now();
+      const lastOutputRefreshAt = Number(this.rendererOutputStateLastRefreshAtByRendererId.get(renderer.id) || 0);
+      const shouldRefreshOutputState = (snapshotAt - lastOutputRefreshAt) >= this.snapshotOutputRefreshIntervalMs;
+      if (shouldRefreshOutputState) {
+        const [volumeStateResponse, muteStateResponse] = await Promise.all([
+          this.sendSoapRequest(
             renderer.renderingControlUrl,
             renderer.renderingControlServiceType,
-            'GetMute',
+            'GetVolume',
             {
               InstanceID: '0',
               Channel: 'Master',
             },
             this.snapshotOutputSoapRequestTimeoutMs,
-          ).catch((error: any) => {
-            if (this.isSoapHttp500Error(error)) {
-              this.rendererMuteControlUnsupportedIds.add(renderer.id);
-              this.writeDlnaLog('warn', 'renderer_mute_control_unsupported', {
-                rendererId: renderer.id,
-                rendererName: renderer.friendlyName,
-                actionName: 'GetMute',
-              });
-            }
-            return '';
-          })),
-      ]);
-      volumeResponse = volumeStateResponse;
-      muteResponse = muteStateResponse;
-      this.rendererOutputStateLastRefreshAtByRendererId.set(renderer.id, now);
-    }
-    const hasAnySnapshotPayload = [
-      transportInfoResponse,
-      positionInfoResponse,
-      volumeResponse,
-      muteResponse,
-    ].some(responsePayload => String(responsePayload || '').trim().length > 0);
-    if (!hasAnySnapshotPayload) {
-      const currentRendererId = renderer.id;
-      if (this.selectedRendererSnapshotFailureRendererId !== currentRendererId) {
-        this.selectedRendererSnapshotFailureRendererId = currentRendererId;
-        this.selectedRendererSnapshotFailureCount = 0;
+          ).catch(() => ''),
+          (this.rendererMuteControlUnsupportedIds.has(renderer.id)
+            ? Promise.resolve('')
+            : this.sendSoapRequest(
+              renderer.renderingControlUrl,
+              renderer.renderingControlServiceType,
+              'GetMute',
+              {
+                InstanceID: '0',
+                Channel: 'Master',
+              },
+              this.snapshotOutputSoapRequestTimeoutMs,
+            ).catch((error: any) => {
+              if (this.isSoapHttp500Error(error)) {
+                this.rendererMuteControlUnsupportedIds.add(renderer.id);
+                this.writeDlnaLog('warn', 'renderer_mute_control_unsupported', {
+                  rendererId: renderer.id,
+                  rendererName: renderer.friendlyName,
+                  actionName: 'GetMute',
+                });
+              }
+              return '';
+            })),
+        ]);
+        volumeResponse = volumeStateResponse;
+        muteResponse = muteStateResponse;
+        this.rendererOutputStateLastRefreshAtByRendererId.set(renderer.id, snapshotAt);
       }
-      this.selectedRendererSnapshotFailureCount += 1;
-      this.writeDlnaLog('warn', 'snapshot_empty_payload', {
-        rendererId: currentRendererId,
-        rendererName: renderer.friendlyName,
-        failureCount: this.selectedRendererSnapshotFailureCount,
-      });
-      return undefined;
-    }
-    this.selectedRendererSnapshotFailureCount = 0;
-    this.selectedRendererSnapshotFailureRendererId = renderer.id;
-    renderer.lastSeenAt = Date.now();
-    this.rendererDevices.set(renderer.id, renderer);
+      const hasAnySnapshotPayload = [
+        transportInfoResponse,
+        positionInfoResponse,
+        mediaInfoResponse,
+        volumeResponse,
+        muteResponse,
+      ].some(responsePayload => String(responsePayload || '').trim().length > 0);
+      if (!hasAnySnapshotPayload) {
+        const currentRendererId = renderer.id;
+        if (this.selectedRendererSnapshotFailureRendererId !== currentRendererId) {
+          this.selectedRendererSnapshotFailureRendererId = currentRendererId;
+          this.selectedRendererSnapshotFailureCount = 0;
+        }
+        this.selectedRendererSnapshotFailureCount += 1;
+        const failureBackoffMs = Math.min(
+          this.snapshotFailureBackoffMaxMs,
+          this.snapshotFailureBackoffBaseMs + (this.selectedRendererSnapshotFailureCount * 180),
+        );
+        this.selectedRendererSnapshotBackoffUntilByRendererId.set(currentRendererId, Date.now() + failureBackoffMs);
+        this.writeDlnaLog('warn', 'snapshot_empty_payload', {
+          rendererId: currentRendererId,
+          rendererName: renderer.friendlyName,
+          failureCount: this.selectedRendererSnapshotFailureCount,
+          backoffMs: failureBackoffMs,
+        });
+        const fallbackSnapshot = this.selectedRendererSnapshotCacheByRendererId.get(currentRendererId);
+        if (fallbackSnapshot && (Date.now() - fallbackSnapshot.capturedAt) <= this.snapshotCacheTtlMs) {
+          return fallbackSnapshot.snapshot;
+        }
+        return undefined;
+      }
+      this.selectedRendererSnapshotFailureCount = 0;
+      this.selectedRendererSnapshotFailureRendererId = renderer.id;
+      this.selectedRendererSnapshotBackoffUntilByRendererId.delete(renderer.id);
+      renderer.lastSeenAt = Date.now();
+      this.rendererDevices.set(renderer.id, renderer);
 
-    const currentTransportState = String(this.extractXmlTagValue(transportInfoResponse, 'CurrentTransportState') || '').trim();
-    const relativeTimePosition = String(this.extractXmlTagValue(positionInfoResponse, 'RelTime') || '').trim();
-    const currentTrackUri = String(this.extractXmlTagValue(positionInfoResponse, 'TrackURI') || '').trim();
-    const currentTrackId = this.extractTrackIdFromDlnaTrackUri(currentTrackUri);
-    if (currentTrackId) {
-      this.rendererCurrentTrackIdByRendererId.set(renderer.id, currentTrackId);
-      this.writeDlnaLog('info', 'snapshot_track_id_resolved', {
-        rendererId: renderer.id,
-        rendererName: renderer.friendlyName,
-        currentTrackId,
-        currentTrackUri,
-      });
-    } else if (currentTrackUri) {
-      this.writeDlnaLog('warn', 'snapshot_track_id_unresolved', {
-        rendererId: renderer.id,
-        rendererName: renderer.friendlyName,
-        currentTrackUri,
-      });
-    }
-    const currentVolume = Number(this.extractXmlTagValue(volumeResponse, 'CurrentVolume') || NaN);
-    const currentMute = String(this.extractXmlTagValue(muteResponse, 'CurrentMute') || '').trim();
-    if (Number.isFinite(currentVolume)) {
-      this.updateRendererOutputCache(renderer.id, {
-        volumePercent: Math.max(0, Math.min(100, Math.floor(currentVolume))),
-      });
-    }
-    if (currentMute === '1' || currentMute === '0') {
-      this.updateRendererOutputCache(renderer.id, {
-        muted: currentMute === '1',
-      });
-    }
+      const currentTransportState = String(this.extractXmlTagValue(transportInfoResponse, 'CurrentTransportState') || '').trim();
+      const relativeTimePosition = String(this.extractXmlTagValue(positionInfoResponse, 'RelTime') || '').trim();
+      const absoluteTimePosition = String(this.extractXmlTagValue(positionInfoResponse, 'AbsTime') || '').trim();
+      const timePositionForProgress = relativeTimePosition || absoluteTimePosition;
+      const parsedPositionSeconds = this.parseDlnaTimeToSeconds(timePositionForProgress);
+      const positionTrackUri = String(this.extractXmlTagValue(positionInfoResponse, 'TrackURI') || '').trim();
+      const mediaInfoCurrentUri = String(this.extractXmlTagValue(mediaInfoResponse, 'CurrentURI') || '').trim();
+      let currentTrackUri = positionTrackUri || mediaInfoCurrentUri;
+      let currentTrackId = this.extractTrackIdFromDlnaTrackUri(currentTrackUri);
+      if (!currentTrackId) {
+        const promotedPendingTrack = this.maybePromotePendingNextTrack(renderer.id, {
+          renderer,
+          transportState: currentTransportState,
+          positionSeconds: parsedPositionSeconds,
+          incomingTrackUri: currentTrackUri,
+          reason: 'snapshot',
+        });
+        if (promotedPendingTrack) {
+          currentTrackId = promotedPendingTrack.currentTrackId;
+          currentTrackUri = promotedPendingTrack.currentTrackUri || currentTrackUri;
+        }
+      }
+      if (currentTrackId) {
+        this.rendererCurrentTrackIdByRendererId.set(renderer.id, currentTrackId);
+        this.writeDlnaLog('info', 'snapshot_track_id_resolved', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          currentTrackId,
+          currentTrackUri,
+        });
+      } else if (currentTrackUri) {
+        this.writeDlnaLog('warn', 'snapshot_track_id_unresolved', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          currentTrackUri,
+        });
+      }
+      const currentVolume = Number(this.extractXmlTagValue(volumeResponse, 'CurrentVolume') || NaN);
+      const currentMute = String(this.extractXmlTagValue(muteResponse, 'CurrentMute') || '').trim();
+      if (Number.isFinite(currentVolume)) {
+        this.updateRendererOutputCache(renderer.id, {
+          volumePercent: Math.max(0, Math.min(100, Math.floor(currentVolume))),
+        });
+      }
+      if (currentMute === '1' || currentMute === '0') {
+        this.updateRendererOutputCache(renderer.id, {
+          muted: currentMute === '1',
+        });
+      }
 
-    const mutedFromCache = this.rendererOutputStateByRendererId.get(renderer.id)?.muted;
-    let mutedState = mutedFromCache;
-    if (currentMute === '1') {
-      mutedState = true;
-    } else if (currentMute === '0') {
-      mutedState = false;
-    }
-    return {
-      transportState: currentTransportState || undefined,
-      positionSeconds: this.parseDlnaTimeToSeconds(relativeTimePosition),
-      currentTrackUri: currentTrackUri || undefined,
-      volumePercent: Number.isFinite(currentVolume)
-        ? Math.max(0, Math.min(100, Math.floor(currentVolume)))
-        : this.rendererOutputStateByRendererId.get(renderer.id)?.volumePercent,
-      muted: mutedState,
-    };
+      const mutedFromCache = this.rendererOutputStateByRendererId.get(renderer.id)?.muted;
+      let mutedState = mutedFromCache;
+      if (currentMute === '1') {
+        mutedState = true;
+      } else if (currentMute === '0') {
+        mutedState = false;
+      }
+      const snapshot: DlnaRendererSnapshot = {
+        transportState: currentTransportState || undefined,
+        positionSeconds: parsedPositionSeconds,
+        currentTrackUri: currentTrackUri || undefined,
+        volumePercent: Number.isFinite(currentVolume)
+          ? Math.max(0, Math.min(100, Math.floor(currentVolume)))
+          : this.rendererOutputStateByRendererId.get(renderer.id)?.volumePercent,
+        muted: mutedState,
+      };
+      const eventSnapshot = this.rendererEventSnapshotByRendererId.get(renderer.id);
+      if (eventSnapshot && (Date.now() - eventSnapshot.capturedAt) <= 3000) {
+        const eventTransportState = String(eventSnapshot.transportState || '').toUpperCase();
+        const soapTransportState = String(snapshot.transportState || '').toUpperCase();
+        const soapPositionSeconds = Number(snapshot.positionSeconds);
+        const soapHasTrackContext = !!String(snapshot.currentTrackUri || '').trim()
+          || (Number.isFinite(soapPositionSeconds) && soapPositionSeconds > 0.5);
+        const ignoreNoMediaEvent = eventTransportState === 'NO_MEDIA_PRESENT'
+          && soapHasTrackContext
+          && (!soapTransportState || soapTransportState !== 'NO_MEDIA_PRESENT');
+        if (!ignoreNoMediaEvent) {
+          snapshot.transportState = eventSnapshot.transportState || snapshot.transportState;
+        }
+        if (Number.isFinite(Number(eventSnapshot.positionSeconds))) {
+          const evPos = Number(eventSnapshot.positionSeconds);
+          const evTs = String(eventSnapshot.transportState || '').toUpperCase();
+          const soapPos = Number(snapshot.positionSeconds);
+          const soapHasUsefulPos = Number.isFinite(soapPos) && soapPos > 0.5;
+          const eventZeroWhilePlayingOrBuffering = evPos === 0
+            && (evTs === 'TRANSITIONING' || evTs === 'PLAYING')
+            && soapHasUsefulPos;
+          if (eventZeroWhilePlayingOrBuffering) {
+            // NOTIFY often sends RelTime 00:00:00 while buffering or before RelTime updates; keep polled SOAP position.
+          } else {
+            snapshot.positionSeconds = evPos;
+          }
+        }
+        snapshot.currentTrackUri = eventSnapshot.currentTrackUri || snapshot.currentTrackUri;
+        if (Number.isFinite(Number(eventSnapshot.volumePercent))) {
+          snapshot.volumePercent = Number(eventSnapshot.volumePercent);
+        }
+        if (typeof eventSnapshot.muted === 'boolean') {
+          snapshot.muted = eventSnapshot.muted;
+        }
+      }
+      this.selectedRendererSnapshotCacheByRendererId.set(renderer.id, {
+        capturedAt: Date.now(),
+        snapshot,
+      });
+      const lastSnapshotLogAt = Number(this.rendererSnapshotLogAtByRendererId.get(renderer.id) || 0);
+      const snapshotLogNow = Date.now();
+      if ((snapshotLogNow - lastSnapshotLogAt) >= 3000) {
+        this.rendererSnapshotLogAtByRendererId.set(renderer.id, snapshotLogNow);
+        this.writeDlnaLog('info', 'snapshot_state', {
+          rendererId: renderer.id,
+          rendererName: renderer.friendlyName,
+          transportState: snapshot.transportState || '',
+          positionSeconds: Number(snapshot.positionSeconds || 0),
+          hasTrackUri: !!snapshot.currentTrackUri,
+          volumePercent: Number(snapshot.volumePercent || 0),
+          muted: typeof snapshot.muted === 'boolean' ? snapshot.muted : undefined,
+        });
+      }
+      this.emitRendererSnapshot({
+        rendererId: renderer.id,
+        capturedAt: snapshotLogNow,
+        transportState: snapshot.transportState,
+        positionSeconds: snapshot.positionSeconds,
+        currentTrackUri: snapshot.currentTrackUri,
+        volumePercent: snapshot.volumePercent,
+        muted: snapshot.muted,
+      });
+      return snapshot;
+    })();
+    this.selectedRendererSnapshotInFlightRendererId = rendererId;
+    this.selectedRendererSnapshotInFlightPromise = snapshotPromise
+      .finally(() => {
+        if (this.selectedRendererSnapshotInFlightPromise === snapshotPromise) {
+          this.selectedRendererSnapshotInFlightPromise = undefined;
+          this.selectedRendererSnapshotInFlightRendererId = undefined;
+        }
+      });
+    return this.selectedRendererSnapshotInFlightPromise;
   }
 
   private static async stopRenderer(renderer: DlnaRendererDevice): Promise<void> {
@@ -1000,6 +1577,128 @@ export class DlnaService {
       );
       return true;
     });
+  }
+
+  static async nextSelectedRenderer(): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    return this.runRendererCommandSerialized(renderer, 'next', async () => {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'Next',
+        {
+          InstanceID: '0',
+        },
+      );
+      return true;
+    });
+  }
+
+  static async previousSelectedRenderer(): Promise<boolean> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return false;
+    }
+    return this.runRendererCommandSerialized(renderer, 'previous', async () => {
+      await this.sendSoapRequest(
+        renderer.avTransportControlUrl,
+        renderer.avTransportServiceType,
+        'Previous',
+        {
+          InstanceID: '0',
+        },
+      );
+      return true;
+    });
+  }
+
+  static async getSelectedRendererMediaInfo(): Promise<{
+    numberOfTracks?: number;
+    mediaDurationSeconds?: number;
+    currentUri?: string;
+    nextUri?: string;
+  } | undefined> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return undefined;
+    }
+    const responsePayload = await this.sendSoapRequest(
+      renderer.avTransportControlUrl,
+      renderer.avTransportServiceType,
+      'GetMediaInfo',
+      {
+        InstanceID: '0',
+      },
+    ).catch(() => '');
+    if (!String(responsePayload || '').trim()) {
+      return undefined;
+    }
+    const trackCount = Number(this.extractXmlTagValue(responsePayload, 'NrTracks') || NaN);
+    const mediaDuration = String(this.extractXmlTagValue(responsePayload, 'MediaDuration') || '').trim();
+    const currentUri = String(this.extractXmlTagValue(responsePayload, 'CurrentURI') || '').trim();
+    const nextUri = String(this.extractXmlTagValue(responsePayload, 'NextURI') || '').trim();
+    return {
+      numberOfTracks: Number.isFinite(trackCount) ? Math.max(0, Math.floor(trackCount)) : undefined,
+      mediaDurationSeconds: this.parseDlnaTimeToSeconds(mediaDuration),
+      currentUri: currentUri || undefined,
+      nextUri: nextUri || undefined,
+    };
+  }
+
+  static async getSelectedRendererPresets(): Promise<string[]> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return [];
+    }
+    const responsePayload = await this.sendSoapRequest(
+      renderer.renderingControlUrl,
+      renderer.renderingControlServiceType,
+      'ListPresets',
+      {
+        InstanceID: '0',
+      },
+    ).catch(() => '');
+    const presetNameList = String(this.extractXmlTagValue(responsePayload, 'CurrentPresetNameList') || '').trim();
+    if (!presetNameList) {
+      return [];
+    }
+    return presetNameList
+      .split(',')
+      .map(name => String(name || '').trim())
+      .filter(Boolean);
+  }
+
+  static async getSelectedRendererConnectionInfo(): Promise<{
+    protocolInfo?: string;
+    status?: string;
+    direction?: string;
+  } | undefined> {
+    const renderer = this.getSelectedRenderer();
+    if (!renderer) {
+      return undefined;
+    }
+    if (!renderer.connectionManagerControlUrl || !renderer.connectionManagerServiceType) {
+      return undefined;
+    }
+    const responsePayload = await this.sendSoapRequest(
+      renderer.connectionManagerControlUrl,
+      renderer.connectionManagerServiceType,
+      'GetCurrentConnectionInfo',
+      {
+        ConnectionID: '0',
+      },
+    ).catch(() => '');
+    if (!String(responsePayload || '').trim()) {
+      return undefined;
+    }
+    return {
+      protocolInfo: String(this.extractXmlTagValue(responsePayload, 'ProtocolInfo') || '').trim() || undefined,
+      status: String(this.extractXmlTagValue(responsePayload, 'Status') || '').trim() || undefined,
+      direction: String(this.extractXmlTagValue(responsePayload, 'Direction') || '').trim() || undefined,
+    };
   }
 
   static async setSelectedRendererVolume(mediaPlaybackVolume: number, mediaPlaybackMaxVolume: number): Promise<boolean> {
@@ -1118,6 +1817,36 @@ export class DlnaService {
 
   private static emitState() {
     window.dispatchEvent(new Event(this.eventName));
+  }
+
+  private static rendererSnapshotEmitDebounceByRendererId: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private static rendererSnapshotEmitPendingByRendererId: Map<string, DlnaRendererEventSnapshot> = new Map();
+  private static readonly rendererSnapshotEmitDebounceMs = 90;
+
+  private static emitRendererSnapshot(snapshot: DlnaRendererEventSnapshot) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const rendererId = String(snapshot.rendererId || '');
+    if (!rendererId) {
+      return;
+    }
+    this.rendererSnapshotEmitPendingByRendererId.set(rendererId, snapshot);
+    if (this.rendererSnapshotEmitDebounceByRendererId.has(rendererId)) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.rendererSnapshotEmitDebounceByRendererId.delete(rendererId);
+      const pending = this.rendererSnapshotEmitPendingByRendererId.get(rendererId);
+      this.rendererSnapshotEmitPendingByRendererId.delete(rendererId);
+      if (!pending) {
+        return;
+      }
+      window.dispatchEvent(new CustomEvent(this.rendererSnapshotEventName, {
+        detail: pending,
+      }));
+    }, this.rendererSnapshotEmitDebounceMs);
+    this.rendererSnapshotEmitDebounceByRendererId.set(rendererId, timer);
   }
 
   private static loadSettings() {
@@ -1270,6 +1999,10 @@ export class DlnaService {
       serviceBlock.serviceType,
       this.renderingControlServiceType,
     ));
+    const connectionManagerService = serviceBlocks.find(serviceBlock => this.matchesServiceType(
+      serviceBlock.serviceType,
+      this.connectionManagerServiceType,
+    ));
 
     if (!avTransportService || !renderingControlService) {
       return;
@@ -1282,16 +2015,25 @@ export class DlnaService {
       friendlyName,
       modelName,
       avTransportControlUrl: this.resolveServiceUrl(location, avTransportService.controlURL),
+      avTransportEventUrl: avTransportService.eventSubURL
+        ? this.resolveServiceUrl(location, avTransportService.eventSubURL)
+        : undefined,
       avTransportServiceType: avTransportService.serviceType,
       renderingControlUrl: this.resolveServiceUrl(location, renderingControlService.controlURL),
+      renderingControlEventUrl: renderingControlService.eventSubURL
+        ? this.resolveServiceUrl(location, renderingControlService.eventSubURL)
+        : undefined,
       renderingControlServiceType: renderingControlService.serviceType,
+      connectionManagerControlUrl: connectionManagerService?.controlURL
+        ? this.resolveServiceUrl(location, connectionManagerService.controlURL)
+        : undefined,
+      connectionManagerServiceType: connectionManagerService?.serviceType || undefined,
       lastSeenAt: Date.now(),
     };
     this.rendererDevices.set(renderer.id, renderer);
-    if (this.outputMode === 'remote' && this.selectedRendererId && !this.rendererDevices.has(this.selectedRendererId)) {
-      this.outputMode = 'local';
-      this.selectedRendererId = undefined;
-      this.persistControlSettings();
+    if (this.outputMode === 'remote' && this.selectedRendererId === renderer.id) {
+      this.startRendererEventRenewal();
+      this.ensureSelectedRendererEventSubscription().catch(() => undefined);
     }
     this.emitState();
   }
@@ -1308,10 +2050,17 @@ export class DlnaService {
     const selectedRendererStillActive = !!this.selectedRendererId
       && activeRenderers.some(([rendererId]) => rendererId === this.selectedRendererId);
     this.rendererDevices = new Map(activeRenderers);
-    if (this.outputMode === 'remote' && this.selectedRendererId && !selectedRendererStillActive) {
-      this.outputMode = 'local';
-      this.selectedRendererId = undefined;
-      this.persistControlSettings();
+    if (this.outputMode === 'remote' && this.selectedRendererId) {
+      if (selectedRendererStillActive) {
+        this.selectedRendererMissingSince = 0;
+      } else if (this.selectedRendererMissingSince <= 0) {
+        this.selectedRendererMissingSince = now;
+      } else if ((now - this.selectedRendererMissingSince) >= this.selectedRendererDisconnectGraceMs) {
+        this.outputMode = 'local';
+        this.selectedRendererId = undefined;
+        this.selectedRendererMissingSince = 0;
+        this.persistControlSettings();
+      }
     }
     this.emitState();
   }
@@ -1349,8 +2098,8 @@ export class DlnaService {
     }, delayMs));
   }
 
-  private static extractXmlServiceBlocks(xml: string): Array<{ serviceType: string; controlURL: string }> {
-    const services: Array<{ serviceType: string; controlURL: string }> = [];
+  private static extractXmlServiceBlocks(xml: string): Array<{ serviceType: string; controlURL: string; eventSubURL?: string }> {
+    const services: Array<{ serviceType: string; controlURL: string; eventSubURL?: string }> = [];
     const serviceRegex = /<service>([\s\S]*?)<\/service>/gi;
     let serviceMatch = serviceRegex.exec(xml);
     while (serviceMatch) {
@@ -1361,8 +2110,13 @@ export class DlnaService {
         || this.extractXmlTagValue(block, 'controlUrl')
         || '',
       ).trim();
+      const eventSubURL = String(
+        this.extractXmlTagValue(block, 'eventSubURL')
+        || this.extractXmlTagValue(block, 'eventSubUrl')
+        || '',
+      ).trim();
       if (serviceType && controlURL) {
-        services.push({ serviceType, controlURL });
+        services.push({ serviceType, controlURL, eventSubURL: eventSubURL || undefined });
       }
       serviceMatch = serviceRegex.exec(xml);
     }
@@ -1444,6 +2198,7 @@ export class DlnaService {
     mediaTrack: IMediaTrack,
     streamUrl: string,
     metadataMode: 'full' | 'compatibility' = 'full',
+    metadataNonce?: string,
   ): string {
     const title = this.escapeXml(String(mediaTrack.track_name || 'Track'));
     const artist = this.escapeXml(String(mediaTrack.track_artists?.map(trackArtist => trackArtist.artist_name).join(', ') || ''));
@@ -1465,24 +2220,43 @@ export class DlnaService {
       ? `http-get:*:${coverMimeType}:DLNA.ORG_PN=${coverProfile};DLNA.ORG_CI=1`
       : `http-get:*:${coverMimeType}:*`;
     const duration = this.formatSecondsAsDlnaTime(Number(mediaTrack.track_duration || 0));
-    return `<?xml version="1.0" encoding="utf-8"?>
-${this.getDidlRootStart()}
-<item id="${this.escapeXml(String(mediaTrack.id || mediaTrack.provider_id || 'track'))}" parentID="0" restricted="1">
+    const metadataItemIdBase = String(mediaTrack.id || mediaTrack.provider_id || 'track');
+    const metadataItemId = metadataNonce
+      ? `${metadataItemIdBase}:${metadataNonce}`
+      : metadataItemIdBase;
+    const audioProtocolInfo = this.getAudioProtocolInfoByMimeType(mimeType);
+    return `${this.getDidlRootStart()}
+<item id="${this.escapeXml(metadataItemId)}" parentID="0" restricted="1">
 <dc:title>${title}</dc:title>
+<dc:creator>${artist}</dc:creator>
 <upnp:artist>${artist}</upnp:artist>
 <upnp:album>${album}</upnp:album>
 <upnp:class>object.item.audioItem.musicTrack</upnp:class>
-${coverUrl ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
-${coverUrl && coverProfile ? `<upnp:albumArtURI>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl ? `<upnp:albumArtURI>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
+${coverUrl && coverProfile ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
 ${coverUrl ? `<upnp:icon>${this.escapeXml(coverUrl)}</upnp:icon>` : ''}
 ${coverUrl && coverMimeType ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
+${coverUrl && coverMimeType && coverProfile ? `<res protocolInfo="http-get:*:${coverMimeType}:*">${this.escapeXml(coverUrl)}</res>` : ''}
+${coverUrl && coverMimeType ? `<res protocolInfo="http-get:*:image/*:*">${this.escapeXml(coverUrl)}</res>` : ''}
+<res protocolInfo="${audioProtocolInfo}" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 <res protocolInfo="http-get:*:${mimeType}:*" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>
 </DIDL-Lite>`;
   }
 
+  private static getAudioProtocolInfoByMimeType(mimeType: string): string {
+    const normalizedMimeType = String(mimeType || '').trim().toLowerCase();
+    if (normalizedMimeType === 'audio/mpeg') {
+      return 'http-get:*:audio/mpeg:DLNA.ORG_PN=MP3;DLNA.ORG_OP=01;DLNA.ORG_CI=0';
+    }
+    if (normalizedMimeType === 'audio/flac') {
+      return 'http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0';
+    }
+    return `http-get:*:${normalizedMimeType || 'audio/mpeg'}:*`;
+  }
+
   private static getDlnaImageProfileForMimeType(): string {
-    return 'JPEG_SM';
+    return 'JPEG_TN';
   }
 
   private static formatSecondsAsDlnaTime(seconds: number): string {
@@ -1610,7 +2384,16 @@ ${actionBody}
     if (seekPositionSeconds > 0) {
       await this.seekSelectedRenderer(seekPositionSeconds).catch(() => false);
     }
-    return this.waitForRendererPlaybackStart(seekPositionSeconds);
+    const playbackVerified = await this.waitForRendererPlaybackStart(seekPositionSeconds);
+    if (playbackVerified) {
+      return true;
+    }
+    this.writeDlnaLog('warn', 'playback_start_unverified_soft_success', {
+      rendererId: renderer.id,
+      rendererName: renderer.friendlyName,
+      seekPositionSeconds,
+    });
+    return true;
   }
 
   private static async waitForRendererPlaybackStart(seekPositionSeconds: number): Promise<boolean> {
@@ -1620,12 +2403,12 @@ ${actionBody}
       lastKnownPositionSeconds: number,
       consecutivePlayingSnapshots: number,
     ): Promise<boolean> => {
-      if (attempt >= 4) {
+      if (attempt >= 16) {
         this.writeDlnaLog('warn', 'playback_start_verification_timeout', {
           seekPositionSeconds,
           selectedRendererId: this.selectedRendererId,
         });
-        return true;
+        return false;
       }
       const snapshot = await this.getSelectedRendererSnapshot().catch(() => undefined);
       const transportState = String(snapshot?.transportState || '').toUpperCase();
@@ -1646,11 +2429,14 @@ ${actionBody}
         if (!hasPosition && nextConsecutivePlayingSnapshots >= 2) {
           return true;
         }
+        if (hasPosition && nextConsecutivePlayingSnapshots >= 4) {
+          return true;
+        }
       }
       const nextPosition = hasPosition
         ? Math.max(lastKnownPositionSeconds, snapshotPositionSeconds)
         : lastKnownPositionSeconds;
-      await this.wait(160);
+      await this.wait(250);
       return resolveAttempt(attempt + 1, nextPosition, nextConsecutivePlayingSnapshots);
     };
     return resolveAttempt(0, -1, 0);
@@ -1918,6 +2704,11 @@ ${actionBody}
 
   private static async stopServer() {
     this.sendSsdpByeBye();
+    this.stopRendererEventRenewal();
+    if (this.ssdpRestartTimeout) {
+      clearTimeout(this.ssdpRestartTimeout);
+      this.ssdpRestartTimeout = undefined;
+    }
     if (this.ssdpInterval) {
       clearInterval(this.ssdpInterval);
       this.ssdpInterval = undefined;
@@ -1947,6 +2738,27 @@ ${actionBody}
     this.ssdpSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
     this.ssdpSocket.on('error', (error) => {
       this.lastError = String(error?.message || error);
+      const staleSocket = this.ssdpSocket;
+      this.ssdpSocket = undefined;
+      if (staleSocket) {
+        try {
+          staleSocket.close();
+        } catch (_closeError) {
+          // no-op
+        }
+      }
+      if (this.ssdpInterval) {
+        clearInterval(this.ssdpInterval);
+        this.ssdpInterval = undefined;
+      }
+      if (this.enabled && this.httpServer && !this.ssdpRestartTimeout) {
+        this.ssdpRestartTimeout = setTimeout(() => {
+          this.ssdpRestartTimeout = undefined;
+          if (this.enabled && this.httpServer && !this.ssdpSocket) {
+            this.startSsdpBroadcast();
+          }
+        }, this.ssdpRestartDelayMs);
+      }
       this.emitState();
     });
     this.ssdpSocket.on('message', (message, remote) => {
@@ -1954,7 +2766,24 @@ ${actionBody}
     });
     this.ssdpSocket.bind(this.multicastPort, () => {
       try {
-        this.ssdpSocket?.addMembership(this.multicastIp);
+        const interfaces = os.networkInterfaces();
+        const interfaceIps = Object.values(interfaces)
+          .flat()
+          .filter(Boolean)
+          .filter(address => address?.family === 'IPv4' && !address.internal)
+          .map(address => String(address?.address || '').trim())
+          .filter(Boolean);
+        if (interfaceIps.length === 0) {
+          this.ssdpSocket?.addMembership(this.multicastIp);
+        } else {
+          interfaceIps.forEach((interfaceIp) => {
+            try {
+              this.ssdpSocket?.addMembership(this.multicastIp, interfaceIp);
+            } catch (error) {
+              debug('startSsdpBroadcast addMembership failed for %s - %o', interfaceIp, error);
+            }
+          });
+        }
       } catch (error) {
         debug('startSsdpBroadcast addMembership failed - %o', error);
       }
@@ -1969,7 +2798,13 @@ ${actionBody}
 
   private static handleSsdpMessage(message: string, address: string, port: number) {
     const normalizedMessage = message.toUpperCase();
-    if (!normalizedMessage.includes('M-SEARCH') || !normalizedMessage.includes('SSDP:DISCOVER')) {
+    if (!normalizedMessage.includes('M-SEARCH')) {
+      return;
+    }
+    const lower = message.toLowerCase();
+    const hasDiscover = lower.includes('ssdp:discover')
+      || /man\s*:\s*"?\s*ssdp:discover\s*"?/i.test(message);
+    if (!hasDiscover) {
       return;
     }
     const searchTarget = this.extractSsdpHeaderValue(message, 'ST') || 'ssdp:all';
@@ -1979,6 +2814,7 @@ ${actionBody}
       'upnp:rootdevice',
       this.rootDeviceUdn.toLowerCase(),
       this.serviceType.toLowerCase(),
+      this.upnpMediaServerV2ServiceType.toLowerCase(),
       this.contentDirectoryServiceType.toLowerCase(),
       this.connectionManagerServiceType.toLowerCase(),
     ];
@@ -1991,12 +2827,17 @@ ${actionBody}
         'upnp:rootdevice',
         this.rootDeviceUdn,
         this.serviceType,
+        this.upnpMediaServerV2ServiceType,
         this.contentDirectoryServiceType,
         this.connectionManagerServiceType,
       ]
       : [searchTarget];
     responseTargets.forEach((responseTarget) => {
-      this.sendSsdpSearchResponse(responseTarget, location, address, port);
+      const isV2Target = String(responseTarget || '').toLowerCase() === this.upnpMediaServerV2ServiceType.toLowerCase();
+      const targetLocation = isV2Target
+        ? this.getDescriptionUrlForClient(address, 'v2')
+        : location;
+      this.sendSsdpSearchResponse(responseTarget, targetLocation, address, port);
     });
   }
 
@@ -2010,11 +2851,13 @@ ${actionBody}
     } else if (
       responseTargetNormalized === this.contentDirectoryServiceType.toLowerCase()
       || responseTargetNormalized === this.connectionManagerServiceType.toLowerCase()
+      || responseTargetNormalized === this.upnpMediaServerV2ServiceType.toLowerCase()
     ) {
       responseUsn = `${this.rootDeviceUdn}::${responseTarget}`;
     }
     const responseLines = [
       'HTTP/1.1 200 OK',
+      `DATE: ${new Date().toUTCString()}`,
       `CACHE-CONTROL: max-age=${this.ssdpMaxAgeSeconds}`,
       'EXT:',
       `LOCATION: ${location}`,
@@ -2043,6 +2886,10 @@ ${actionBody}
         usn: this.usn,
       },
       {
+        nt: this.upnpMediaServerV2ServiceType,
+        usn: this.upnpMediaServerV2Usn,
+      },
+      {
         nt: this.contentDirectoryServiceType,
         usn: `${this.rootDeviceUdn}::${this.contentDirectoryServiceType}`,
       },
@@ -2054,11 +2901,16 @@ ${actionBody}
     this.getIpAddresses().forEach((ipAddress) => {
       const location = this.getDescriptionUrlForIp(ipAddress);
       notificationDefinitions.forEach((definition) => {
+        const isV2Nt = String(definition.nt || '').toLowerCase() === this.upnpMediaServerV2ServiceType.toLowerCase();
+        const notifyLocation = isV2Nt
+          ? this.getDescriptionUrlForIp(ipAddress, 'v2')
+          : location;
         const notifyLines = [
           'NOTIFY * HTTP/1.1',
           `HOST: ${this.multicastIp}:${this.multicastPort}`,
+          `DATE: ${new Date().toUTCString()}`,
           `CACHE-CONTROL: max-age=${this.ssdpMaxAgeSeconds}`,
-          `LOCATION: ${location}`,
+          `LOCATION: ${notifyLocation}`,
           `NT: ${definition.nt}`,
           'NTS: ssdp:alive',
           'BOOTID.UPNP.ORG: 1',
@@ -2090,6 +2942,10 @@ ${actionBody}
         usn: this.usn,
       },
       {
+        nt: this.upnpMediaServerV2ServiceType,
+        usn: this.upnpMediaServerV2Usn,
+      },
+      {
         nt: this.contentDirectoryServiceType,
         usn: `${this.rootDeviceUdn}::${this.contentDirectoryServiceType}`,
       },
@@ -2111,14 +2967,15 @@ ${actionBody}
     });
   }
 
-  private static getDescriptionUrlForIp(ipAddress: string) {
-    return `http://${ipAddress}:${this.port}/description.xml`;
+  private static getDescriptionUrlForIp(ipAddress: string, profile: 'v1' | 'v2' = 'v1') {
+    const descriptionPath = profile === 'v2' ? '/upnp/description-v2.xml' : '/description.xml';
+    return `http://${ipAddress}:${this.port}${descriptionPath}`;
   }
 
-  private static getDescriptionUrlForClient(clientAddress: string) {
+  private static getDescriptionUrlForClient(clientAddress: string, profile: 'v1' | 'v2' = 'v1') {
     const ipAddresses = this.getIpAddresses();
     const matchingSubnetIp = ipAddresses.find(ipAddress => this.hasSameIPv4Subnet(ipAddress, clientAddress));
-    return this.getDescriptionUrlForIp(matchingSubnetIp || ipAddresses[0] || '127.0.0.1');
+    return this.getDescriptionUrlForIp(matchingSubnetIp || ipAddresses[0] || '127.0.0.1', profile);
   }
 
   private static handleHttpRequest(request: IncomingMessage, response: ServerResponse) {
@@ -2133,7 +2990,11 @@ ${actionBody}
       host: String(request.headers.host || ''),
     });
     if (requestPath === '/description.xml') {
-      this.writeXml(response, this.getDescriptionXml());
+      this.writeXml(response, this.getDescriptionXml('v1'));
+      return;
+    }
+    if (requestPath === '/upnp/description-v2.xml') {
+      this.writeXml(response, this.getDescriptionXml('v2'));
       return;
     }
     if (requestPath === '/upnp/content-directory.xml') {
@@ -2150,6 +3011,10 @@ ${actionBody}
     }
     if (requestPath === '/upnp/control/connection-manager') {
       this.handleConnectionManagerControlRequest(request, response);
+      return;
+    }
+    if (requestPath === '/upnp/event/renderer') {
+      this.handleRendererEventCallbackRequest(request, response);
       return;
     }
     if (requestPath === '/content.xml') {
@@ -2271,7 +3136,10 @@ ${actionBody}
       return;
     }
     const rawCoverBuffer = fs.readFileSync(coverPath);
+    const sourceCoverMimeType = this.getImageMimeType(coverPath) || 'image/jpeg';
     let coverBuffer: Buffer;
+    let coverMimeType = 'image/jpeg';
+    let coverProfile = this.getDlnaImageProfileForMimeType();
     try {
       coverBuffer = await sharp(rawCoverBuffer)
         .rotate()
@@ -2312,13 +3180,16 @@ ${actionBody}
           coverPath,
           error: String((error as any)?.message || error || ''),
         });
-        response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-        response.end('Cover conversion failed');
-        return;
+        coverBuffer = rawCoverBuffer;
+        coverMimeType = sourceCoverMimeType;
+        coverProfile = '';
       }
     }
-    const coverProfile = this.getDlnaImageProfileForMimeType();
-    const coverMimeType = 'image/jpeg';
+    if (!coverBuffer || coverBuffer.byteLength <= 0) {
+      coverBuffer = rawCoverBuffer;
+      coverMimeType = sourceCoverMimeType;
+      coverProfile = '';
+    }
     const coverContentFeatures = coverProfile
       ? `DLNA.ORG_PN=${coverProfile};DLNA.ORG_OP=01;DLNA.ORG_CI=1`
       : 'DLNA.ORG_OP=01';
@@ -2458,20 +3329,24 @@ ${actionBody}
     return String(this.extractXmlTagValue(transportInfoResponse, 'CurrentTransportState') || '').toUpperCase();
   }
 
-  private static getDescriptionXml() {
+  private static getDescriptionXml(profile: 'v1' | 'v2' = 'v1') {
     const ipAddress = this.getIpAddresses()[0] || '127.0.0.1';
     const baseUrl = `http://${ipAddress}:${this.port}`;
     const friendlyName = this.escapeXml(this.getState().friendlyName);
+    const deviceType = profile === 'v2'
+      ? this.upnpMediaServerV2ServiceType
+      : this.serviceType;
+    const modelNumber = profile === 'v2' ? '2.1.0' : '2.0.0';
     return `<?xml version="1.0"?>
 <root xmlns="urn:schemas-upnp-org:device-1-0">
 <specVersion><major>1</major><minor>0</minor></specVersion>
 <URLBase>${baseUrl}</URLBase>
 <device>
-<deviceType>${this.serviceType}</deviceType>
+<deviceType>${deviceType}</deviceType>
 <friendlyName>${friendlyName}</friendlyName>
 <manufacturer>Aurora Pulse</manufacturer>
 <modelName>Aurora DLNA Media Server</modelName>
-<modelNumber>2.0.0</modelNumber>
+<modelNumber>${modelNumber}</modelNumber>
 <serialNumber>aurora-pulse-dlna</serialNumber>
 <UDN>${this.rootDeviceUdn}</UDN>
 <serviceList>
@@ -2536,9 +3411,17 @@ ${items}
   }
 
   private static extractSsdpHeaderValue(message: string, headerName: string) {
-    const match = message.match(new RegExp(`^${headerName}\\s*:\\s*(.+)$`, 'im'));
+    const escaped = String(headerName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = message.match(new RegExp(`^${escaped}\\s*:\\s*(.+)\\r?$`, 'im'));
     if (!match) {
-      return '';
+      const lines = String(message || '').split(/\r?\n/);
+      const lower = String(headerName || '').toLowerCase();
+      const line = lines.find(l => l.toLowerCase().startsWith(`${lower}:`));
+      if (!line) {
+        return '';
+      }
+      const value = line.replace(/^[^:]+:\s*/, '');
+      return String(value || '').trim();
     }
     return String(match[1] || '').trim();
   }
@@ -2682,10 +3565,35 @@ ${items}
 <argument><name>Sink</name><direction>out</direction><relatedStateVariable>SinkProtocolInfo</relatedStateVariable></argument>
 </argumentList>
 </action>
+<action>
+<name>GetCurrentConnectionIDs</name>
+<argumentList>
+<argument><name>ConnectionIDs</name><direction>out</direction><relatedStateVariable>CurrentConnectionIDs</relatedStateVariable></argument>
+</argumentList>
+</action>
+<action>
+<name>GetCurrentConnectionInfo</name>
+<argumentList>
+<argument><name>ConnectionID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable></argument>
+<argument><name>RcsID</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable></argument>
+<argument><name>AVTransportID</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable></argument>
+<argument><name>ProtocolInfo</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_ProtocolInfo</relatedStateVariable></argument>
+<argument><name>PeerConnectionManager</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_ConnectionManager</relatedStateVariable></argument>
+<argument><name>PeerConnectionID</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable></argument>
+<argument><name>Direction</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_Direction</relatedStateVariable></argument>
+<argument><name>Status</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_ConnectionStatus</relatedStateVariable></argument>
+</argumentList>
+</action>
 </actionList>
 <serviceStateTable>
 <stateVariable sendEvents="no"><name>SourceProtocolInfo</name><dataType>string</dataType></stateVariable>
 <stateVariable sendEvents="no"><name>SinkProtocolInfo</name><dataType>string</dataType></stateVariable>
+<stateVariable sendEvents="no"><name>CurrentConnectionIDs</name><dataType>string</dataType></stateVariable>
+<stateVariable sendEvents="no"><name>A_ARG_TYPE_ConnectionID</name><dataType>i4</dataType></stateVariable>
+<stateVariable sendEvents="no"><name>A_ARG_TYPE_ProtocolInfo</name><dataType>string</dataType></stateVariable>
+<stateVariable sendEvents="no"><name>A_ARG_TYPE_ConnectionManager</name><dataType>string</dataType></stateVariable>
+<stateVariable sendEvents="no"><name>A_ARG_TYPE_Direction</name><dataType>string</dataType></stateVariable>
+<stateVariable sendEvents="no"><name>A_ARG_TYPE_ConnectionStatus</name><dataType>string</dataType></stateVariable>
 </serviceStateTable>
 </scpd>`;
   }
@@ -2742,7 +3650,8 @@ ${items}
 
   private static handleConnectionManagerControlRequest(request: IncomingMessage, response: ServerResponse) {
     this.readRequestBody(request)
-      .then(() => {
+      .then((body) => {
+        const soapAction = String(request.headers.soapaction || '').replace(/"/g, '').toLowerCase();
         const sourceProtocols = [
           'http-get:*:audio/mpeg:*',
           'http-get:*:audio/flac:*',
@@ -2757,11 +3666,216 @@ ${items}
           `<Source>${this.escapeXml(sourceProtocols)}</Source>`,
           '<Sink></Sink>',
         ].join('');
+        if (soapAction.includes('#getcurrentconnectionids')) {
+          this.writeSoapResponse(
+            response,
+            'u:GetCurrentConnectionIDsResponse',
+            this.connectionManagerServiceType,
+            '<ConnectionIDs>0</ConnectionIDs>',
+          );
+          return;
+        }
+        if (soapAction.includes('#getcurrentconnectioninfo')) {
+          const connectionId = Number(this.extractXmlTagValue(body, 'ConnectionID') || 0);
+          const infoPayload = [
+            '<RcsID>0</RcsID>',
+            '<AVTransportID>0</AVTransportID>',
+            `<ProtocolInfo>${this.escapeXml('http-get:*:audio/*:*')}</ProtocolInfo>`,
+            '<PeerConnectionManager></PeerConnectionManager>',
+            `<PeerConnectionID>${Number.isFinite(connectionId) ? connectionId : -1}</PeerConnectionID>`,
+            '<Direction>Input</Direction>',
+            '<Status>OK</Status>',
+          ].join('');
+          this.writeSoapResponse(
+            response,
+            'u:GetCurrentConnectionInfoResponse',
+            this.connectionManagerServiceType,
+            infoPayload,
+          );
+          return;
+        }
         this.writeSoapResponse(response, 'u:GetProtocolInfoResponse', this.connectionManagerServiceType, payload);
       })
       .catch((error) => {
         debug('handleConnectionManagerControlRequest failed - %o', error);
         this.writeSoapResponse(response, 'u:GetProtocolInfoResponse', this.connectionManagerServiceType, '<Source></Source><Sink></Sink>');
+      });
+  }
+
+  private static handleRendererEventCallbackRequest(request: IncomingMessage, response: ServerResponse) {
+    const method = String(request.method || 'GET').toUpperCase();
+    if (method !== 'NOTIFY') {
+      response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end('OK');
+      return;
+    }
+    this.readRequestBody(request)
+      .then((body) => {
+        const sid = String(request.headers.sid || '').trim();
+        const remoteAddress = String(request.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        let rendererId = Array.from(this.rendererEventSubscriptionSidByRendererId.entries())
+          .find(entry => String(entry[1] || '').trim() === sid)?.[0];
+        if (!rendererId) {
+          rendererId = this.selectedRendererId;
+          if (rendererId) {
+            const renderer = this.rendererDevices.get(rendererId);
+            const rendererLocation = String(renderer?.location || '').trim();
+            let rendererIp = '';
+            try {
+              rendererIp = String(new URL(rendererLocation).hostname || '').replace(/^::ffff:/, '');
+            } catch (_error) {
+              rendererIp = '';
+            }
+            if (rendererIp && remoteAddress && rendererIp !== remoteAddress) {
+              rendererId = undefined;
+            }
+          }
+        }
+        if (!rendererId) {
+          this.writeDlnaLog('warn', 'renderer_event_notify_unmapped', {
+            sid,
+            remoteAddress,
+          });
+          response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+          response.end('OK');
+          return;
+        }
+        const decodedBody = this.decodeXmlEntities(body);
+        const transportState = String(
+          decodedBody.match(/TransportState[^>]*val="([^"]+)"/i)?.[1]
+          || decodedBody.match(/CurrentTransportState[^>]*>([^<]+)</i)?.[1]
+          || '',
+        ).trim();
+        const relTime = String(
+          decodedBody.match(/RelativeTimePosition[^>]*val="([^"]+)"/i)?.[1]
+          || decodedBody.match(/RelTime[^>]*>([^<]+)</i)?.[1]
+          || '',
+        ).trim();
+        const currentTrackUri = String(
+          decodedBody.match(/CurrentTrackURI[^>]*val="([^"]+)"/i)?.[1]
+          || decodedBody.match(/TrackURI[^>]*>([^<]+)</i)?.[1]
+          || '',
+        ).trim();
+        const volumeRaw = Number(
+          decodedBody.match(/Volume[^>]*val="([^"]+)"/i)?.[1]
+          || decodedBody.match(/CurrentVolume[^>]*>([^<]+)</i)?.[1]
+          || NaN,
+        );
+        const muteRaw = String(
+          decodedBody.match(/Mute[^>]*val="([^"]+)"/i)?.[1]
+          || decodedBody.match(/CurrentMute[^>]*>([^<]+)</i)?.[1]
+          || '',
+        ).trim();
+        const previousEventSnapshot = this.rendererEventSnapshotByRendererId.get(rendererId);
+        const relTimeTrimmed = String(relTime || '').trim();
+        let nextTransportState = transportState || previousEventSnapshot?.transportState;
+        const incomingTrackUri = String(currentTrackUri || '').trim();
+        const prevTrackUri = String(previousEventSnapshot?.currentTrackUri || '').trim();
+        const trackLikelyUnchanged = !incomingTrackUri || !prevTrackUri || incomingTrackUri === prevTrackUri;
+        const previousStateUpper = String(previousEventSnapshot?.transportState || '').toUpperCase();
+        const previousPositionSeconds = Number(previousEventSnapshot?.positionSeconds || 0);
+        const suspiciousNoMediaNotify = String(nextTransportState || '').toUpperCase() === 'NO_MEDIA_PRESENT'
+          && trackLikelyUnchanged
+          && !!(incomingTrackUri || prevTrackUri)
+          && previousStateUpper !== ''
+          && previousStateUpper !== 'NO_MEDIA_PRESENT'
+          && (
+            previousPositionSeconds > 0.5
+            || previousStateUpper === 'PLAYING'
+            || previousStateUpper === 'TRANSITIONING'
+            || previousStateUpper === 'PAUSED_PLAYBACK'
+            || previousStateUpper === 'PAUSED'
+            || previousStateUpper === 'STOPPED'
+          );
+        if (suspiciousNoMediaNotify) {
+          this.writeDlnaLog('info', 'renderer_event_notify_no_media_ignored', {
+            rendererId,
+            sid,
+            remoteAddress,
+            previousTransportState: previousEventSnapshot?.transportState || undefined,
+            hasTrackUri: !!(incomingTrackUri || prevTrackUri),
+            previousPositionSeconds: Number.isFinite(previousPositionSeconds) ? previousPositionSeconds : undefined,
+          });
+          nextTransportState = previousEventSnapshot?.transportState || nextTransportState;
+        }
+        const tsUpper = String(nextTransportState || '').toUpperCase();
+        let nextPositionSeconds = previousEventSnapshot?.positionSeconds;
+        if (relTimeTrimmed) {
+          const parsed = this.parseDlnaTimeToSeconds(relTimeTrimmed);
+          if (Number.isFinite(Number(parsed))) {
+            const sec = Math.max(0, Number(parsed));
+            const transitionOrUnknown = tsUpper === 'TRANSITIONING' || tsUpper === '';
+            const prevPos = Number(previousEventSnapshot?.positionSeconds || 0);
+            const keepPrevOnBogusZero = sec === 0 && trackLikelyUnchanged && prevPos > 0.5
+              && (transitionOrUnknown || tsUpper === 'PLAYING');
+            nextPositionSeconds = keepPrevOnBogusZero
+              ? previousEventSnapshot?.positionSeconds
+              : sec;
+          }
+        }
+        let nextTrackUri = incomingTrackUri || previousEventSnapshot?.currentTrackUri;
+        const promotedPendingTrack = this.maybePromotePendingNextTrack(rendererId, {
+          transportState: tsUpper,
+          positionSeconds: nextPositionSeconds,
+          incomingTrackUri,
+          reason: 'event_notify',
+        });
+        if (promotedPendingTrack?.currentTrackUri) {
+          nextTrackUri = promotedPendingTrack.currentTrackUri;
+        }
+        let nextVolumePercent = previousEventSnapshot?.volumePercent;
+        if (Number.isFinite(volumeRaw)) {
+          nextVolumePercent = Math.max(0, Math.min(100, Math.floor(volumeRaw)));
+        }
+        let nextMuted = previousEventSnapshot?.muted;
+        if (muteRaw === '1') {
+          nextMuted = true;
+        } else if (muteRaw === '0') {
+          nextMuted = false;
+        }
+        this.writeDlnaLog('info', 'renderer_event_notify', {
+          rendererId,
+          sid,
+          remoteAddress,
+          transportState: nextTransportState || undefined,
+          relTime: relTimeTrimmed || undefined,
+          hasTrackUri: !!nextTrackUri,
+          volumePercent: nextVolumePercent,
+          muted: nextMuted,
+        });
+        this.rendererEventSnapshotByRendererId.set(rendererId, {
+          capturedAt: Date.now(),
+          transportState: nextTransportState,
+          positionSeconds: nextPositionSeconds,
+          currentTrackUri: nextTrackUri,
+          volumePercent: nextVolumePercent,
+          muted: nextMuted,
+        });
+        const trackUriForId = String(currentTrackUri || '').trim() || nextTrackUri;
+        if (trackUriForId) {
+          const currentTrackId = this.extractTrackIdFromDlnaTrackUri(trackUriForId);
+          if (currentTrackId) {
+            this.rendererCurrentTrackIdByRendererId.set(rendererId, currentTrackId);
+          }
+        }
+        const nextSnapshot = this.rendererEventSnapshotByRendererId.get(rendererId);
+        if (nextSnapshot) {
+          this.emitRendererSnapshot({
+            rendererId,
+            capturedAt: nextSnapshot.capturedAt,
+            transportState: nextSnapshot.transportState,
+            positionSeconds: nextSnapshot.positionSeconds,
+            currentTrackUri: nextSnapshot.currentTrackUri,
+            volumePercent: nextSnapshot.volumePercent,
+            muted: nextSnapshot.muted,
+          });
+        }
+        response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        response.end('OK');
+      })
+      .catch(() => {
+        response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        response.end('OK');
       });
   }
 
@@ -2804,17 +3918,41 @@ ${actionBody}
   }
 
   private static parseDlnaTimeToSeconds(value: string): number | undefined {
-    const match = String(value || '').trim().match(/^(\d{2,}):(\d{2}):(\d{2})(?:\.\d+)?$/);
-    if (!match) {
+    const s = String(value || '').trim();
+    if (!s) {
       return undefined;
     }
-    const hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    const seconds = Number(match[3]);
-    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
-      return undefined;
+    // UPnP often uses H:MM:SS[.frac]; many devices also send M:SS for content under one hour.
+    const hms = s.match(/^(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d+))?$/);
+    if (hms) {
+      const hours = Number(hms[1]);
+      const minutes = Number(hms[2]);
+      const seconds = Number(hms[3]);
+      if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+        return undefined;
+      }
+      if (minutes < 0 || minutes >= 60 || seconds < 0 || seconds >= 60) {
+        return undefined;
+      }
+      return (hours * 3600) + (minutes * 60) + seconds;
     }
-    return (hours * 3600) + (minutes * 60) + seconds;
+    const ms = s.match(/^(\d+):(\d{1,2})(?:\.(\d+))?$/);
+    if (ms) {
+      const minutes = Number(ms[1]);
+      const seconds = Number(ms[2]);
+      if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+        return undefined;
+      }
+      if (seconds < 0 || seconds >= 60) {
+        return undefined;
+      }
+      return (minutes * 60) + seconds;
+    }
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const n = Number(s);
+      return Number.isFinite(n) ? Math.max(0, n) : undefined;
+    }
+    return undefined;
   }
 
   private static extractTrackIdFromDlnaTrackUri(value: string): string | undefined {
@@ -3029,6 +4167,7 @@ ${coverUrl ? `<upnp:albumArtURI${albumArtAttributes}>${this.escapeXml(coverUrl)}
 ${coverUrl && coverProfile ? `<upnp:albumArtURI>${this.escapeXml(coverUrl)}</upnp:albumArtURI>` : ''}
 ${coverUrl ? `<upnp:icon>${this.escapeXml(coverUrl)}</upnp:icon>` : ''}
 ${coverUrl && coverProtocolInfo ? `<res protocolInfo="${coverProtocolInfo}">${this.escapeXml(coverUrl)}</res>` : ''}
+${coverUrl ? `<res protocolInfo="http-get:*:image/*:*">${this.escapeXml(coverUrl)}</res>` : ''}
 <res protocolInfo="http-get:*:${track.mimeType}:*" size="${track.fileSize}" duration="${duration}">${this.escapeXml(streamUrl)}</res>
 </item>`;
   }

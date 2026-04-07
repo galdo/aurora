@@ -51,19 +51,19 @@ function getWindowsControlsSafeWidth() {
   const scaleFactor = Number(window.devicePixelRatio || 1);
 
   if (scaleFactor >= 2) {
-    return 212;
+    return 236;
   }
   if (scaleFactor >= 1.75) {
-    return 196;
+    return 220;
   }
   if (scaleFactor >= 1.5) {
-    return 184;
+    return 206;
   }
   if (scaleFactor >= 1.25) {
-    return 168;
+    return 190;
   }
 
-  return 152;
+  return 176;
 }
 
 function getWindowsControlsSafeHeight() {

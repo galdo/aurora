@@ -7,8 +7,15 @@ import { AlbumsPage } from '../albums/albums.component';
 import { PlaylistsPage } from '../playlists/playlists.component';
 import { PlaylistPage } from '../playlist/playlist.component';
 import { LikedTracksPage } from '../liked-tracks/liked-tracks.component';
+import { TracksPage } from '../tracks/tracks.component';
 
 export default [
+  {
+    path: Routes.LibraryTracks,
+    component: TracksPage,
+    tHeaderName: 'search_result_heading_tracks',
+    exact: true,
+  },
   {
     path: Routes.LibraryArtists,
     component: ArtistsPage,

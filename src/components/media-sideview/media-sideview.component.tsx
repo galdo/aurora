@@ -363,7 +363,9 @@ export function MediaPlaylistSideView({ playlistId, onClose }: MediaSideViewPlay
           <MediaCoverPicture
             mediaPicture={playlist.cover_picture}
             mediaPictureAltText={playlist.name}
-            mediaCoverPlaceholderIcon={Icons.PlaylistPlaceholder}
+            mediaCoverPlaceholderIcon={playlist.id === MediaPlaylistService.mostPlayedPlaylistId
+              ? Icons.PlaylistMostPlayed
+              : Icons.PlaylistPlaceholder}
             className={cx('sideview-cover-picture')}
           />
           <div className={cx('sideview-meta')}>

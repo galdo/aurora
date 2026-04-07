@@ -19,7 +19,7 @@ import { MediaTrackService } from './media-track.service';
 import { MediaProviderService } from './media-provider.service';
 import { NotificationService } from './notification.service';
 import { PodcastService } from './podcast.service';
-import { DlnaService, DlnaState } from './dlna.service';
+import { DlnaService, DlnaState, DlnaRendererEventSnapshot } from './dlna.service';
 import { BitPerfectService } from './bit-perfect.service';
 
 const debug = require('debug')('aurora:service:media_player');
@@ -37,18 +37,53 @@ class MediaPlayerService {
   private dlnaLastState?: DlnaState;
   private outputSwitchInProgress = false;
   private dlnaNextTrackSyncIntervalMs = 1200;
+  private dlnaQueueContextPublishIntervalMs = 4000;
   private lastDlnaNextTrackSyncAt = 0;
   private lastDlnaNextTrackQueueEntryId?: string;
+  private lastDlnaQueueContextPublishAt = 0;
+  private lastDlnaQueueContextPublishSignature?: string;
   private dlnaStrictContextModeEnabled = true;
   private lastDlnaContextKey?: string;
   private lockedDlnaContextTracklistId?: string;
+  private remoteAutoAdvanceAwaitUntil = 0;
+  private lastRendererTransportState = '';
+  private lastRendererProgressSeconds = 0;
+  private lastRendererProgressAt = 0;
+  private lastRendererProgressTrackId?: string;
+  private lastRendererPlayingDetectedAt = 0;
+  /** When SOAP snapshots fail, keep UI time advancing if we recently saw PLAYING from renderer/events. */
+  private readonly remotePlayingInferenceGraceMs = 120000;
+  private lastUiDiagnosticsState = '';
 
   constructor() {
     DlnaService.initialize();
     this.dlnaLastState = DlnaService.getState();
+    if (DlnaService.isRemoteOutputRequested()) {
+      setTimeout(() => {
+        this.startMediaProgressReporting();
+      }, 250);
+    }
     DlnaService.subscribe((nextState) => {
       this.handleDlnaStateChanged(nextState);
     });
+    DlnaService.subscribeRendererSnapshot((snapshot) => {
+      this.handleDlnaRendererSnapshot(snapshot);
+    });
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('beforeunload', () => {
+        if (!DlnaService.isRemoteOutputRequested()) {
+          return;
+        }
+        const { mediaPlayer } = store.getState();
+        if (mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing
+          || mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading) {
+          store.dispatch({
+            type: MediaEnums.MediaPlayerActions.PausePlayer,
+          });
+        }
+        DlnaService.resetOutputToLocalState();
+      });
+    }
   }
 
   // media queue control API
@@ -109,11 +144,22 @@ class MediaPlayerService {
       mediaPlaybackCurrentMediaTrack,
       mediaPlaybackCurrentTrackList,
       mediaPlaybackCurrentPlayingInstance,
+      mediaPlaybackState,
     } = mediaPlayer;
 
     if (mediaPlaybackCurrentMediaTrack && mediaPlaybackCurrentPlayingInstance) {
+      const currentTrackListId = String(mediaPlaybackCurrentTrackList?.id || '').trim();
+      const requestedTrackListId = String(mediaTrackList?.id || '').trim();
+      const currentTrackStillInRequestedList = mediaTracks.some(track => String(track.id || '') === String(mediaPlaybackCurrentMediaTrack.id || ''));
+      const canResumeCurrentTracklist = mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing
+        || mediaPlaybackState === MediaEnums.MediaPlaybackState.Paused
+        || mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading;
       // resume media playback if we are playing same tracklist
-      if (mediaPlaybackCurrentTrackList?.id === mediaTrackList?.id) {
+      if (currentTrackListId.length > 0
+        && requestedTrackListId.length > 0
+        && currentTrackListId === requestedTrackListId
+        && currentTrackStillInRequestedList
+        && canResumeCurrentTracklist) {
         debug('playMediaTrack - resuming - media track id - %s', mediaPlaybackCurrentMediaTrack.id);
         this.resumeMediaPlayer();
         return;
@@ -158,11 +204,21 @@ class MediaPlayerService {
       mediaPlaybackCurrentTrackList,
       mediaPlaybackCurrentPlayingInstance,
       mediaPlaybackQueueOnShuffle,
+      mediaPlaybackState,
     } = mediaPlayer;
 
     if (mediaPlaybackCurrentMediaTrack && mediaPlaybackCurrentPlayingInstance) {
+      const currentTrackListId = String(mediaPlaybackCurrentTrackList?.id || '').trim();
+      const requestedTrackListId = String(mediaTrackList?.id || '').trim();
+      const canResumeCurrentTrack = mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing
+        || mediaPlaybackState === MediaEnums.MediaPlaybackState.Paused
+        || mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading;
       // resume media playback if we are playing same tracklist
-      if (mediaPlaybackCurrentTrackList?.id === mediaTrackList?.id && mediaPlaybackCurrentMediaTrack.id === mediaTrack.id) {
+      if (currentTrackListId.length > 0
+        && requestedTrackListId.length > 0
+        && currentTrackListId === requestedTrackListId
+        && mediaPlaybackCurrentMediaTrack.id === mediaTrack.id
+        && canResumeCurrentTrack) {
         debug('playMediaTrack - resuming - media track id - %s', mediaPlaybackCurrentMediaTrack.id);
         this.resumeMediaPlayer();
         return;
@@ -459,9 +515,52 @@ class MediaPlayerService {
       mediaPlaybackCurrentPlayingInstance,
     } = mediaPlayer;
 
+    if (DlnaService.isRemoteOutputRequested()) {
+      // Optimistic UI feedback so play/pause button state updates immediately.
+      store.dispatch({
+        type: MediaEnums.MediaPlayerActions.PausePlayer,
+      });
+      this.recordUiDiagnostic('pause_requested', {
+        remote: true,
+        state: mediaPlayer.mediaPlaybackState,
+      });
+      DlnaService.pauseSelectedRenderer()
+        .then(async (paused) => {
+          if (!paused) {
+            return;
+          }
+          const snapshot = await DlnaService.getSelectedRendererSnapshot().catch(() => undefined);
+          const transportState = String(snapshot?.transportState || '').toUpperCase();
+          if (transportState === 'PAUSED_PLAYBACK'
+            || transportState === 'PAUSED'
+            || transportState === 'STOPPED'
+            || transportState === 'NO_MEDIA_PRESENT') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.PausePlayer,
+            });
+            this.recordUiDiagnostic('pause_applied', {
+              transportState,
+            });
+          } else if (transportState === 'TRANSITIONING') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.LoadingTrack,
+            });
+          }
+          this.startMediaProgressReporting();
+        })
+        .catch(() => undefined);
+      return;
+    }
+
     if (!mediaPlaybackCurrentMediaTrack || !mediaPlaybackCurrentPlayingInstance) {
       return;
     }
+    debug('ui_pause_requested remote=%s state=%s track=%s', DlnaService.isRemoteOutputRequested(), mediaPlayer.mediaPlaybackState, mediaPlaybackCurrentMediaTrack.id);
+    this.recordUiDiagnostic('pause_requested', {
+      remote: DlnaService.isRemoteOutputRequested(),
+      state: mediaPlayer.mediaPlaybackState,
+      trackId: mediaPlaybackCurrentMediaTrack.id,
+    });
 
     const playbackInstance = mediaPlaybackCurrentPlayingInstance;
     playbackInstance
@@ -492,6 +591,7 @@ class MediaPlayerService {
         store.dispatch({
           type: MediaEnums.MediaPlayerActions.PausePlayer,
         });
+        this.recordUiDiagnostic('pause_applied');
       });
   }
 
@@ -505,9 +605,63 @@ class MediaPlayerService {
       mediaPlaybackCurrentPlayingInstance,
     } = mediaPlayer;
 
+    if (DlnaService.isRemoteOutputRequested()) {
+      // Optimistic UI feedback; remote snapshot will confirm or correct shortly after.
+      store.dispatch({
+        type: MediaEnums.MediaPlayerActions.Play,
+        data: {
+          mediaPlaybackProgress: this.getCurrentPlaybackProgress(),
+        },
+      });
+      this.recordUiDiagnostic('play_requested', {
+        remote: true,
+        state: mediaPlayer.mediaPlaybackState,
+      });
+      DlnaService.resumeSelectedRenderer()
+        .then(async (resumed) => {
+          if (!resumed) {
+            return;
+          }
+          const snapshot = await DlnaService.getSelectedRendererSnapshot().catch(() => undefined);
+          const transportState = String(snapshot?.transportState || '').toUpperCase();
+          const rendererProgress = Number(snapshot?.positionSeconds);
+          const nextProgress = Number.isFinite(rendererProgress)
+            ? Math.max(0, rendererProgress)
+            : this.getCurrentPlaybackProgress();
+          if (transportState === 'PLAYING') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.Play,
+              data: {
+                mediaPlaybackProgress: nextProgress,
+              },
+            });
+            this.recordUiDiagnostic('play_applied', {
+              transportState,
+            });
+          } else if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.PausePlayer,
+            });
+          } else if (transportState === 'TRANSITIONING') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.LoadingTrack,
+            });
+          }
+          this.reportMediaPlaybackProgress();
+        })
+        .catch(() => undefined);
+      return;
+    }
+
     if (!mediaPlaybackCurrentMediaTrack || !mediaPlaybackCurrentPlayingInstance) {
       return;
     }
+    debug('ui_play_requested remote=%s state=%s track=%s', DlnaService.isRemoteOutputRequested(), mediaPlayer.mediaPlaybackState, mediaPlaybackCurrentMediaTrack.id);
+    this.recordUiDiagnostic('play_requested', {
+      remote: DlnaService.isRemoteOutputRequested(),
+      state: mediaPlayer.mediaPlaybackState,
+      trackId: mediaPlaybackCurrentMediaTrack.id,
+    });
     if (this.shouldBlockDsdWithoutBitPerfect(mediaPlaybackCurrentMediaTrack)) {
       return;
     }
@@ -531,6 +685,7 @@ class MediaPlayerService {
             mediaPlaybackProgress: this.getCurrentPlaybackProgress(),
           },
         });
+        this.recordUiDiagnostic('play_applied');
 
         this.reportMediaPlaybackProgress();
       });
@@ -593,20 +748,23 @@ class MediaPlayerService {
         await DlnaService.refreshRendererDevices();
         await DlnaService.setOutputDevice(normalizedOutputDeviceId);
       });
-      if (normalizedOutputDeviceId !== 'local') {
+      if (DlnaService.isRemoteOutputRequested()) {
         this.syncPlaybackVolumeFromSelectedRenderer().catch((error) => {
           debug('switchOutputDevice - failed to sync renderer output state - %o', error);
         });
       }
 
       if (!mediaPlaybackCurrentMediaTrack) {
+        if (DlnaService.isRemoteOutputRequested()) {
+          this.startMediaProgressReporting();
+        }
         return;
       }
 
       const mediaPlayback = this.loadMediaTrack(mediaPlaybackCurrentMediaTrack);
       if (wasPlaying) {
         let mediaPlayed = await mediaPlayback.play();
-        if (!mediaPlayed && normalizedOutputDeviceId !== 'local') {
+        if (!mediaPlayed && DlnaService.isRemoteOutputRequested()) {
           await DlnaService.stopSelectedRenderer().catch(() => undefined);
           await new Promise((resolve) => {
             setTimeout(resolve, 250);
@@ -650,9 +808,55 @@ class MediaPlayerService {
       mediaPlaybackCurrentPlayingInstance,
     } = mediaPlayer;
 
+    if (DlnaService.isRemoteOutputRequested()) {
+      this.recordUiDiagnostic('stop_requested', {
+        remote: true,
+        state: mediaPlayer.mediaPlaybackState,
+      });
+      DlnaService.stopSelectedRenderer()
+        .then(async (stopped) => {
+          if (!stopped) {
+            return;
+          }
+          const snapshot = await DlnaService.getSelectedRendererSnapshot().catch(() => undefined);
+          const transportState = String(snapshot?.transportState || '').toUpperCase();
+          if (transportState === 'STOPPED' || transportState === 'NO_MEDIA_PRESENT') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.StopPlayer,
+            });
+            this.recordUiDiagnostic('stop_applied', {
+              transportState,
+            });
+            this.lastRendererTransportState = 'STOPPED';
+            this.lastRendererPlayingDetectedAt = 0;
+            this.lastRendererProgressAt = Date.now();
+            this.lastRendererProgressSeconds = 0;
+            this.lastRendererProgressTrackId = undefined;
+            this.remoteAutoAdvanceAwaitUntil = 0;
+          } else if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.PausePlayer,
+            });
+          } else if (transportState === 'TRANSITIONING') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.LoadingTrack,
+            });
+          }
+          this.startMediaProgressReporting();
+        })
+        .catch(() => undefined);
+      return;
+    }
+
     if (!mediaPlaybackCurrentMediaTrack || !mediaPlaybackCurrentPlayingInstance) {
       return;
     }
+    debug('ui_stop_requested remote=%s state=%s track=%s', DlnaService.isRemoteOutputRequested(), mediaPlayer.mediaPlaybackState, mediaPlaybackCurrentMediaTrack.id);
+    this.recordUiDiagnostic('stop_requested', {
+      remote: DlnaService.isRemoteOutputRequested(),
+      state: mediaPlayer.mediaPlaybackState,
+      trackId: mediaPlaybackCurrentMediaTrack.id,
+    });
 
     const playbackInstance = mediaPlaybackCurrentPlayingInstance;
     playbackInstance
@@ -670,6 +874,13 @@ class MediaPlayerService {
         store.dispatch({
           type: MediaEnums.MediaPlayerActions.StopPlayer,
         });
+        this.recordUiDiagnostic('stop_applied');
+        this.lastRendererTransportState = 'STOPPED';
+        this.lastRendererPlayingDetectedAt = 0;
+        this.lastRendererProgressAt = Date.now();
+        this.lastRendererProgressSeconds = 0;
+        this.lastRendererProgressTrackId = undefined;
+        this.remoteAutoAdvanceAwaitUntil = 0;
       });
   }
 
@@ -830,13 +1041,28 @@ class MediaPlayerService {
     // otherwise, we will be playing the previous track in queue
 
     if (DlnaService.isRemoteOutputRequested()) {
+      debug('ui_previous_requested remote=true force=%s progress=%s', !!force, mediaPlaybackCurrentMediaProgress);
+      this.recordUiDiagnostic('previous_requested', {
+        force: !!force,
+        progress: mediaPlaybackCurrentMediaProgress,
+      });
       if (!this.hasPreviousTrack() || (!force
         && mediaPlaybackCurrentMediaTrack
         && mediaPlaybackCurrentMediaProgress
         && mediaPlaybackCurrentMediaProgress > 15)) {
         this.seekMediaTrack(0);
-      } else {
+      } else if (!DlnaService.shouldUseSelectedRendererQueueContext()) {
         this.playPrevious();
+      } else {
+        DlnaService.previousSelectedRenderer()
+          .then((switched) => {
+            if (!switched) {
+              this.playPrevious();
+            }
+          })
+          .catch(() => {
+            this.playPrevious();
+          });
       }
       return;
     }
@@ -853,6 +1079,27 @@ class MediaPlayerService {
   }
 
   playNextTrack(): void {
+    debug('ui_next_requested remote=%s', DlnaService.isRemoteOutputRequested());
+    this.recordUiDiagnostic('next_requested', {
+      remote: DlnaService.isRemoteOutputRequested(),
+    });
+    if (DlnaService.isRemoteOutputRequested()) {
+      this.removeTrackRepeat();
+      if (!DlnaService.shouldUseSelectedRendererQueueContext()) {
+        this.playNext();
+      } else {
+        DlnaService.nextSelectedRenderer()
+          .then((switched) => {
+            if (!switched) {
+              this.playNext();
+            }
+          })
+          .catch(() => {
+            this.playNext();
+          });
+      }
+      return;
+    }
     if (!DlnaService.isRemoteOutputRequested()) {
       this.pauseMediaPlayer();
     }
@@ -1002,8 +1249,6 @@ class MediaPlayerService {
     }
 
     if (DlnaService.isRemoteOutputRequested()) {
-      DlnaService.cancelPendingSelectedRendererPlaybackOperations();
-      await DlnaService.stopSelectedRenderer().catch(() => false);
       await this.syncPlaybackVolumeFromSelectedRenderer({
         force: true,
         fetchSnapshot: true,
@@ -1042,6 +1287,7 @@ class MediaPlayerService {
         mediaPlaybackProgress: this.getCurrentPlaybackProgress(),
       },
     });
+    this.remoteAutoAdvanceAwaitUntil = 0;
 
     this.reportMediaPlaybackProgress();
     this.syncSelectedRendererNextTrack({ force: true });
@@ -1205,9 +1451,70 @@ class MediaPlayerService {
     const {
       mediaPlaybackCurrentMediaTrack,
       mediaPlaybackCurrentPlayingInstance,
+      mediaPlaybackCurrentMediaProgress = 0,
     } = mediaPlayer;
 
     if (!mediaPlaybackCurrentMediaTrack || !mediaPlaybackCurrentPlayingInstance) {
+      if (DlnaService.isRemoteOutputRequested()) {
+        if (this.backsyncCurrentTrackFromSelectedRenderer()) {
+          this.startMediaProgressReporting();
+          return;
+        }
+        DlnaService.getSelectedRendererSnapshot()
+          .then((snapshot) => {
+            const transportState = String(snapshot?.transportState || '').toUpperCase();
+            const now = Date.now();
+            const rendererProgress = Number(snapshot?.positionSeconds);
+            if (transportState) {
+              this.lastRendererTransportState = transportState;
+            }
+            if (transportState === 'PLAYING') {
+              this.lastRendererPlayingDetectedAt = now;
+            }
+            const nextProgress = Number.isFinite(rendererProgress)
+              ? Math.max(0, rendererProgress)
+              : Math.max(0, this.lastRendererProgressSeconds || 0);
+            if (transportState === 'PLAYING') {
+              this.lastRendererProgressSeconds = nextProgress;
+              this.lastRendererProgressAt = now;
+              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(snapshot?.currentTrackUri, mediaPlaybackCurrentMediaTrack);
+              store.dispatch({
+                type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+                data: {
+                  mediaPlaybackState: MediaEnums.MediaPlaybackState.Playing,
+                  mediaPlaybackProgress: nextProgress,
+                },
+              });
+            } else if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
+              this.lastRendererProgressSeconds = nextProgress;
+              this.lastRendererProgressAt = now;
+              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(snapshot?.currentTrackUri, mediaPlaybackCurrentMediaTrack);
+              store.dispatch({
+                type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+                data: {
+                  mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+                  mediaPlaybackProgress: nextProgress,
+                },
+              });
+            } else if (transportState === 'STOPPED' || transportState === 'NO_MEDIA_PRESENT') {
+              this.lastRendererProgressSeconds = Math.max(0, nextProgress);
+              this.lastRendererProgressAt = now;
+              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(snapshot?.currentTrackUri, mediaPlaybackCurrentMediaTrack);
+              store.dispatch({
+                type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+                data: {
+                  mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+                  mediaPlaybackProgress: Math.max(0, nextProgress),
+                },
+              });
+            }
+            this.startMediaProgressReporting();
+          })
+          .catch(() => {
+            this.startMediaProgressReporting();
+          });
+        return;
+      }
       debug('reportMediaPlaybackProgress - no running media instance found, aborting...');
       return;
     }
@@ -1221,9 +1528,171 @@ class MediaPlayerService {
       this.syncPlaybackVolumeFromSelectedRenderer({
         fetchSnapshot: false,
       }).catch(() => undefined);
+      DlnaService.getSelectedRendererSnapshot()
+        .then((snapshot) => {
+          if (!DlnaService.isRemoteOutputRequested()) {
+            return;
+          }
+          const { mediaPlayer: currentMediaPlayer } = store.getState();
+          if (currentMediaPlayer.mediaPlaybackCurrentPlayingInstance !== mediaPlaybackCurrentPlayingInstance) {
+            return;
+          }
+          if (!snapshot) {
+            this.inferRemotePlaybackWhenSnapshotMissing(
+              mediaPlaybackCurrentMediaTrack,
+              Number(mediaPlaybackCurrentMediaProgress || 0),
+            );
+            this.startMediaProgressReporting();
+            return;
+          }
+          (mediaPlaybackCurrentPlayingInstance as any).adoptRemoteSnapshot?.(snapshot);
+          if (this.backsyncCurrentTrackFromSelectedRenderer()) {
+            this.startMediaProgressReporting();
+            return;
+          }
+          const transportState = String(snapshot?.transportState || '').toUpperCase();
+          const rendererProgress = Number(snapshot?.positionSeconds);
+          const now = Date.now();
+          const rendererTrackContextId = this.resolveRendererTrackContextId(
+            snapshot?.currentTrackUri,
+            mediaPlaybackCurrentMediaTrack,
+          );
+          if (transportState) {
+            this.lastRendererTransportState = transportState;
+          }
+          if (transportState === 'PLAYING') {
+            this.lastRendererPlayingDetectedAt = now;
+          }
+          const rendererBogusZero = transportState === 'PLAYING'
+            && Number.isFinite(rendererProgress)
+            && rendererProgress < 0.05
+            && this.lastRendererProgressSeconds > 8
+            && (now - this.lastRendererProgressAt) < 45000
+            && this.lastRendererProgressAt > 0
+            && (!rendererTrackContextId
+              || !this.lastRendererProgressTrackId
+              || rendererTrackContextId === this.lastRendererProgressTrackId);
+          if (Number.isFinite(rendererProgress) && !rendererBogusZero) {
+            this.lastRendererProgressSeconds = Math.max(0, rendererProgress);
+            this.lastRendererProgressAt = now;
+            this.lastRendererProgressTrackId = rendererTrackContextId || this.lastRendererProgressTrackId;
+          } else if (!Number.isFinite(rendererProgress) && transportState === 'PLAYING') {
+            const seededProgress = Math.max(0, Number(mediaPlaybackCurrentMediaProgress || 0));
+            if (this.lastRendererProgressAt <= 0 || this.lastRendererProgressSeconds <= 0) {
+              this.lastRendererProgressSeconds = seededProgress;
+              this.lastRendererProgressAt = now;
+              this.lastRendererProgressTrackId = rendererTrackContextId || this.lastRendererProgressTrackId;
+            }
+          }
+          let inferredProgress = mediaPlaybackCurrentMediaProgress;
+          if (Number.isFinite(rendererProgress) && !rendererBogusZero) {
+            inferredProgress = Math.max(0, rendererProgress);
+          } else if (
+            rendererBogusZero
+            || (!Number.isFinite(rendererProgress)
+              && (transportState || this.lastRendererTransportState) === 'PLAYING'
+              && this.lastRendererProgressAt > 0)
+          ) {
+            const elapsedSinceLastRendererProgress = Math.max(0, (now - this.lastRendererProgressAt) / 1000);
+            inferredProgress = Math.max(0, this.lastRendererProgressSeconds + elapsedSinceLastRendererProgress);
+          }
+          const trackDuration = Number(mediaPlaybackCurrentMediaTrack.track_duration || 0);
+          if (Number.isFinite(trackDuration) && trackDuration > 0) {
+            inferredProgress = Math.min(inferredProgress, trackDuration);
+          }
+          const nextProgress = (Number.isFinite(rendererProgress) && !rendererBogusZero)
+            ? Math.max(0, rendererProgress)
+            : inferredProgress;
+          const holdPlayingState = this.shouldHoldRemotePlayingState(transportState, snapshot?.currentTrackUri);
+          if (transportState === 'PLAYING') {
+            this.remoteAutoAdvanceAwaitUntil = 0;
+            this.lastRendererPlayingDetectedAt = now;
+            this.updateMediaPlaybackProgress(nextProgress);
+            this.syncSelectedRendererNextTrack({
+              currentTrack: mediaPlaybackCurrentMediaTrack,
+              currentProgress: nextProgress,
+            });
+          } else if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+              data: {
+                mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+                mediaPlaybackProgress: nextProgress,
+              },
+            });
+          } else if (transportState === 'STOPPED' || transportState === 'NO_MEDIA_PRESENT') {
+            if (holdPlayingState) {
+              this.updateMediaPlaybackProgress(nextProgress);
+              this.startMediaProgressReporting();
+              return;
+            }
+            this.lastRendererPlayingDetectedAt = 0;
+            this.remoteAutoAdvanceAwaitUntil = 0;
+            this.lastRendererProgressAt = now;
+            this.lastRendererProgressSeconds = Math.max(0, nextProgress);
+            this.lastRendererProgressTrackId = rendererTrackContextId || this.lastRendererProgressTrackId;
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+              data: {
+                mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+                mediaPlaybackProgress: Math.max(0, nextProgress),
+              },
+            });
+          } else if (transportState === 'TRANSITIONING') {
+            if (!mediaPlaybackCurrentMediaTrack) {
+              store.dispatch({
+                type: MediaEnums.MediaPlayerActions.LoadingTrack,
+              });
+            } else {
+              const remoteInstanceIsPlaying = !!(mediaPlaybackCurrentPlayingInstance as any).checkIfPlaying?.();
+              if (remoteInstanceIsPlaying) {
+                this.lastRendererPlayingDetectedAt = now;
+              }
+              this.updateMediaPlaybackProgress(nextProgress);
+            }
+          } else if (
+            this.lastRendererTransportState === 'PLAYING'
+            && (now - this.lastRendererPlayingDetectedAt) <= this.remotePlayingInferenceGraceMs
+          ) {
+            this.lastRendererPlayingDetectedAt = now;
+            this.updateMediaPlaybackProgress(nextProgress);
+          } else if (this.lastRendererTransportState === 'PAUSED_PLAYBACK' || this.lastRendererTransportState === 'PAUSED') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+              data: {
+                mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+                mediaPlaybackProgress: nextProgress,
+              },
+            });
+          } else {
+            this.updateMediaPlaybackProgress(nextProgress, true);
+          }
+          this.startMediaProgressReporting();
+        })
+        .catch(() => {
+          const now = Date.now();
+          if (this.lastRendererTransportState === 'PLAYING' || (now - this.lastRendererPlayingDetectedAt) <= this.remotePlayingInferenceGraceMs) {
+            const elapsedSinceLastRendererProgress = this.lastRendererProgressAt > 0
+              ? Math.max(0, (now - this.lastRendererProgressAt) / 1000)
+              : 0;
+            const inferredProgress = Math.max(0, this.lastRendererProgressSeconds + elapsedSinceLastRendererProgress);
+            this.updateMediaPlaybackProgress(inferredProgress);
+          } else if (this.lastRendererTransportState === 'PAUSED_PLAYBACK' || this.lastRendererTransportState === 'PAUSED') {
+            store.dispatch({
+              type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+              data: {
+                mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+                mediaPlaybackProgress: Math.max(0, this.lastRendererProgressSeconds),
+              },
+            });
+          }
+          this.startMediaProgressReporting();
+        });
+      return;
     }
 
     if (mediaPlaybackCurrentPlayingInstance.checkIfPlaying()) {
+      this.remoteAutoAdvanceAwaitUntil = 0;
       this.updateMediaPlaybackProgress(mediaPlaybackProgress);
       this.preloadNextTrackForGapless(mediaPlaybackCurrentMediaTrack, mediaPlaybackProgress);
       this.syncSelectedRendererNextTrack({
@@ -1242,6 +1711,24 @@ class MediaPlayerService {
       // re-request update
       this.startMediaProgressReporting();
     } else if (mediaPlaybackCurrentPlayingInstance.checkIfEnded()) {
+      if (DlnaService.isRemoteOutputRequested()) {
+        const now = Date.now();
+        if (this.remoteAutoAdvanceAwaitUntil <= 0) {
+          this.remoteAutoAdvanceAwaitUntil = now + 4500;
+          this.syncSelectedRendererNextTrack({
+            force: true,
+            currentTrack: mediaPlaybackCurrentMediaTrack,
+            currentProgress: mediaPlaybackProgress,
+          });
+          this.startMediaProgressReporting();
+          return;
+        }
+        if (now < this.remoteAutoAdvanceAwaitUntil) {
+          this.startMediaProgressReporting();
+          return;
+        }
+        this.remoteAutoAdvanceAwaitUntil = 0;
+      }
       debug('reportMediaPlaybackProgress - media playback ended, playing next...');
       this.incrementTrackPlayCount(mediaPlaybackCurrentMediaTrack);
       const mediaTrackNextInQueue = this.getNextFromList();
@@ -1259,8 +1746,11 @@ class MediaPlayerService {
           .then((snapshot) => {
             const transportState = String(snapshot?.transportState || '').toUpperCase();
             if (transportState === 'PAUSED_PLAYBACK'
-              || transportState === 'PAUSED'
-              || transportState === 'STOPPED'
+              || transportState === 'PAUSED') {
+              store.dispatch({
+                type: MediaEnums.MediaPlayerActions.PausePlayer,
+              });
+            } else if (transportState === 'STOPPED'
               || transportState === 'NO_MEDIA_PRESENT') {
               store.dispatch({
                 type: MediaEnums.MediaPlayerActions.PausePlayer,
@@ -1282,6 +1772,73 @@ class MediaPlayerService {
 
   // when seeking, we will preserve the playback state (example: playback might be paused but user still requests seek)
   // when not seeking, playback state will be forced to Playing
+  private inferRemotePlaybackWhenSnapshotMissing(mediaPlaybackCurrentMediaTrack: IMediaQueueTrack, mediaPlaybackCurrentMediaProgress: number) {
+    const now = Date.now();
+    const { mediaPlayer } = store.getState();
+    const storeProgress = Math.max(0, Number(mediaPlaybackCurrentMediaProgress || 0));
+    const trackDuration = Number(mediaPlaybackCurrentMediaTrack.track_duration || 0);
+    const withinPlayingGrace = (now - this.lastRendererPlayingDetectedAt) <= this.remotePlayingInferenceGraceMs;
+    const looksPlaying = mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing
+      || this.lastRendererTransportState === 'PLAYING'
+      || withinPlayingGrace;
+    if (looksPlaying && this.lastRendererTransportState !== 'PAUSED_PLAYBACK' && this.lastRendererTransportState !== 'PAUSED') {
+      let inferred = storeProgress;
+      if (this.lastRendererProgressAt > 0) {
+        const elapsedSinceLastRendererProgress = Math.max(0, (now - this.lastRendererProgressAt) / 1000);
+        inferred = Math.max(0, this.lastRendererProgressSeconds + elapsedSinceLastRendererProgress);
+      }
+      if (Number.isFinite(trackDuration) && trackDuration > 0) {
+        inferred = Math.min(inferred, trackDuration);
+      }
+      this.updateMediaPlaybackProgress(inferred);
+      return;
+    }
+    if (this.lastRendererTransportState === 'PAUSED_PLAYBACK' || this.lastRendererTransportState === 'PAUSED') {
+      store.dispatch({
+        type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+        data: {
+          mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+          mediaPlaybackProgress: Math.max(0, this.lastRendererProgressSeconds),
+        },
+      });
+    }
+  }
+
+  private extractTrackIdFromRendererTrackUri(trackUri?: string): string | undefined {
+    const normalizedTrackUri = String(trackUri || '').trim();
+    if (!normalizedTrackUri) {
+      return undefined;
+    }
+    const streamMatch = normalizedTrackUri.match(/\/stream\/([^/?#]+)/i);
+    return streamMatch?.[1] ? decodeURIComponent(streamMatch[1]) : undefined;
+  }
+
+  private resolveRendererTrackContextId(trackUri?: string, fallbackTrack?: IMediaQueueTrack): string {
+    const trackIdFromUri = this.extractTrackIdFromRendererTrackUri(trackUri);
+    if (trackIdFromUri) {
+      return trackIdFromUri;
+    }
+    return String(
+      DlnaService.getSelectedRendererCurrentTrackId()
+      || fallbackTrack?.id
+      || '',
+    ).trim();
+  }
+
+  private shouldHoldRemotePlayingState(transportState: string, trackUri?: string): boolean {
+    if (transportState !== 'STOPPED' && transportState !== 'NO_MEDIA_PRESENT') {
+      return false;
+    }
+    const now = Date.now();
+    const recentPlayback = this.lastRendererPlayingDetectedAt > 0
+      && (now - this.lastRendererPlayingDetectedAt) <= 8000;
+    if (!recentPlayback) {
+      return false;
+    }
+    return !!this.resolveRendererTrackContextId(trackUri)
+      || !!DlnaService.getSelectedRendererPendingNextTrackId();
+  }
+
   private updateMediaPlaybackProgress(mediaPlaybackProgress: number, seeking?: boolean): void {
     const {
       mediaPlayer,
@@ -1306,6 +1863,34 @@ class MediaPlayerService {
         mediaPlaybackState: nextPlaybackState,
         mediaPlaybackProgress,
       },
+    });
+    this.recordUiDiagnostic('progress_applied', {
+      playbackState: nextPlaybackState,
+      progress: mediaPlaybackProgress,
+      seeking: !!seeking,
+    });
+  }
+
+  private recordUiDiagnostic(event: string, details?: Record<string, any>) {
+    if (!DlnaService.isRemoteOutputRequested()) {
+      return;
+    }
+    const state = store.getState().mediaPlayer;
+    const snapshot = {
+      playbackState: state.mediaPlaybackState,
+      progress: state.mediaPlaybackCurrentMediaProgress,
+      trackId: state.mediaPlaybackCurrentMediaTrack?.id,
+      queueEntryId: state.mediaPlaybackCurrentMediaTrack?.queue_entry_id,
+      rendererState: this.lastRendererTransportState,
+    };
+    const dedupeKey = `${event}|${snapshot.playbackState}|${Math.floor(Number(snapshot.progress || 0))}|${snapshot.trackId || ''}|${snapshot.rendererState || ''}`;
+    if (event === 'progress_applied' && dedupeKey === this.lastUiDiagnosticsState) {
+      return;
+    }
+    this.lastUiDiagnosticsState = dedupeKey;
+    DlnaService.recordControllerDiagnostic(event, {
+      ...snapshot,
+      ...(details || {}),
     });
   }
 
@@ -1337,11 +1922,11 @@ class MediaPlayerService {
       mediaPlaybackCurrentMediaTrack,
       mediaPlaybackCurrentPlayingInstance,
     } = mediaPlayer;
-    if (!mediaPlaybackCurrentMediaTrack || !mediaPlaybackCurrentPlayingInstance) {
+    const rendererTrackId = String(DlnaService.getSelectedRendererCurrentTrackId() || '').trim();
+    if (!rendererTrackId) {
       return false;
     }
-    const rendererTrackId = String(DlnaService.getSelectedRendererCurrentTrackId() || '').trim();
-    if (!rendererTrackId || rendererTrackId === String(mediaPlaybackCurrentMediaTrack.id || '')) {
+    if (mediaPlaybackCurrentMediaTrack && rendererTrackId === String(mediaPlaybackCurrentMediaTrack.id || '')) {
       return false;
     }
     const targetTrack = _.find(
@@ -1353,15 +1938,18 @@ class MediaPlayerService {
     }
     debug('backsyncCurrentTrackFromSelectedRenderer - switching current track from renderer', {
       rendererTrackId,
-      previousTrackId: String(mediaPlaybackCurrentMediaTrack.id || ''),
+      previousTrackId: String(mediaPlaybackCurrentMediaTrack?.id || ''),
       queueEntryId: targetTrack.queue_entry_id,
     });
-    (mediaPlaybackCurrentPlayingInstance as any).deactivateRemotePolling?.();
+    (mediaPlaybackCurrentPlayingInstance as any)?.deactivateRemotePolling?.();
     const nextPlaybackInstance = this.createMediaPlayback(targetTrack, true) as any;
     DlnaService.getSelectedRendererSnapshot()
       .then((snapshot) => {
         nextPlaybackInstance.adoptRemoteSnapshot?.(snapshot);
         const snapshotProgress = Number(snapshot?.positionSeconds || 0);
+        this.lastRendererProgressTrackId = String(targetTrack.id || rendererTrackId || '').trim() || undefined;
+        this.lastRendererProgressSeconds = Number.isFinite(snapshotProgress) ? Math.max(0, snapshotProgress) : 0;
+        this.lastRendererProgressAt = Date.now();
         store.dispatch({
           type: MediaEnums.MediaPlayerActions.Play,
           data: {
@@ -1371,6 +1959,9 @@ class MediaPlayerService {
       })
       .catch(() => {
         nextPlaybackInstance.adoptRemoteSnapshot?.();
+        this.lastRendererProgressTrackId = String(targetTrack.id || rendererTrackId || '').trim() || undefined;
+        this.lastRendererProgressSeconds = 0;
+        this.lastRendererProgressAt = Date.now();
       });
     store.dispatch({
       type: MediaEnums.MediaPlayerActions.LoadTrack,
@@ -1387,6 +1978,8 @@ class MediaPlayerService {
     });
     this.lastDlnaNextTrackSyncAt = 0;
     this.lastDlnaNextTrackQueueEntryId = undefined;
+    this.lastDlnaQueueContextPublishAt = 0;
+    this.lastDlnaQueueContextPublishSignature = undefined;
     this.syncSelectedRendererNextTrack({
       force: true,
       currentTrack: targetTrack,
@@ -1570,6 +2163,12 @@ class MediaPlayerService {
     if (!previousState) {
       return;
     }
+    const remoteConnectionEstablished = previousState.outputMode !== 'remote'
+      && nextState.outputMode === 'remote'
+      && !!nextState.selectedRendererId;
+    if (remoteConnectionEstablished) {
+      this.startMediaProgressReporting();
+    }
     const remoteConnectionLost = previousState.outputMode === 'remote'
       && !!previousState.selectedRendererId
       && nextState.outputMode === 'local';
@@ -1577,6 +2176,8 @@ class MediaPlayerService {
       this.lastDlnaContextKey = undefined;
       this.lastDlnaNextTrackSyncAt = 0;
       this.lastDlnaNextTrackQueueEntryId = undefined;
+      this.lastDlnaQueueContextPublishAt = 0;
+      this.lastDlnaQueueContextPublishSignature = undefined;
       this.lockedDlnaContextTracklistId = undefined;
     }
     if (!remoteConnectionLost || this.outputSwitchInProgress) {
@@ -1586,9 +2187,178 @@ class MediaPlayerService {
     if (!mediaPlayer.mediaPlaybackCurrentPlayingInstance || !mediaPlayer.mediaPlaybackCurrentMediaTrack) {
       return;
     }
+    store.dispatch({
+      type: MediaEnums.MediaPlayerActions.PausePlayer,
+    });
     this.switchOutputDevice('local').catch((error) => {
       debug('handleDlnaStateChanged - failed switching output to local after disconnect - %o', error);
     });
+  }
+
+  private dlnaRendererIdsMatch(selectedId: string, snapshotId: string): boolean {
+    const norm = (id: string) => String(id || '').trim().toLowerCase().replace(/^uuid:/i, '');
+    const a = norm(selectedId);
+    const b = norm(snapshotId);
+    return Boolean(a && b && a === b);
+  }
+
+  private handleDlnaRendererSnapshot(snapshot: DlnaRendererEventSnapshot) {
+    if (!DlnaService.isRemoteOutputRequested()) {
+      return;
+    }
+    const selectedRendererId = String(DlnaService.getState().selectedRendererId || '');
+    if (!this.dlnaRendererIdsMatch(selectedRendererId, String(snapshot.rendererId || ''))) {
+      return;
+    }
+    const now = Date.now();
+    const transportState = String(snapshot.transportState || '').toUpperCase();
+    const positionSeconds = Number(snapshot.positionSeconds);
+    const { mediaPlayer } = store.getState();
+    const rendererTrackContextId = this.resolveRendererTrackContextId(
+      snapshot.currentTrackUri,
+      mediaPlayer.mediaPlaybackCurrentMediaTrack,
+    );
+    if (transportState) {
+      this.lastRendererTransportState = transportState;
+    }
+    if (transportState === 'PLAYING') {
+      this.lastRendererPlayingDetectedAt = now;
+    }
+    let progressFromSnapshot: number;
+    if (Number.isFinite(positionSeconds)) {
+      const bogusZero = transportState === 'PLAYING'
+        && positionSeconds < 0.05
+        && this.lastRendererProgressSeconds > 8
+        && (now - this.lastRendererProgressAt) < 45000
+        && this.lastRendererProgressAt > 0
+        && (!rendererTrackContextId
+          || !this.lastRendererProgressTrackId
+          || rendererTrackContextId === this.lastRendererProgressTrackId);
+      if (bogusZero) {
+        const elapsed = Math.max(0, (now - this.lastRendererProgressAt) / 1000);
+        progressFromSnapshot = Math.max(0, this.lastRendererProgressSeconds + elapsed);
+      } else {
+        this.lastRendererProgressSeconds = Math.max(0, positionSeconds);
+        this.lastRendererProgressAt = now;
+        this.lastRendererProgressTrackId = rendererTrackContextId || this.lastRendererProgressTrackId;
+        progressFromSnapshot = positionSeconds;
+      }
+    } else {
+      progressFromSnapshot = NaN;
+    }
+    const playingInstance = mediaPlayer.mediaPlaybackCurrentPlayingInstance as {
+      adoptRemoteSnapshot?: (s?: { transportState?: string; positionSeconds?: number }) => void;
+    } | undefined;
+    if (
+      playingInstance?.adoptRemoteSnapshot
+      && (snapshot.transportState || Number.isFinite(positionSeconds))
+    ) {
+      const adoptPayload: { transportState?: string; positionSeconds?: number } = {};
+      if (snapshot.transportState) {
+        adoptPayload.transportState = snapshot.transportState;
+      }
+      if (Number.isFinite(positionSeconds)) {
+        adoptPayload.positionSeconds = Math.max(0, progressFromSnapshot);
+      }
+      playingInstance.adoptRemoteSnapshot(adoptPayload);
+    }
+    const progress = Number.isFinite(positionSeconds)
+      ? Math.max(0, progressFromSnapshot)
+      : Math.max(0, Number(mediaPlayer.mediaPlaybackCurrentMediaProgress || 0));
+    const shouldAttemptTrackBacksync = !!String(snapshot.currentTrackUri || '').trim()
+      || transportState === 'PLAYING'
+      || transportState === 'PAUSED_PLAYBACK'
+      || transportState === 'PAUSED'
+      || transportState === 'TRANSITIONING';
+    if (transportState === 'PLAYING') {
+      store.dispatch({
+        type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+        data: {
+          mediaPlaybackState: MediaEnums.MediaPlaybackState.Playing,
+          mediaPlaybackProgress: progress,
+        },
+      });
+    } else if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
+      store.dispatch({
+        type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+        data: {
+          mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+          mediaPlaybackProgress: progress,
+        },
+      });
+    } else if (transportState === 'STOPPED' || transportState === 'NO_MEDIA_PRESENT') {
+      if (this.shouldHoldRemotePlayingState(transportState, snapshot.currentTrackUri)) {
+        store.dispatch({
+          type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+          data: {
+            mediaPlaybackState: MediaEnums.MediaPlaybackState.Playing,
+            mediaPlaybackProgress: Math.max(0, progress),
+          },
+        });
+        if (shouldAttemptTrackBacksync) {
+          this.backsyncCurrentTrackFromSelectedRenderer();
+        }
+        return;
+      }
+      store.dispatch({
+        type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+        data: {
+          mediaPlaybackState: MediaEnums.MediaPlaybackState.Paused,
+          mediaPlaybackProgress: Math.max(0, progress),
+        },
+      });
+    } else if (transportState === 'TRANSITIONING') {
+      store.dispatch({
+        type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+        data: {
+          mediaPlaybackState: mediaPlayer.mediaPlaybackCurrentMediaTrack
+            ? MediaEnums.MediaPlaybackState.Playing
+            : MediaEnums.MediaPlaybackState.Loading,
+          mediaPlaybackProgress: progress,
+        },
+      });
+    } else if (Number.isFinite(positionSeconds)) {
+      const pausedLike = transportState === 'PAUSED_PLAYBACK'
+        || transportState === 'PAUSED'
+        || transportState === 'STOPPED'
+        || transportState === 'NO_MEDIA_PRESENT';
+      store.dispatch({
+        type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
+        data: {
+          mediaPlaybackState: pausedLike
+            ? MediaEnums.MediaPlaybackState.Paused
+            : MediaEnums.MediaPlaybackState.Playing,
+          mediaPlaybackProgress: progress,
+        },
+      });
+    }
+    if (shouldAttemptTrackBacksync) {
+      this.backsyncCurrentTrackFromSelectedRenderer();
+    }
+    if (Number.isFinite(Number(snapshot.volumePercent))) {
+      const maxVolume = Math.max(1, Number(mediaPlayer.mediaPlaybackVolumeMaxLimit || 100));
+      const nextVolume = Math.round((Number(snapshot.volumePercent || 0) / 100) * maxVolume);
+      const clampedVolume = Math.max(0, Math.min(maxVolume, nextVolume));
+      if (clampedVolume !== mediaPlayer.mediaPlaybackVolumeCurrent) {
+        store.dispatch({
+          type: MediaEnums.MediaPlayerActions.UpdatePlaybackVolume,
+          data: {
+            mediaPlaybackVolume: clampedVolume,
+          },
+        });
+      }
+    }
+    if (typeof snapshot.muted === 'boolean') {
+      if (snapshot.muted && !mediaPlayer.mediaPlaybackVolumeMuted) {
+        store.dispatch({
+          type: MediaEnums.MediaPlayerActions.MutePlaybackVolume,
+        });
+      } else if (!snapshot.muted && mediaPlayer.mediaPlaybackVolumeMuted) {
+        store.dispatch({
+          type: MediaEnums.MediaPlayerActions.UnmutePlaybackVolume,
+        });
+      }
+    }
   }
 
   private getCurrentPlaybackProgressSafe(mediaPlayback: IMediaPlayback): number {
@@ -1747,7 +2517,17 @@ class MediaPlayerService {
         || _.find(contextQueueTracks, track => String(track.id) === String(currentTrack.id)))
       : undefined;
     const currentProgress = Number(options?.currentProgress || 0);
-    if (this.dlnaStrictContextModeEnabled && contextChanged && shouldPublishContextQueue && contextQueueTracks.length > 1) {
+    const queueContextSignature = `${contextKey}:${contextQueueTracks.length}:${String(currentTrackInContext?.id || currentTrack?.id || '')}`;
+    const queueContextPublishExpired = (now - this.lastDlnaQueueContextPublishAt) >= this.dlnaQueueContextPublishIntervalMs;
+    const shouldPublishFullQueue = this.dlnaStrictContextModeEnabled
+      && DlnaService.shouldUseSelectedRendererQueueContext()
+      && shouldPublishContextQueue
+      && contextQueueTracks.length > 1
+      && (contextChanged
+        || forceSync
+        || queueContextPublishExpired
+        || this.lastDlnaQueueContextPublishSignature !== queueContextSignature);
+    if (shouldPublishFullQueue) {
       this.lockedDlnaContextTracklistId = contextTracklistId;
       debug('syncSelectedRendererNextTrack - pushing queue context', {
         contextTracklistId,
@@ -1758,9 +2538,17 @@ class MediaPlayerService {
         contextQueueTracks,
         String(currentTrackInContext?.id || currentTrack?.id || ''),
         contextTracklistId || undefined,
-      ).catch((error) => {
-        debug('syncSelectedRendererNextTrack - failed to push queue context to renderer - %o', error);
-      });
+      )
+        .then((published) => {
+          if (!published) {
+            return;
+          }
+          this.lastDlnaQueueContextPublishAt = Date.now();
+          this.lastDlnaQueueContextPublishSignature = queueContextSignature;
+        })
+        .catch((error) => {
+          debug('syncSelectedRendererNextTrack - failed to push queue context to renderer - %o', error);
+        });
     }
     const nearTrackEnd = !!currentTrackInContext
       && Number.isFinite(Number(currentTrackInContext.track_duration))

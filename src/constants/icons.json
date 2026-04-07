@@ -23,6 +23,7 @@
   "NavigationBack": "fas fa-chevron-left",
   "NavigationForward": "fas fa-chevron-right",
   "PlaylistPlaceholder": "fas fa-music",
+  "PlaylistMostPlayed": "fas fa-trophy",
   "PlayerShuffle": "fas fa-random",
   "PlayerPrevious": "fas fa-step-backward",
   "PlayerPlay": "fas fa-play-circle",

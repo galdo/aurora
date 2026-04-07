@@ -56,6 +56,23 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   private pendingArtistSyncIds: Set<string> = new Set();
   private playlistCoversRefreshedThisSession = false;
   private playlistCoversRefreshPromise: Promise<void> | null = null;
+  private syncProfilingStats = {
+    directoryReadMs: 0,
+    queueDrainMs: 0,
+    relationFlushMs: 0,
+    finishSyncMs: 0,
+    reloadCollectionsMs: 0,
+    postProcessingMs: 0,
+    filesQueued: 0,
+    filesProcessed: 0,
+    filesFastSkipped: 0,
+    metadataReadMs: 0,
+    artistResolveMs: 0,
+    albumUpsertMs: 0,
+    trackUpsertMs: 0,
+    fastPathProbeMs: 0,
+    fastPathRegroupFallbacks: 0,
+  };
 
   onProviderRegistered(): void {
     debug('onProviderRegistered - received');
@@ -76,6 +93,54 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       .then(() => {
         debug('onProviderSettingsUpdated - sync completed');
       });
+  }
+
+  private resetSyncProfilingStats(): void {
+    this.syncProfilingStats = {
+      directoryReadMs: 0,
+      queueDrainMs: 0,
+      relationFlushMs: 0,
+      finishSyncMs: 0,
+      reloadCollectionsMs: 0,
+      postProcessingMs: 0,
+      filesQueued: 0,
+      filesProcessed: 0,
+      filesFastSkipped: 0,
+      metadataReadMs: 0,
+      artistResolveMs: 0,
+      albumUpsertMs: 0,
+      trackUpsertMs: 0,
+      fastPathProbeMs: 0,
+      fastPathRegroupFallbacks: 0,
+    };
+  }
+
+  private logSyncProfilingStats(syncDurationMs: number): void {
+    const stats = this.syncProfilingStats;
+    const fileProcessedCount = Math.max(1, stats.filesProcessed);
+    debug(
+      'syncMediaTracks - profiling summary - totalMs=%d, directoryReadMs=%d, queueDrainMs=%d, relationFlushMs=%d, finishSyncMs=%d, reloadCollectionsMs=%d, postProcessingMs=%d, '
+      + 'filesQueued=%d, filesProcessed=%d, filesFastSkipped=%d, fastPathProbeMs=%d, fastPathRegroupFallbacks=%d, metadataReadMs=%d, artistResolveMs=%d, albumUpsertMs=%d, '
+      + 'trackUpsertMs=%d, avgMetadataMs=%d, avgTrackUpsertMs=%d',
+      Math.round(syncDurationMs),
+      Math.round(stats.directoryReadMs),
+      Math.round(stats.queueDrainMs),
+      Math.round(stats.relationFlushMs),
+      Math.round(stats.finishSyncMs),
+      Math.round(stats.reloadCollectionsMs),
+      Math.round(stats.postProcessingMs),
+      stats.filesQueued,
+      stats.filesProcessed,
+      stats.filesFastSkipped,
+      Math.round(stats.fastPathProbeMs),
+      stats.fastPathRegroupFallbacks,
+      Math.round(stats.metadataReadMs),
+      Math.round(stats.artistResolveMs),
+      Math.round(stats.albumUpsertMs),
+      Math.round(stats.trackUpsertMs),
+      Math.round(stats.metadataReadMs / fileProcessedCount),
+      Math.round(stats.trackUpsertMs / fileProcessedCount),
+    );
   }
 
   async syncMediaTracks(options?: { forceRescan?: boolean, settings?: IMediaLocalSettings }) {
@@ -115,6 +180,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         })();
 
         try {
+          this.resetSyncProfilingStats();
           this.syncFilesQueuedCount = 0;
           this.syncFilesProcessedQueueCount = 0;
           this.pendingAlbumSyncIds.clear();
@@ -130,18 +196,24 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           await this.waitForQueueInputToStabilize(signal);
 
           debug('syncMediaTracks - waiting for queue to drain. Queued: %d, Processed: %d', this.syncFilesQueuedCount, this.syncFilesProcessedQueueCount);
+          const queueDrainStart = performance.now();
           await this.syncAddFileQueue.onIdle();
           await this.waitForQueueProcessingCompletion(signal);
+          this.syncProfilingStats.queueDrainMs += performance.now() - queueDrainStart;
 
           if (signal.aborted || this.syncAbortController !== abortController) {
             debug('syncMediaTracks - operation aborted');
             return;
           }
 
+          const relationFlushStart = performance.now();
           await this.flushPendingAlbumAndArtistSyncMarks(Date.now());
+          this.syncProfilingStats.relationFlushMs += performance.now() - relationFlushStart;
 
           const syncDuration = performance.now() - syncStart;
+          const finishSyncStart = performance.now();
           await MediaLibraryService.finishMediaTrackSync(MediaLocalConstants.Provider);
+          this.syncProfilingStats.finishSyncMs += performance.now() - finishSyncStart;
 
           mediaLocalStore.dispatch({
             type: MediaLocalStateActionType.FinishSync,
@@ -156,10 +228,13 @@ class MediaLocalLibraryService implements IMediaLibraryService {
               tracksAddedCount: syncFilesAddedCount,
             }));
           }
+          const reloadCollectionsStart = performance.now();
           MediaAlbumService.loadMediaAlbums();
           MediaArtistService.loadMediaArtists();
           MediaPlaylistService.loadMediaPlaylists();
+          this.syncProfilingStats.reloadCollectionsMs += performance.now() - reloadCollectionsStart;
           this.runSyncPostProcessing(settings, signal);
+          this.logSyncProfilingStats(syncDuration);
 
           debug(
             'syncMediaTracks - finished sync, took - %s, found - %d, processed - %d, added - %d',
@@ -294,6 +369,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     }
 
     this.syncPostProcessingPromise = (async () => {
+      const postProcessingStart = performance.now();
       if (signal.aborted) {
         return;
       }
@@ -328,6 +404,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       MediaAlbumService.loadMediaAlbums();
       MediaArtistService.loadMediaArtists();
       MediaPlaylistService.loadMediaPlaylists();
+      this.syncProfilingStats.postProcessingMs += performance.now() - postProcessingStart;
     })()
       .catch((error) => {
         console.error('sync post-processing failed');
@@ -343,6 +420,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
     return new Promise((resolve) => {
       const scanTimestamp = Date.now();
+      const readStart = performance.now();
       debug('addTracksFromDirectory - reading directory - %s, scan timestamp - %d', directory, scanTimestamp);
 
       IPCRenderer.stream(
@@ -383,6 +461,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         }, () => {
           // on done
           debug('addTracksFromDirectory - finished reading directory - %s', directory);
+          this.syncProfilingStats.directoryReadMs += performance.now() - readStart;
           resolve();
         },
         signal,
@@ -401,6 +480,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     files.forEach((file) => {
       debug('addTracksFromFiles - found file at - %s, queueing...', file.path);
       this.syncFilesQueuedCount += 1;
+      this.syncProfilingStats.filesQueued += 1;
 
       this.syncAddFileQueue
         .add(async () => {
@@ -426,6 +506,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
             });
           } finally {
             this.syncFilesProcessedQueueCount += 1;
+            this.syncProfilingStats.filesProcessed += 1;
           }
         })
         .catch((err) => {
@@ -444,6 +525,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
     // first check if we can simply mark it as seen; required both mtime and size for this to work
     if (!forceRescan && isNumber(file.stats?.mtime) && isNumber(file.stats?.size)) {
+      const fastPathProbeStart = performance.now();
       const mediaTrack = await MediaTrackService.updateMediaTrack({
         provider: MediaLocalConstants.Provider,
         provider_id: mediaTrackId,
@@ -453,6 +535,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       }, {
         sync_timestamp: scanTimestamp,
       });
+      this.syncProfilingStats.fastPathProbeMs += performance.now() - fastPathProbeStart;
 
       if (mediaTrack) {
         const mediaTrackExtra = (mediaTrack.extra || {}) as {
@@ -477,6 +560,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         if (!hasAudioDetails) {
           debug('addTrackFromFile - track %s missing audio detail fields, falling back to full scan', file.path);
         } else if (shouldForceRegroup) {
+          this.syncProfilingStats.fastPathRegroupFallbacks += 1;
           debug('addTrackFromFile - track %s requires regroup by source fingerprint, falling back to full scan', file.path);
         } else if (settings.library.group_compilations_by_folder) {
           const parentDir = path.dirname(file.path);
@@ -496,14 +580,17 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           const isGrouped = mediaTrack.track_album.album_name === folderName;
 
           if (!isGrouped) {
+            this.syncProfilingStats.fastPathRegroupFallbacks += 1;
             debug('addTrackFromFile - track %s needs grouping update, falling back to full scan', file.path);
           } else {
             this.markTrackRelationsAsSeen(mediaTrack);
+            this.syncProfilingStats.filesFastSkipped += 1;
             debug('addTrackFromFile - track at path %s already added %s, skipping...', file.path, mediaTrack.id);
             return mediaTrack;
           }
         } else {
           this.markTrackRelationsAsSeen(mediaTrack);
+          this.syncProfilingStats.filesFastSkipped += 1;
           debug('addTrackFromFile - track at path %s already added %s, skipping...', file.path, mediaTrack.id);
           return mediaTrack;
         }
@@ -511,7 +598,9 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     }
 
     // read metadata
+    const metadataReadStart = performance.now();
     const audioMetadata = await MediaLocalLibraryService.readAudioMetadataFromFile(file.path);
+    this.syncProfilingStats.metadataReadMs += performance.now() - metadataReadStart;
 
     let effectiveFolderForGrouping: string | undefined;
     if (settings.library.group_compilations_by_folder) {
@@ -575,6 +664,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       return [];
     })();
 
+    const artistResolveStart = performance.now();
     const mediaArtists = await MediaLibraryService.checkAndInsertMediaArtists(rawTrackArtists.length > 0
       ? rawTrackArtists.map(audioArtist => ({
         artist_name: audioArtist,
@@ -588,6 +678,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
         provider_id: MediaLocalLibraryService.getMediaId('unknown artist'),
         sync_timestamp: scanTimestamp,
       }]);
+    this.syncProfilingStats.artistResolveMs += performance.now() - artistResolveStart;
 
     const rawAlbumArtist = (() => {
       const albumartist = (audioMetadata.common as any)?.albumartist;
@@ -615,6 +706,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       mediaAlbumName,
     );
 
+    const albumUpsertStart = performance.now();
     const mediaAlbumData = await MediaLibraryService.checkAndInsertMediaAlbum({
       album_name: mediaAlbumName,
       album_artist_id: mediaAlbumArtist.id,
@@ -631,8 +723,10 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       },
       sync_timestamp: scanTimestamp,
     });
+    this.syncProfilingStats.albumUpsertMs += performance.now() - albumUpsertStart;
 
     // #3: add media track
+    const trackUpsertStart = performance.now();
     const {
       mediaTrack,
       isNew,
@@ -665,6 +759,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       },
       sync_timestamp: scanTimestamp,
     });
+    this.syncProfilingStats.trackUpsertMs += performance.now() - trackUpsertStart;
 
     // update stats only if track did not exist before this run
     if (isNew) {

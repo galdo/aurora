@@ -164,6 +164,223 @@ function Stage() {
     };
   }, []);
 
+  useEffect(() => {
+    let diagSequence = 0;
+    const diagEvents: Array<any> = [];
+    const maxDiagEvents = 1200;
+    const pushDiagEvent = (type: string, details?: Record<string, any>) => {
+      diagSequence += 1;
+      const entry = {
+        seq: diagSequence,
+        timestamp: new Date().toISOString(),
+        type,
+        details: details || {},
+      };
+      diagEvents.push(entry);
+      if (diagEvents.length > maxDiagEvents) {
+        diagEvents.splice(0, diagEvents.length - maxDiagEvents);
+      }
+    };
+    let lastStateHash = '';
+    const getStateSnapshot = () => {
+      const { mediaPlayer } = store.getState();
+      const dlnaState = DlnaService.getState();
+      return {
+        playbackState: mediaPlayer.mediaPlaybackState,
+        progress: mediaPlayer.mediaPlaybackCurrentMediaProgress,
+        trackId: mediaPlayer.mediaPlaybackCurrentMediaTrack?.id,
+        queueEntryId: mediaPlayer.mediaPlaybackCurrentMediaTrack?.queue_entry_id,
+        remoteOutputRequested: DlnaService.isRemoteOutputRequested(),
+        selectedRendererId: dlnaState.selectedRendererId,
+        rendererDevices: dlnaState.rendererDevices,
+      };
+    };
+    const emitStateIfChanged = (reason: string) => {
+      const snapshot = getStateSnapshot();
+      const hash = JSON.stringify(snapshot);
+      if (hash === lastStateHash) {
+        return;
+      }
+      lastStateHash = hash;
+      pushDiagEvent('ui_state', {
+        reason,
+        snapshot,
+      });
+    };
+    emitStateIfChanged('init');
+    const diagnosticsApi = {
+      run: async (action: string) => {
+        const normalizedAction = String(action || '').toLowerCase();
+        const mediaPlayerSnapshot = store.getState().mediaPlayer;
+        const hasCurrentTrack = !!mediaPlayerSnapshot.mediaPlaybackCurrentMediaTrack;
+        pushDiagEvent('ui_action_requested', {
+          action: normalizedAction,
+          hasCurrentTrack,
+        });
+        if (normalizedAction === 'remote_on') {
+          await DlnaService.refreshRendererDevices();
+          const dlnaState = DlnaService.getState();
+          const rendererDevices = dlnaState.rendererDevices || [];
+          const preferredRenderer = rendererDevices
+            .find(renderer => String(renderer.name || '').toLowerCase().includes('aurora pulse launcher'))
+            || rendererDevices.find(renderer => String(renderer.id || '') === String(dlnaState.selectedRendererId || ''))
+            || rendererDevices[0];
+          if (!preferredRenderer?.id) {
+            pushDiagEvent('ui_action_result', {
+              action: normalizedAction,
+              ok: false,
+              reason: 'renderer_not_found',
+            });
+            return {
+              ok: false,
+              reason: 'renderer_not_found',
+            };
+          }
+          await DlnaService.setOutputDevice(preferredRenderer.id);
+          emitStateIfChanged('remote_on');
+          pushDiagEvent('ui_action_result', {
+            action: normalizedAction,
+            ok: true,
+          });
+          return {
+            ok: true,
+          };
+        }
+        if (normalizedAction === 'remote_off') {
+          await DlnaService.setOutputDevice('local');
+          emitStateIfChanged('remote_off');
+          pushDiagEvent('ui_action_result', {
+            action: normalizedAction,
+            ok: true,
+          });
+          return {
+            ok: true,
+          };
+        }
+        if (normalizedAction === 'play') {
+          MediaPlayerService.resumeMediaPlayer();
+          emitStateIfChanged('play');
+          pushDiagEvent('ui_action_result', {
+            action: normalizedAction,
+            ok: true,
+            hadCurrentTrack: hasCurrentTrack,
+          });
+          return {
+            ok: true,
+            hadCurrentTrack: hasCurrentTrack,
+          };
+        }
+        if (normalizedAction === 'pause') {
+          MediaPlayerService.pauseMediaPlayer();
+          emitStateIfChanged('pause');
+          pushDiagEvent('ui_action_result', {
+            action: normalizedAction,
+            ok: true,
+            hadCurrentTrack: hasCurrentTrack,
+          });
+          return {
+            ok: true,
+            hadCurrentTrack: hasCurrentTrack,
+          };
+        }
+        if (normalizedAction === 'stop') {
+          MediaPlayerService.stopMediaPlayer();
+          emitStateIfChanged('stop');
+          pushDiagEvent('ui_action_result', {
+            action: normalizedAction,
+            ok: true,
+            hadCurrentTrack: hasCurrentTrack,
+          });
+          return {
+            ok: true,
+            hadCurrentTrack: hasCurrentTrack,
+          };
+        }
+        if (normalizedAction === 'next') {
+          MediaPlayerService.playNextTrack();
+          emitStateIfChanged('next');
+          pushDiagEvent('ui_action_result', {
+            action: normalizedAction,
+            ok: true,
+          });
+          return {
+            ok: true,
+          };
+        }
+        if (normalizedAction === 'previous') {
+          MediaPlayerService.playPreviousTrack(true);
+          emitStateIfChanged('previous');
+          pushDiagEvent('ui_action_result', {
+            action: normalizedAction,
+            ok: true,
+          });
+          return {
+            ok: true,
+          };
+        }
+        if (normalizedAction === 'play_pause') {
+          MediaPlayerService.toggleMediaPlayback();
+          emitStateIfChanged('play_pause');
+          pushDiagEvent('ui_action_result', {
+            action: normalizedAction,
+            ok: true,
+            hadCurrentTrack: hasCurrentTrack,
+          });
+          return {
+            ok: true,
+            hadCurrentTrack: hasCurrentTrack,
+          };
+        }
+        pushDiagEvent('ui_action_result', {
+          action: normalizedAction,
+          ok: false,
+          reason: 'unsupported_action',
+        });
+        return {
+          ok: false,
+          reason: 'unsupported_action',
+        };
+      },
+      state: () => getStateSnapshot(),
+      events: (sinceSeq?: number, limit?: number) => {
+        const normalizedSinceSeq = Number(sinceSeq || 0);
+        const normalizedLimit = Math.max(1, Math.min(2000, Number(limit || 500)));
+        const filtered = diagEvents.filter(entry => entry.seq > normalizedSinceSeq);
+        const sliced = filtered.slice(Math.max(0, filtered.length - normalizedLimit));
+        return {
+          latestSeq: diagSequence,
+          events: sliced,
+        };
+      },
+      clearEvents: () => {
+        diagEvents.splice(0, diagEvents.length);
+        return {
+          ok: true,
+        };
+      },
+    };
+    const unsubscribeStore = store.subscribe(() => {
+      emitStateIfChanged('store_update');
+    });
+    const unsubscribeDlna = DlnaService.subscribe((state) => {
+      pushDiagEvent('dlna_state', {
+        outputMode: state.outputMode,
+        selectedRendererId: state.selectedRendererId,
+        rendererCount: state.rendererDevices.length,
+      });
+      emitStateIfChanged('dlna_state');
+    });
+    const diagnosticsKey = 'auroraDiagBridge';
+    (window as any)[diagnosticsKey] = diagnosticsApi;
+    return () => {
+      unsubscribeStore();
+      unsubscribeDlna();
+      if ((window as any)[diagnosticsKey] === diagnosticsApi) {
+        delete (window as any)[diagnosticsKey];
+      }
+    };
+  }, []);
+
   return (
     <div className={cx('app-stage')}>
       <Sidebar/>

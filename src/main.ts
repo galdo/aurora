@@ -18,6 +18,8 @@ import 'regenerator-runtime/runtime';
 
 import path from 'path';
 import fs from 'fs';
+import http, { IncomingMessage, ServerResponse } from 'http';
+import { randomBytes } from 'crypto';
 import { execFile } from 'child_process';
 import * as electronUpdater from 'electron-updater';
 import electronLog from 'electron-log/main';
@@ -85,6 +87,18 @@ type AppUpdateState = {
   canInstall: boolean;
 };
 type AppThemeMode = 'light' | 'dark' | 'auto';
+type AppWindowState = {
+  hasLaunched?: boolean;
+  hasCustomizedWindowState?: boolean;
+  bounds?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  isMaximized?: boolean;
+  isFullScreen?: boolean;
+};
 
 type AppWhatsNewPayload = {
   version: string;
@@ -129,12 +143,16 @@ class App implements IAppMain {
   private logsDataDir = 'Logs';
   private logsMainFile = 'main.log';
   private logsRendererFile = 'renderer.log';
+  private diagnosticsControlServer?: http.Server;
+  private diagnosticsControlToken = '';
+  private diagnosticsControlPort = 0;
   private mediaHardwareShortcutRegistrationDisabled = false;
   private mediaHardwareShortcutWarningShown = false;
   private mediaHardwareShortcutLastAttemptAt = 0;
   private mediaHardwareShortcutsRegistered = false;
   private readonly updateSettingsFileName = 'update.settings.json';
   private readonly themeSettingsFileName = 'theme.settings.json';
+  private readonly windowStateFileName = 'window.settings.json';
   private readonly whatsNewFileName = 'update.whats-new.json';
   private readonly updateCheckTimeoutMs = 45000;
   private updateSettings: AppUpdateSettings = {
@@ -631,6 +649,71 @@ class App implements IAppMain {
     return this.getDataPath(this.themeSettingsFileName);
   }
 
+  private getWindowStatePath() {
+    return this.getDataPath(this.windowStateFileName);
+  }
+
+  private loadWindowState(): AppWindowState | undefined {
+    try {
+      const filePath = this.getWindowStatePath();
+      if (!fs.existsSync(filePath)) {
+        return undefined;
+      }
+      const payload = JSON.parse(fs.readFileSync(filePath, 'utf8')) as AppWindowState;
+      const hasCustomizedField = Object.prototype.hasOwnProperty.call(payload || {}, 'hasCustomizedWindowState');
+      let normalizedHasCustomizedWindowState = payload?.hasCustomizedWindowState === true;
+      if (!hasCustomizedField) {
+        normalizedHasCustomizedWindowState = payload?.hasLaunched === true
+          && (payload?.isMaximized === true || payload?.isFullScreen !== true);
+      }
+      const bounds = payload?.bounds;
+      const hasValidBounds = bounds
+        && Number.isFinite(bounds.width) && bounds.width >= this.windowMinWidth
+        && Number.isFinite(bounds.height) && bounds.height >= this.windowMinHeight
+        && Number.isFinite(bounds.x) && Number.isFinite(bounds.y);
+      const normalizedState: AppWindowState = {
+        hasLaunched: payload?.hasLaunched === true,
+        hasCustomizedWindowState: normalizedHasCustomizedWindowState,
+        isMaximized: payload?.isMaximized === true,
+        isFullScreen: payload?.isFullScreen === true,
+        bounds: hasValidBounds
+          ? {
+            x: Math.round(bounds.x),
+            y: Math.round(bounds.y),
+            width: Math.round(bounds.width),
+            height: Math.round(bounds.height),
+          }
+          : undefined,
+      };
+      if (!hasCustomizedField) {
+        this.saveWindowState(normalizedState);
+      }
+      return normalizedState;
+    } catch (_error) {
+      return undefined;
+    }
+  }
+
+  private saveWindowState(windowState: AppWindowState) {
+    const safeState: AppWindowState = {
+      hasLaunched: windowState.hasLaunched === true,
+      hasCustomizedWindowState: windowState.hasCustomizedWindowState === true,
+      isMaximized: windowState.isMaximized === true,
+      isFullScreen: windowState.isFullScreen === true,
+      bounds: windowState.bounds
+        ? {
+          x: Math.round(windowState.bounds.x),
+          y: Math.round(windowState.bounds.y),
+          width: Math.max(this.windowMinWidth, Math.round(windowState.bounds.width)),
+          height: Math.max(this.windowMinHeight, Math.round(windowState.bounds.height)),
+        }
+        : undefined,
+    };
+    const windowStatePath = this.getWindowStatePath();
+    fs.mkdirSync(path.dirname(windowStatePath), { recursive: true });
+    fs.writeFileSync(windowStatePath, JSON.stringify(safeState), 'utf8');
+  }
+
   private loadUpdateSettings() {
     try {
       const filePath = this.getUpdateSettingsPath();
@@ -1019,10 +1102,14 @@ class App implements IAppMain {
     splashWindow.loadURL(this.getSplashDataURL());
 
     const themeColors = this.getMainWindowThemeColors();
+    const savedWindowState = this.loadWindowState();
+    const savedBounds = savedWindowState?.bounds;
     const mainWindow = new BrowserWindow({
       show: false,
-      width: defaultWidth,
-      height: defaultHeight,
+      width: savedBounds?.width || defaultWidth,
+      height: savedBounds?.height || defaultHeight,
+      x: savedBounds?.x,
+      y: savedBounds?.y,
       minWidth: this.windowMinWidth,
       minHeight: this.windowMinHeight,
       icon: this.iconPath,
@@ -1047,6 +1134,40 @@ class App implements IAppMain {
     this.applyMainWindowTheme(mainWindow);
 
     this.registerRendererEvents();
+    this.startDiagnosticsControlServer();
+    let persistWindowStateTimeout: NodeJS.Timeout | undefined;
+    let hasCustomizedWindowState = savedWindowState?.hasCustomizedWindowState === true;
+    const persistWindowState = () => {
+      if (mainWindow.isDestroyed()) {
+        return;
+      }
+      const isFullScreen = mainWindow.isFullScreen();
+      const isMaximized = mainWindow.isMaximized();
+      if (!hasCustomizedWindowState && (isMaximized || !isFullScreen)) {
+        hasCustomizedWindowState = true;
+      }
+      const bounds = (isFullScreen || isMaximized) ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+      this.saveWindowState({
+        hasLaunched: true,
+        hasCustomizedWindowState,
+        bounds: {
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+        },
+        isMaximized,
+        isFullScreen,
+      });
+    };
+    const queuePersistWindowState = () => {
+      if (persistWindowStateTimeout) {
+        clearTimeout(persistWindowStateTimeout);
+      }
+      persistWindowStateTimeout = setTimeout(() => {
+        persistWindowState();
+      }, 220);
+    };
 
     let mainWindowShown = false;
     const showMainWindow = () => {
@@ -1058,8 +1179,13 @@ class App implements IAppMain {
       if (this.startMinimized) {
         mainWindow.minimize();
       } else {
-        if (!mainWindow.isFullScreen()) {
+        const shouldStartInFullScreen = savedWindowState?.hasLaunched !== true
+          || savedWindowState?.hasCustomizedWindowState !== true
+          || savedWindowState?.isFullScreen === true;
+        if (shouldStartInFullScreen && !mainWindow.isFullScreen()) {
           mainWindow.setFullScreen(true);
+        } else if (savedWindowState?.isMaximized === true) {
+          mainWindow.maximize();
         }
         mainWindow.show();
         mainWindow.focus();
@@ -1081,6 +1207,9 @@ class App implements IAppMain {
     const showFallbackTimeout = setTimeout(showMainWindow, 3500);
 
     mainWindow.on('closed', () => {
+      if (persistWindowStateTimeout) {
+        clearTimeout(persistWindowStateTimeout);
+      }
       clearTimeout(showFallbackTimeout);
       this.closeSplashWindow();
       this.mainWindow = undefined;
@@ -1095,6 +1224,7 @@ class App implements IAppMain {
     }
 
     mainWindow.on('close', (event) => {
+      persistWindowState();
       // let the app quit if requested by user
       // else simply hide the window, we let the app run in background
       if (this.isQuitting) {
@@ -1105,6 +1235,12 @@ class App implements IAppMain {
         mainWindow.hide();
       }
     });
+    mainWindow.on('resize', queuePersistWindowState);
+    mainWindow.on('move', queuePersistWindowState);
+    mainWindow.on('maximize', queuePersistWindowState);
+    mainWindow.on('unmaximize', queuePersistWindowState);
+    mainWindow.on('enter-full-screen', queuePersistWindowState);
+    mainWindow.on('leave-full-screen', queuePersistWindowState);
 
     // when a new browser window is requested
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1377,6 +1513,8 @@ class App implements IAppMain {
       this.isQuitting = true;
       this.sendMessageToRenderer(IPCRendererCommChannel.UIAppBeforeQuit);
       globalShortcut.unregisterAll();
+      this.diagnosticsControlServer?.close();
+      this.diagnosticsControlServer = undefined;
     });
 
     app.whenReady()
@@ -1468,6 +1606,171 @@ class App implements IAppMain {
       this.applyMainWindowTheme();
       return Promise.resolve(savedMode);
     });
+  }
+
+  private startDiagnosticsControlServer(): void {
+    if (this.diagnosticsControlServer) {
+      return;
+    }
+    this.diagnosticsControlToken = randomBytes(18).toString('hex');
+    this.diagnosticsControlServer = http.createServer((request, response) => {
+      this.handleDiagnosticsControlRequest(request, response).catch(() => undefined);
+    });
+    this.diagnosticsControlServer.listen(0, '127.0.0.1', () => {
+      const address = this.diagnosticsControlServer?.address();
+      if (!address || typeof address === 'string') {
+        return;
+      }
+      this.diagnosticsControlPort = address.port;
+      const payload = {
+        host: '127.0.0.1',
+        port: this.diagnosticsControlPort,
+        token: this.diagnosticsControlToken,
+        updatedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(
+        this.getLogsPath('diag-control.json'),
+        JSON.stringify(payload, null, 2),
+        { encoding: 'utf8' },
+      );
+    });
+  }
+
+  private async handleDiagnosticsControlRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const requestUrl = new URL(request.url || '/', 'http://127.0.0.1');
+    const method = String(request.method || 'GET').toUpperCase();
+    if (requestUrl.pathname === '/diag/health' && method === 'GET') {
+      this.writeJsonResponse(response, 200, {
+        ok: true,
+        port: this.diagnosticsControlPort,
+      });
+      return;
+    }
+    const providedToken = String(request.headers['x-aurora-token'] || '');
+    if (!providedToken || providedToken !== this.diagnosticsControlToken) {
+      this.writeJsonResponse(response, 401, {
+        ok: false,
+        message: 'unauthorized',
+      });
+      return;
+    }
+    if (requestUrl.pathname === '/diag/state' && method === 'GET') {
+      const state = await this.executeDiagnosticsScript('window.auroraDiagBridge?.state?.()');
+      this.writeJsonResponse(response, 200, {
+        ok: true,
+        state: state || null,
+      });
+      return;
+    }
+    if (requestUrl.pathname === '/diag/events' && method === 'GET') {
+      const sinceSeq = Number(requestUrl.searchParams.get('sinceSeq') || 0);
+      const limit = Number(requestUrl.searchParams.get('limit') || 500);
+      const events = await this.executeDiagnosticsScript(`window.auroraDiagBridge?.events?.(${Number.isFinite(sinceSeq) ? sinceSeq : 0}, ${Number.isFinite(limit) ? limit : 500})`);
+      this.writeJsonResponse(response, 200, {
+        ok: true,
+        latestSeq: Number(events?.latestSeq || 0),
+        events: Array.isArray(events?.events) ? events.events : [],
+      });
+      return;
+    }
+    if (requestUrl.pathname === '/diag/events/clear' && method === 'POST') {
+      const clearResult = await this.executeDiagnosticsScript('window.auroraDiagBridge?.clearEvents?.()');
+      this.writeJsonResponse(response, 200, {
+        ok: !!clearResult?.ok,
+      });
+      return;
+    }
+    if (requestUrl.pathname === '/diag/logs' && method === 'GET') {
+      const name = String(requestUrl.searchParams.get('name') || 'dlna').toLowerCase();
+      const lines = Number(requestUrl.searchParams.get('lines') || 200);
+      const maxLines = Number.isFinite(lines) ? Math.max(1, Math.min(5000, Math.floor(lines))) : 200;
+      const logs = this.readDiagnosticsLogTail(name, maxLines);
+      this.writeJsonResponse(response, 200, {
+        ok: true,
+        name,
+        lineCount: logs.length,
+        lines: logs,
+      });
+      return;
+    }
+    if (requestUrl.pathname === '/diag/action' && method === 'POST') {
+      const bodyText = await this.readDiagnosticsRequestBody(request);
+      let payload: any;
+      try {
+        payload = bodyText ? JSON.parse(bodyText) : {};
+      } catch (_error) {
+        this.writeJsonResponse(response, 400, {
+          ok: false,
+          message: 'invalid_json',
+        });
+        return;
+      }
+      const action = String(payload?.action || '').toLowerCase();
+      const supportedActions = new Set(['play', 'pause', 'stop', 'next', 'previous', 'play_pause', 'remote_on', 'remote_off']);
+      if (!supportedActions.has(action)) {
+        this.writeJsonResponse(response, 400, {
+          ok: false,
+          message: 'invalid_action',
+          action,
+        });
+        return;
+      }
+      const result = await this.executeDiagnosticsScript(`window.auroraDiagBridge?.run?.(${JSON.stringify(action)})`);
+      this.writeJsonResponse(response, 200, {
+        ok: true,
+        action,
+        result: result ?? null,
+      });
+      return;
+    }
+    this.writeJsonResponse(response, 404, {
+      ok: false,
+      message: 'not_found',
+    });
+  }
+
+  private readDiagnosticsRequestBody(request: IncomingMessage): Promise<string> {
+    return new Promise((resolve) => {
+      let body = '';
+      request.on('data', (chunk) => {
+        body += Buffer.from(chunk).toString('utf8');
+      });
+      request.on('end', () => {
+        resolve(body);
+      });
+      request.on('error', () => resolve(''));
+    });
+  }
+
+  private writeJsonResponse(response: ServerResponse, statusCode: number, payload: any): void {
+    response.statusCode = statusCode;
+    response.setHeader('Content-Type', 'application/json; charset=utf-8');
+    response.end(JSON.stringify(payload));
+  }
+
+  private async executeDiagnosticsScript(script: string): Promise<any> {
+    const window = this.mainWindow;
+    if (!window || window.isDestroyed()) {
+      return undefined;
+    }
+    return window.webContents.executeJavaScript(script, true);
+  }
+
+  private readDiagnosticsLogTail(name: string, maxLines: number): string[] {
+    const normalizedName = String(name || '').toLowerCase();
+    let logPath = this.getLogsPath('dlna.log');
+    if (normalizedName === 'renderer') {
+      logPath = this.getLogsPath(this.logsRendererFile);
+    } else if (normalizedName === 'main') {
+      logPath = this.getLogsPath(this.logsMainFile);
+    } else if (normalizedName.endsWith('.log')) {
+      logPath = this.getLogsPath(normalizedName);
+    }
+    if (!fs.existsSync(logPath)) {
+      return [];
+    }
+    const lines = fs.readFileSync(logPath, 'utf8').split(/\r?\n/);
+    return lines.slice(Math.max(0, lines.length - maxLines)).filter(Boolean);
   }
 
   private registerMediaHardwareShortcuts() {
