@@ -129,7 +129,12 @@ export function MediaPlayerInfo({ onShowAlbum }: { onShowAlbum: (albumId: string
             disableAlbumLink
             className={cx('media-player-track-info-container')}
             onContextMenu={handleContextMenu}
-            onTitleClick={() => onShowAlbum(currentMediaTrack.track_album.id)}
+            onTitleClick={() => {
+              const albumId = currentMediaTrack.track_album?.id;
+              if (albumId) {
+                onShowAlbum(albumId);
+              }
+            }}
           />
         ) : (
           <div className={cx('media-player-track-info-container')}>

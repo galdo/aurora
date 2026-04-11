@@ -223,6 +223,8 @@ export default merge(baseConfig, {
      */
     new webpack.EnvironmentPlugin({
       NODE_ENV: 'development',
+      // So `debug` / `process.env.DEBUG` work in the renderer (ADB DAP runs here, not in main).
+      DEBUG: process.env.DEBUG || '',
     }),
     new webpack.LoaderOptionsPlugin({
       debug: true,

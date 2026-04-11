@@ -111,9 +111,8 @@ export function SettingsPage() {
   const [dapTargetDirectory, setDapTargetDirectory] = React.useState('');
   const [dapAutoSyncEnabled, setDapAutoSyncEnabled] = React.useState(false);
   const [dapDeleteMissingOnDevice, setDapDeleteMissingOnDevice] = React.useState(true);
+  const [dapMirrorHostFolderLayout, setDapMirrorHostFolderLayout] = React.useState(true);
   const [dapTransport, setDapTransport] = React.useState<'filesystem' | 'adb'>('filesystem');
-  const [dapAdbUseEmbeddedFallback, setDapAdbUseEmbeddedFallback] = React.useState(true);
-  const [dapAdbDeviceSerial, setDapAdbDeviceSerial] = React.useState('');
   const [dapSyncProgress, setDapSyncProgress] = React.useState<IDapSyncProgressSnapshot>(MediaLibraryService.getDapSyncProgressSnapshot());
   const [dlnaState, setDlnaState] = React.useState<DlnaState>(DlnaService.getState());
   const [bitPerfectState, setBitPerfectState] = React.useState<BitPerfectState>(BitPerfectService.getState());
@@ -149,9 +148,8 @@ export function SettingsPage() {
     setDapTargetDirectory(settings.targetDirectory);
     setDapAutoSyncEnabled(settings.autoSyncEnabled);
     setDapDeleteMissingOnDevice(settings.deleteMissingOnDevice);
+    setDapMirrorHostFolderLayout(settings.mirrorHostFolderLayout);
     setDapTransport(settings.transport);
-    setDapAdbUseEmbeddedFallback(settings.adbUseEmbeddedFallback);
-    setDapAdbDeviceSerial(settings.adbDeviceSerial);
   }, []);
 
   React.useEffect(() => MediaLibraryService.subscribeDapSyncProgress((snapshot) => {
@@ -203,7 +201,13 @@ export function SettingsPage() {
     ];
     const uniqueLogoCandidates = Array.from(new Set(logoCandidates));
     uniqueLogoCandidates.forEach((candidatePath) => {
-      log.info('[SETTINGS_LOGO] path="%s" exists=%s', candidatePath, fs.existsSync(candidatePath));
+      const exists = fs.existsSync(candidatePath);
+      if (process.env.NODE_ENV === 'development') {
+        // Main only runs `electron-log` initialization in production — avoid noisy IPC warnings in dev.
+        console.info(`[SETTINGS_LOGO] path="${candidatePath}" exists=${exists}`);
+      } else {
+        log.info('[SETTINGS_LOGO] path="%s" exists=%s', candidatePath, exists);
+      }
     });
   }, []);
 
@@ -220,17 +224,15 @@ export function SettingsPage() {
     targetDirectory: string;
     autoSyncEnabled: boolean;
     deleteMissingOnDevice: boolean;
+    mirrorHostFolderLayout: boolean;
     transport: 'filesystem' | 'adb';
-    adbUseEmbeddedFallback: boolean;
-    adbDeviceSerial: string;
   }) => {
     MediaLibraryService.saveDapSyncSettings(nextSettings);
     setDapTargetDirectory(nextSettings.targetDirectory);
     setDapAutoSyncEnabled(nextSettings.autoSyncEnabled);
     setDapDeleteMissingOnDevice(nextSettings.deleteMissingOnDevice);
+    setDapMirrorHostFolderLayout(nextSettings.mirrorHostFolderLayout);
     setDapTransport(nextSettings.transport);
-    setDapAdbUseEmbeddedFallback(nextSettings.adbUseEmbeddedFallback);
-    setDapAdbDeviceSerial(nextSettings.adbDeviceSerial);
   };
 
   const dapProgressPercent = dapSyncProgress.totalItems > 0
@@ -265,7 +267,8 @@ export function SettingsPage() {
     error: I18nService.getString('label_settings_dap_status_error'),
   };
   const dapProgressStatusLabel = dapProgressStatusLabels[dapSyncProgress.phase] || I18nService.getString('label_settings_dap_status_idle');
-  const canStartDapSync = !dapSyncProgress.isRunning && !!String(dapTargetDirectory || '').trim();
+  const canStartDapSync = !dapSyncProgress.isRunning
+    && (dapTransport === 'adb' || !!String(dapTargetDirectory || '').trim());
   const handleManualDapSync = React.useCallback(() => {
     if (!canStartDapSync) {
       return;
@@ -274,8 +277,6 @@ export function SettingsPage() {
       targetDirectory: dapTargetDirectory,
       deleteMissingOnDevice: dapDeleteMissingOnDevice,
       transport: dapTransport,
-      adbUseEmbeddedFallback: dapAdbUseEmbeddedFallback,
-      adbDeviceSerial: dapAdbDeviceSerial,
     }).catch((error) => {
       console.error('Manual DAP sync failed');
       console.error(error);
@@ -285,8 +286,6 @@ export function SettingsPage() {
     dapTargetDirectory,
     dapDeleteMissingOnDevice,
     dapTransport,
-    dapAdbUseEmbeddedFallback,
-    dapAdbDeviceSerial,
   ]);
   const originalRepositoryLink = Links.ProjectOriginal || Links.Project;
   const forkFeatureItems = [
@@ -540,9 +539,9 @@ export function SettingsPage() {
             <div className={cx('settings-content')}>
               <div className={cx('settings-row')}>
                 <div>
-                  <div className={cx('settings-subheading')}>Transport</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_transport')}</div>
                   <div className={cx('settings-description')}>
-                    Choose local filesystem mount or ADB sync.
+                    {I18nService.getString('label_settings_dap_transport_desc')}
                   </div>
                 </div>
                 <div className={cx('theme-switch')}>
@@ -554,13 +553,12 @@ export function SettingsPage() {
                         targetDirectory: dapTargetDirectory,
                         autoSyncEnabled: dapAutoSyncEnabled,
                         deleteMissingOnDevice: dapDeleteMissingOnDevice,
+                        mirrorHostFolderLayout: dapMirrorHostFolderLayout,
                         transport: 'filesystem',
-                        adbUseEmbeddedFallback: dapAdbUseEmbeddedFallback,
-                        adbDeviceSerial: dapAdbDeviceSerial,
                       });
                     }}
                   >
-                    Filesystem
+                    {I18nService.getString('label_settings_dap_transport_filesystem')}
                   </button>
                   <button
                     type="button"
@@ -570,24 +568,23 @@ export function SettingsPage() {
                         targetDirectory: dapTargetDirectory,
                         autoSyncEnabled: dapAutoSyncEnabled,
                         deleteMissingOnDevice: dapDeleteMissingOnDevice,
+                        mirrorHostFolderLayout: dapMirrorHostFolderLayout,
                         transport: 'adb',
-                        adbUseEmbeddedFallback: dapAdbUseEmbeddedFallback,
-                        adbDeviceSerial: dapAdbDeviceSerial,
                       });
                     }}
                   >
-                    ADB
+                    {I18nService.getString('label_settings_dap_transport_adb')}
                   </button>
                 </div>
               </div>
-              <div className={cx('settings-row')}>
-                <div>
-                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_target_directory')}</div>
-                  <div className={cx('settings-description')}>
-                    {dapTargetDirectory || (dapTransport === 'adb' ? '/sdcard' : I18nService.getString('label_settings_dap_no_directory'))}
+              {dapTransport === 'filesystem' && (
+                <div className={cx('settings-row')}>
+                  <div>
+                    <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_target_directory')}</div>
+                    <div className={cx('settings-description')}>
+                      {dapTargetDirectory || I18nService.getString('label_settings_dap_no_directory')}
+                    </div>
                   </div>
-                </div>
-                {dapTransport === 'filesystem' ? (
                   <Button
                     variant={['secondary']}
                     onButtonSubmit={() => {
@@ -600,92 +597,22 @@ export function SettingsPage() {
                         targetDirectory: selectedDirectory,
                         autoSyncEnabled: dapAutoSyncEnabled,
                         deleteMissingOnDevice: dapDeleteMissingOnDevice,
-                        transport: dapTransport,
-                        adbUseEmbeddedFallback: dapAdbUseEmbeddedFallback,
-                        adbDeviceSerial: dapAdbDeviceSerial,
+                        mirrorHostFolderLayout: dapMirrorHostFolderLayout,
+                        transport: 'filesystem',
                       });
                     }}
                   >
                     {I18nService.getString('button_settings_dap_select_directory')}
                   </Button>
-                ) : (
-                  <div style={{ minWidth: '260px' }}>
-                    <input
-                      className="form-control"
-                      placeholder="/sdcard"
-                      value={dapTargetDirectory}
-                      onChange={(event) => {
-                        const nextTargetDirectory = String(event.target.value || '');
-                        setDapTargetDirectory(nextTargetDirectory);
-                        persistDapSettings({
-                          targetDirectory: nextTargetDirectory,
-                          autoSyncEnabled: dapAutoSyncEnabled,
-                          deleteMissingOnDevice: dapDeleteMissingOnDevice,
-                          transport: dapTransport,
-                          adbUseEmbeddedFallback: dapAdbUseEmbeddedFallback,
-                          adbDeviceSerial: dapAdbDeviceSerial,
-                        });
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-              {dapTransport === 'adb' && (
-                <div className={cx('settings-row')}>
-                  <div>
-                    <div className={cx('settings-subheading')}>ADB device serial (optional)</div>
-                    <div className={cx('settings-description')}>
-                      Leave empty for default connected device.
-                    </div>
-                  </div>
-                  <div style={{ minWidth: '260px' }}>
-                    <input
-                      className="form-control"
-                      placeholder="e.g. 192.168.1.10:5555"
-                      value={dapAdbDeviceSerial}
-                      onChange={(event) => {
-                        const nextSerial = String(event.target.value || '');
-                        setDapAdbDeviceSerial(nextSerial);
-                        persistDapSettings({
-                          targetDirectory: dapTargetDirectory,
-                          autoSyncEnabled: dapAutoSyncEnabled,
-                          deleteMissingOnDevice: dapDeleteMissingOnDevice,
-                          transport: dapTransport,
-                          adbUseEmbeddedFallback: dapAdbUseEmbeddedFallback,
-                          adbDeviceSerial: nextSerial,
-                        });
-                      }}
-                    />
-                  </div>
                 </div>
               )}
               {dapTransport === 'adb' && (
                 <div className={cx('settings-row')}>
                   <div>
-                    <div className={cx('settings-subheading')}>Embedded ADB fallback</div>
+                    <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_adb_paths_heading')}</div>
                     <div className={cx('settings-description')}>
-                      Use bundled ADB binary when available.
+                      {I18nService.getString('label_settings_dap_adb_paths_help')}
                     </div>
-                  </div>
-                  <div className={cx('theme-switch')}>
-                    <button
-                      type="button"
-                      className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: dapAdbUseEmbeddedFallback })}
-                      onClick={() => {
-                        persistDapSettings({
-                          targetDirectory: dapTargetDirectory,
-                          autoSyncEnabled: dapAutoSyncEnabled,
-                          deleteMissingOnDevice: dapDeleteMissingOnDevice,
-                          transport: dapTransport,
-                          adbUseEmbeddedFallback: !dapAdbUseEmbeddedFallback,
-                          adbDeviceSerial: dapAdbDeviceSerial,
-                        });
-                      }}
-                    >
-                      {dapAdbUseEmbeddedFallback
-                        ? I18nService.getString('label_toggle_on')
-                        : I18nService.getString('label_toggle_off')}
-                    </button>
                   </div>
                 </div>
               )}
@@ -693,7 +620,9 @@ export function SettingsPage() {
                 <div>
                   <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_auto_sync')}</div>
                   <div className={cx('settings-description')}>
-                    {I18nService.getString('label_settings_dap_auto_sync_desc')}
+                    {dapTransport === 'adb'
+                      ? I18nService.getString('label_settings_dap_auto_sync_desc_adb')
+                      : I18nService.getString('label_settings_dap_auto_sync_desc')}
                   </div>
                 </div>
                 <div className={cx('theme-switch')}>
@@ -705,9 +634,8 @@ export function SettingsPage() {
                         targetDirectory: dapTargetDirectory,
                         autoSyncEnabled: !dapAutoSyncEnabled,
                         deleteMissingOnDevice: dapDeleteMissingOnDevice,
+                        mirrorHostFolderLayout: dapMirrorHostFolderLayout,
                         transport: dapTransport,
-                        adbUseEmbeddedFallback: dapAdbUseEmbeddedFallback,
-                        adbDeviceSerial: dapAdbDeviceSerial,
                       });
                     }}
                   >
@@ -721,7 +649,9 @@ export function SettingsPage() {
                 <div>
                   <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_delete_missing')}</div>
                   <div className={cx('settings-description')}>
-                    {I18nService.getString('label_settings_dap_delete_missing_desc')}
+                    {dapTransport === 'adb'
+                      ? I18nService.getString('label_settings_dap_delete_missing_desc_adb')
+                      : I18nService.getString('label_settings_dap_delete_missing_desc')}
                   </div>
                 </div>
                 <div className={cx('theme-switch')}>
@@ -733,13 +663,39 @@ export function SettingsPage() {
                         targetDirectory: dapTargetDirectory,
                         autoSyncEnabled: dapAutoSyncEnabled,
                         deleteMissingOnDevice: !dapDeleteMissingOnDevice,
+                        mirrorHostFolderLayout: dapMirrorHostFolderLayout,
                         transport: dapTransport,
-                        adbUseEmbeddedFallback: dapAdbUseEmbeddedFallback,
-                        adbDeviceSerial: dapAdbDeviceSerial,
                       });
                     }}
                   >
                     {dapDeleteMissingOnDevice
+                      ? I18nService.getString('label_toggle_on')
+                      : I18nService.getString('label_toggle_off')}
+                  </button>
+                </div>
+              </div>
+              <div className={cx('settings-row')}>
+                <div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_mirror_host_layout')}</div>
+                  <div className={cx('settings-description')}>
+                    {I18nService.getString('label_settings_dap_mirror_host_layout_desc')}
+                  </div>
+                </div>
+                <div className={cx('theme-switch')}>
+                  <button
+                    type="button"
+                    className={cx('theme-switch-item', 'theme-switch-item-toggle', { active: dapMirrorHostFolderLayout })}
+                    onClick={() => {
+                      persistDapSettings({
+                        targetDirectory: dapTargetDirectory,
+                        autoSyncEnabled: dapAutoSyncEnabled,
+                        deleteMissingOnDevice: dapDeleteMissingOnDevice,
+                        mirrorHostFolderLayout: !dapMirrorHostFolderLayout,
+                        transport: dapTransport,
+                      });
+                    }}
+                  >
+                    {dapMirrorHostFolderLayout
                       ? I18nService.getString('label_toggle_on')
                       : I18nService.getString('label_toggle_off')}
                   </button>

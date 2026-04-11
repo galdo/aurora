@@ -324,10 +324,19 @@ export function MediaSession() {
         || mediaPlayer.mediaPlaybackState !== MediaEnums.MediaPlaybackState.Playing) {
         return;
       }
+      const duration = Number(mediaPlayer.mediaPlaybackCurrentMediaTrack.track_duration || 0);
+      if (!Number.isFinite(duration) || duration <= 0) {
+        return;
+      }
+      const positionRaw = Number(mediaPlayer.mediaPlaybackCurrentMediaProgress || 0);
+      const position = Math.min(
+        Math.max(0, Number.isFinite(positionRaw) ? positionRaw : 0),
+        duration,
+      );
       mediaSessionPlaybackState = {
-        duration: mediaPlayer.mediaPlaybackCurrentMediaTrack.track_duration,
+        duration,
         playbackRate: 1.0,
-        position: mediaPlayer.mediaPlaybackCurrentMediaProgress,
+        position,
       };
     }
 

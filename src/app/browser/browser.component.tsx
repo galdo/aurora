@@ -378,13 +378,14 @@ function BrowserHeader() {
             MediaLocalLibraryService.syncMediaTracks()
               .then(async () => {
                 const dapSettings = MediaLibraryService.getDapSyncSettings();
-                if (!dapSettings.targetDirectory) {
+                if (dapSettings.transport === 'filesystem' && !dapSettings.targetDirectory) {
                   return;
                 }
 
                 await MediaLibraryService.syncDapLibrary({
                   targetDirectory: dapSettings.targetDirectory,
                   deleteMissingOnDevice: dapSettings.deleteMissingOnDevice,
+                  transport: dapSettings.transport,
                 });
               })
               .catch((error) => {

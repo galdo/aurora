@@ -124,7 +124,9 @@ export class MediaLocalPlayback implements IMediaPlayback {
     }
     this.remotePlaybackStoppedSnapshots = 0;
     this.remotePlaybackPendingNextGraceUntil = 0;
-    this.remotePlaybackStartupGraceUntil = 0;
+    if (transportState === 'STOPPED' || transportState === 'NO_MEDIA_PRESENT') {
+      this.remotePlaybackStartupGraceUntil = 0;
+    }
     let positionChanged = false;
     if (Number.isFinite(Number(rawPosition))) {
       positionChanged = Math.abs(Math.max(0, Number(rawPosition)) - prevProgress) > 0.04;

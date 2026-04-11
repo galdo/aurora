@@ -1133,6 +1133,15 @@ class App implements IAppMain {
     this.mainWindow = mainWindow;
     this.applyMainWindowTheme(mainWindow);
 
+    if (this.debug) {
+      mainWindow.webContents.on('console-message', (_event, _level, message) => {
+        const text = typeof message === 'string' ? message : String(message ?? '');
+        if (text.includes('[dap-adb]')) {
+          console.log(text);
+        }
+      });
+    }
+
     this.registerRendererEvents();
     this.startDiagnosticsControlServer();
     let persistWindowStateTimeout: NodeJS.Timeout | undefined;

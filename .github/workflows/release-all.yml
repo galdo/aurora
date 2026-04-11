@@ -285,29 +285,31 @@ jobs:
           name: Release ${{ needs.meta.outputs.tag }}
           prerelease: ${{ needs.meta.outputs.prerelease }}
           body: |
-            ## AuroraPulse 1.5.1-beta.3
+            ## Aurora Pulse 1.5.1
 
-            ### Scope
-            - This prerelease includes all functional changes from **1.5.1-beta.2** plus the DLNA and remote playback fixes delivered in **1.5.1-beta.3**.
-            - Baseline comparison: **1.5.0 -> 1.5.1-beta.3**.
+            Stable release. Functional changes since **1.5.0** focus on **DAP sync over ADB**, **DLNA / remote playback**, and **player stability**.
 
-            ### DLNA & Remote Playback (beta.3)
-            - Added explicit **DLNA Support for Aurora Pulse Launcher (Android Launcher)** with queue-context gating so launcher-specific commands are only used where supported.
-            - Fixed manual next/previous behavior from the UI on standard DLNA renderers by falling back to Aurora queue-driven switching when renderer-native `Next`/`Previous` is not reliable.
-            - Improved automatic transition handling for `current -> next -> overnext` by promoting pending next-track context when renderers do not report a fresh track URI fast enough.
-            - Stabilized Play/Pause state and progress-time visualization during short `STOPPED`/`TRANSITIONING` windows between tracks.
-            - Hardened renderer snapshot/event reconciliation to reduce false `00:00` resets and reduce state flicker during transitions.
+            ### DAP sync (ADB and library)
+            - **ADB transport** for USB-connected Android players: push `Music/` and `Podcasts/` without mounting the device as a disk; automatic **storage discovery** (external/SD-first when writable).
+            - **Robust remote paths**: shell-safe quoting so folders and files with **spaces, parentheses, and similar characters** copy and verify correctly.
+            - **“Mirror PC/Mac folder layout”** (Settings): when enabled, tracks sync under `Music/` using the same relative paths as your configured local library folders; when disabled, Aurora uses tag-based Artist/Album layout.
+            - **Cleaning / “remove missing on device”** streams the remote file list instead of loading the entire tree into memory—fixes sync **stuck near 100%** on large libraries and reduces **renderer memory pressure**.
+            - Clearer **planning → copying → cleaning** progress, resumable checkpoints, and improved behavior on cancel or disconnect.
+            - Verbose per-file transfer logging removed from normal builds (optional developer diagnostics via `DEBUG` namespaces).
 
-            ### DAP Sync & Library Stability (beta.2)
-            - Reworked DAP planning progress so UI status remains meaningful during large sync sessions.
-            - Reduced heavy sync contention via controlled parallelism and throttled persistence updates.
-            - Improved cancellation and restart behavior for interrupted sync, verification, and device-removal scenarios.
-            - Improved startup/player surface stability and dashboard toplist behavior.
+            ### DLNA and remote playback
+            - Further **queue and transition** handling for DLNA renderers and **Aurora Pulse Launcher** contexts (gating launcher-specific commands where supported).
+            - More reliable **next/previous** from the app when the renderer’s native transport is inconsistent; improved handling of short **STOPPED / TRANSITIONING** gaps between tracks.
+            - **Renderer state reconciliation** tuned to reduce false timeline resets and UI flicker.
+            - DLNA internals split into **focused modules** under `src/services/dlna/`; subscribe recovery covered by unit tests.
 
-            ### Installation Notes
-            - **macOS:** Open the DMG, move AuroraPulse to Applications, then launch from Applications. If Gatekeeper blocks first launch, right-click AuroraPulse.app and choose Open.
-            - **Windows:** Download the `.exe` installer and run it. If SmartScreen appears, choose More info > Run anyway.
-            - **Linux (Flatpak):** Install the provided `.flatpak` package using your Flatpak manager or `flatpak install`.
+            ### Player and UI
+            - **Media player** and **media session** refinements; **Settings** copy and status strings for DAP (including new options above), with updated translations.
+
+            ### Installation
+            - **macOS:** Open the DMG, drag **Aurora Pulse** into Applications. If Gatekeeper blocks the first launch, right-click the app → **Open**.
+            - **Windows:** Run the `.exe` installer. If SmartScreen appears, use **More info** → **Run anyway**.
+            - **Linux (Flatpak):** Install the `.flatpak` with your Flatpak UI or `flatpak install`.
           files: |
             release/macos-arm64/*.dmg
             release/macos-arm64/*.zip

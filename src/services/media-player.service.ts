@@ -36,10 +36,13 @@ class MediaPlayerService {
   private preloadedQueueEntryId?: string;
   private dlnaLastState?: DlnaState;
   private outputSwitchInProgress = false;
-  private dlnaNextTrackSyncIntervalMs = 1200;
   private dlnaQueueContextPublishIntervalMs = 4000;
   private lastDlnaNextTrackSyncAt = 0;
   private lastDlnaNextTrackQueueEntryId?: string;
+  /** Dedupe SetNext: pair of (current queue entry, next queue entry). Next-only dedupe missed track 3 when "current" lagged renderer. */
+  private lastDlnaNextSyncPairKey = '';
+  /** Same pair near track end: limit SetNext repeats (progress ticks used to bypass dedupe and flooded the renderer). */
+  private readonly dlnaNearEndSetNextMinIntervalMs = 4000;
   private lastDlnaQueueContextPublishAt = 0;
   private lastDlnaQueueContextPublishSignature?: string;
   private dlnaStrictContextModeEnabled = true;
@@ -51,9 +54,17 @@ class MediaPlayerService {
   private lastRendererProgressAt = 0;
   private lastRendererProgressTrackId?: string;
   private lastRendererPlayingDetectedAt = 0;
+  private lastTrackChangeInitiatedAt = 0;
+  private readonly trackChangeBacksyncSuppressMs = 8000;
+  private remoteZeroPositionPlayingSince = 0;
   /** When SOAP snapshots fail, keep UI time advancing if we recently saw PLAYING from renderer/events. */
-  private readonly remotePlayingInferenceGraceMs = 120000;
+  private readonly remotePlayingInferenceGraceMs = 600000;
   private lastUiDiagnosticsState = '';
+  private lastRemoteProgressDiagLogAt = 0;
+  private lastRemoteUiPausedFromSoapLogAt = 0;
+  /** Monotonic clock when SOAP/effective state last became TRANSITIONING (watchdog for stuck gapless). */
+  private remoteTransitioningSinceMs = 0;
+  private lastStuckTransitioningPlayNudgeAt = 0;
 
   constructor() {
     DlnaService.initialize();
@@ -70,6 +81,12 @@ class MediaPlayerService {
       this.handleDlnaRendererSnapshot(snapshot);
     });
     if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener(DlnaService.rendererTrackAdvancedEventName, () => {
+        if (!DlnaService.isRemoteOutputRequested()) {
+          return;
+        }
+        this.syncSelectedRendererNextTrack({ force: true });
+      });
       window.addEventListener('beforeunload', () => {
         if (!DlnaService.isRemoteOutputRequested()) {
           return;
@@ -265,6 +282,11 @@ class MediaPlayerService {
     // pause current playing instance
     if (!DlnaService.isRemoteOutputRequested()) {
       this.pauseMediaPlayer();
+    } else {
+      this.lastTrackChangeInitiatedAt = Date.now();
+      this.lastRendererProgressSeconds = 0;
+      this.lastRendererProgressAt = 0;
+      this.remoteZeroPositionPlayingSince = 0;
     }
 
     // load up and play found track from queue
@@ -606,6 +628,9 @@ class MediaPlayerService {
     } = mediaPlayer;
 
     if (DlnaService.isRemoteOutputRequested()) {
+      this.lastRendererProgressSeconds = 0;
+      this.lastRendererProgressAt = 0;
+      this.remoteZeroPositionPlayingSince = 0;
       // Optimistic UI feedback; remote snapshot will confirm or correct shortly after.
       store.dispatch({
         type: MediaEnums.MediaPlayerActions.Play,
@@ -707,6 +732,12 @@ class MediaPlayerService {
     }
   }
 
+  /**
+   * Switches DLNA output (local ↔ renderer). Uses `await` between steps so operations stay ordered:
+   * stop local playback → apply new output (`setOutputDevice` may await `startServer`/SOAP stop) →
+   * optionally start playback on the new sink. Call sites use `.catch()` so the click handler returns
+   * immediately; these awaits only serialize work inside this async function, not the UI thread’s sync stack.
+   */
   async switchOutputDevice(outputDeviceId: string): Promise<void> {
     if (this.outputSwitchInProgress) {
       return;
@@ -1042,6 +1073,10 @@ class MediaPlayerService {
 
     if (DlnaService.isRemoteOutputRequested()) {
       debug('ui_previous_requested remote=true force=%s progress=%s', !!force, mediaPlaybackCurrentMediaProgress);
+      this.lastTrackChangeInitiatedAt = Date.now();
+      this.lastRendererProgressSeconds = 0;
+      this.lastRendererProgressAt = 0;
+      this.remoteZeroPositionPlayingSince = 0;
       this.recordUiDiagnostic('previous_requested', {
         force: !!force,
         progress: mediaPlaybackCurrentMediaProgress,
@@ -1084,6 +1119,10 @@ class MediaPlayerService {
       remote: DlnaService.isRemoteOutputRequested(),
     });
     if (DlnaService.isRemoteOutputRequested()) {
+      this.lastTrackChangeInitiatedAt = Date.now();
+      this.lastRendererProgressSeconds = 0;
+      this.lastRendererProgressAt = 0;
+      this.remoteZeroPositionPlayingSince = 0;
       this.removeTrackRepeat();
       if (!DlnaService.shouldUseSelectedRendererQueueContext()) {
         this.playNext();
@@ -1462,14 +1501,20 @@ class MediaPlayerService {
         }
         DlnaService.getSelectedRendererSnapshot()
           .then((snapshot) => {
-            const transportState = String(snapshot?.transportState || '').toUpperCase();
+            if (!snapshot) {
+              this.startMediaProgressReporting();
+              return;
+            }
+            const controlSnapshot = DlnaService.applyRecentGenaOverrideToSoapSnapshot(snapshot);
+            const transportState = String(controlSnapshot.transportState || '').toUpperCase();
             const now = Date.now();
-            const rendererProgress = Number(snapshot?.positionSeconds);
+            const rendererProgress = Number(controlSnapshot.positionSeconds);
             if (transportState) {
               this.lastRendererTransportState = transportState;
             }
             if (transportState === 'PLAYING') {
               this.lastRendererPlayingDetectedAt = now;
+              this.lastTrackChangeInitiatedAt = 0;
             }
             const nextProgress = Number.isFinite(rendererProgress)
               ? Math.max(0, rendererProgress)
@@ -1477,7 +1522,7 @@ class MediaPlayerService {
             if (transportState === 'PLAYING') {
               this.lastRendererProgressSeconds = nextProgress;
               this.lastRendererProgressAt = now;
-              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(snapshot?.currentTrackUri, mediaPlaybackCurrentMediaTrack);
+              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(controlSnapshot.currentTrackUri, mediaPlaybackCurrentMediaTrack);
               store.dispatch({
                 type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
                 data: {
@@ -1488,7 +1533,7 @@ class MediaPlayerService {
             } else if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
               this.lastRendererProgressSeconds = nextProgress;
               this.lastRendererProgressAt = now;
-              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(snapshot?.currentTrackUri, mediaPlaybackCurrentMediaTrack);
+              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(controlSnapshot.currentTrackUri, mediaPlaybackCurrentMediaTrack);
               store.dispatch({
                 type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
                 data: {
@@ -1499,7 +1544,7 @@ class MediaPlayerService {
             } else if (transportState === 'STOPPED' || transportState === 'NO_MEDIA_PRESENT') {
               this.lastRendererProgressSeconds = Math.max(0, nextProgress);
               this.lastRendererProgressAt = now;
-              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(snapshot?.currentTrackUri, mediaPlaybackCurrentMediaTrack);
+              this.lastRendererProgressTrackId = this.resolveRendererTrackContextId(controlSnapshot.currentTrackUri, mediaPlaybackCurrentMediaTrack);
               store.dispatch({
                 type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
                 data: {
@@ -1545,38 +1590,58 @@ class MediaPlayerService {
             this.startMediaProgressReporting();
             return;
           }
-          (mediaPlaybackCurrentPlayingInstance as any).adoptRemoteSnapshot?.(snapshot);
+          const soapSnapshot = snapshot;
+          const controlSnapshot = DlnaService.applyRecentGenaOverrideToSoapSnapshot(soapSnapshot);
+          const soapTransportForDiag = String(soapSnapshot.transportState || '').toUpperCase();
+          (mediaPlaybackCurrentPlayingInstance as any).adoptRemoteSnapshot?.(controlSnapshot);
           if (this.backsyncCurrentTrackFromSelectedRenderer()) {
             this.startMediaProgressReporting();
             return;
           }
-          const transportState = String(snapshot?.transportState || '').toUpperCase();
-          const rendererProgress = Number(snapshot?.positionSeconds);
+          const transportState = String(controlSnapshot.transportState || '').toUpperCase();
+          const rendererProgress = Number(controlSnapshot.positionSeconds);
           const now = Date.now();
           const rendererTrackContextId = this.resolveRendererTrackContextId(
-            snapshot?.currentTrackUri,
+            controlSnapshot.currentTrackUri,
             mediaPlaybackCurrentMediaTrack,
           );
           if (transportState) {
             this.lastRendererTransportState = transportState;
           }
+          if (transportState === 'TRANSITIONING') {
+            if (this.remoteTransitioningSinceMs <= 0) {
+              this.remoteTransitioningSinceMs = now;
+            }
+          } else {
+            this.remoteTransitioningSinceMs = 0;
+          }
           if (transportState === 'PLAYING') {
             this.lastRendererPlayingDetectedAt = now;
           }
-          const rendererBogusZero = transportState === 'PLAYING'
+          const remoteTransportActive = transportState === 'PLAYING' || transportState === 'TRANSITIONING';
+          const rendererBogusZero = remoteTransportActive
             && Number.isFinite(rendererProgress)
             && rendererProgress < 0.05
-            && this.lastRendererProgressSeconds > 8
+            && this.lastRendererProgressSeconds > 1
             && (now - this.lastRendererProgressAt) < 45000
             && this.lastRendererProgressAt > 0
             && (!rendererTrackContextId
               || !this.lastRendererProgressTrackId
               || rendererTrackContextId === this.lastRendererProgressTrackId);
-          if (Number.isFinite(rendererProgress) && !rendererBogusZero) {
+          const untrustedSoapZero = Number.isFinite(rendererProgress)
+            && rendererProgress < 0.05
+            && remoteTransportActive
+            && !rendererBogusZero;
+          if (untrustedSoapZero && remoteTransportActive && this.lastRendererProgressAt <= 0) {
+            this.lastRendererProgressAt = now;
+            this.lastRendererProgressSeconds = Math.max(0, Number(mediaPlaybackCurrentMediaProgress || 0));
+            this.lastRendererProgressTrackId = rendererTrackContextId || this.lastRendererProgressTrackId;
+          }
+          if (Number.isFinite(rendererProgress) && !rendererBogusZero && !untrustedSoapZero) {
             this.lastRendererProgressSeconds = Math.max(0, rendererProgress);
             this.lastRendererProgressAt = now;
             this.lastRendererProgressTrackId = rendererTrackContextId || this.lastRendererProgressTrackId;
-          } else if (!Number.isFinite(rendererProgress) && transportState === 'PLAYING') {
+          } else if (!Number.isFinite(rendererProgress) && (transportState === 'PLAYING' || transportState === 'TRANSITIONING')) {
             const seededProgress = Math.max(0, Number(mediaPlaybackCurrentMediaProgress || 0));
             if (this.lastRendererProgressAt <= 0 || this.lastRendererProgressSeconds <= 0) {
               this.lastRendererProgressSeconds = seededProgress;
@@ -1585,12 +1650,16 @@ class MediaPlayerService {
             }
           }
           let inferredProgress = mediaPlaybackCurrentMediaProgress;
-          if (Number.isFinite(rendererProgress) && !rendererBogusZero) {
+          if (Number.isFinite(rendererProgress) && !rendererBogusZero && !untrustedSoapZero) {
             inferredProgress = Math.max(0, rendererProgress);
           } else if (
             rendererBogusZero
+            || untrustedSoapZero
             || (!Number.isFinite(rendererProgress)
-              && (transportState || this.lastRendererTransportState) === 'PLAYING'
+              && (
+                (transportState || this.lastRendererTransportState) === 'PLAYING'
+                || (transportState || this.lastRendererTransportState) === 'TRANSITIONING'
+              )
               && this.lastRendererProgressAt > 0)
           ) {
             const elapsedSinceLastRendererProgress = Math.max(0, (now - this.lastRendererProgressAt) / 1000);
@@ -1600,19 +1669,82 @@ class MediaPlayerService {
           if (Number.isFinite(trackDuration) && trackDuration > 0) {
             inferredProgress = Math.min(inferredProgress, trackDuration);
           }
-          const nextProgress = (Number.isFinite(rendererProgress) && !rendererBogusZero)
+          let nextProgress = (Number.isFinite(rendererProgress) && !rendererBogusZero && !untrustedSoapZero)
             ? Math.max(0, rendererProgress)
             : inferredProgress;
-          const holdPlayingState = this.shouldHoldRemotePlayingState(transportState, snapshot?.currentTrackUri);
+          if (remoteTransportActive && Number.isFinite(rendererProgress) && rendererProgress < 0.5 && !rendererBogusZero) {
+            if (this.remoteZeroPositionPlayingSince <= 0) {
+              this.remoteZeroPositionPlayingSince = now;
+            }
+            const zeroPosElapsedMs = now - this.remoteZeroPositionPlayingSince;
+            if (zeroPosElapsedMs > 3000) {
+              nextProgress = Math.max(0, zeroPosElapsedMs / 1000);
+              if (trackDuration > 0) {
+                nextProgress = Math.min(nextProgress, trackDuration);
+              }
+              this.lastRendererProgressSeconds = nextProgress;
+              this.lastRendererProgressAt = now;
+            }
+          } else if (rendererBogusZero) {
+            this.remoteZeroPositionPlayingSince = 0;
+          } else if (rendererProgress >= 0.5
+            || !remoteTransportActive) {
+            this.remoteZeroPositionPlayingSince = 0;
+          }
+          if (transportState === 'PLAYING'
+            || transportState === 'TRANSITIONING'
+            || remoteTransportActive) {
+            const modelProgress = this.getCurrentPlaybackProgressSafe(mediaPlaybackCurrentPlayingInstance as IMediaPlayback);
+            nextProgress = Math.max(nextProgress, modelProgress);
+            if (Number.isFinite(trackDuration) && trackDuration > 0) {
+              nextProgress = Math.min(nextProgress, trackDuration);
+            }
+          }
+          if (mediaPlaybackCurrentPlayingInstance) {
+            const inst = mediaPlaybackCurrentPlayingInstance as any;
+            if (typeof inst.remotePlaybackPausedProgress === 'number' && nextProgress > inst.remotePlaybackPausedProgress) {
+              inst.remotePlaybackPausedProgress = nextProgress;
+              inst.remotePlaybackLastSnapshotSeconds = nextProgress;
+            }
+          }
+          const holdPlayingState = this.shouldHoldRemotePlayingState(transportState, controlSnapshot.currentTrackUri);
+          const diagNow = Date.now();
+          if (diagNow - this.lastRemoteProgressDiagLogAt >= 2500) {
+            this.lastRemoteProgressDiagLogAt = diagNow;
+            DlnaService.logRemoteMediaPlayerDiag('remote_progress_report', {
+              transportState,
+              soapTransportState: soapTransportForDiag || undefined,
+              soapPositionSeconds: Number.isFinite(Number(soapSnapshot.positionSeconds))
+                ? Number(soapSnapshot.positionSeconds)
+                : undefined,
+              nextProgress,
+              untrustedSoapZero,
+              rendererBogusZero,
+              holdPlayingState,
+              lastPlayingDetectedAgeMs: this.lastRendererPlayingDetectedAt
+                ? diagNow - this.lastRendererPlayingDetectedAt
+                : undefined,
+              eventTransportState: DlnaService.getSelectedRendererRecentEventTransportState(120000) || undefined,
+            });
+          }
           if (transportState === 'PLAYING') {
             this.remoteAutoAdvanceAwaitUntil = 0;
             this.lastRendererPlayingDetectedAt = now;
+            this.lastTrackChangeInitiatedAt = 0;
+            if (trackDuration > 0 && nextProgress >= trackDuration - 1.5) {
+              this.remoteZeroPositionPlayingSince = 0;
+              this.lastRendererPlayingDetectedAt = 0;
+              this.incrementTrackPlayCount(mediaPlaybackCurrentMediaTrack);
+              this.playNext();
+              return;
+            }
             this.updateMediaPlaybackProgress(nextProgress);
             this.syncSelectedRendererNextTrack({
               currentTrack: mediaPlaybackCurrentMediaTrack,
               currentProgress: nextProgress,
             });
           } else if (transportState === 'PAUSED_PLAYBACK' || transportState === 'PAUSED') {
+            this.remoteZeroPositionPlayingSince = 0;
             store.dispatch({
               type: MediaEnums.MediaPlayerActions.UpdatePlaybackProgress,
               data: {
@@ -1621,12 +1753,30 @@ class MediaPlayerService {
               },
             });
           } else if (transportState === 'STOPPED' || transportState === 'NO_MEDIA_PRESENT') {
+            this.remoteZeroPositionPlayingSince = 0;
             if (holdPlayingState) {
+              this.lastRendererTransportState = 'PLAYING';
+              this.lastRendererPlayingDetectedAt = now;
               this.updateMediaPlaybackProgress(nextProgress);
               this.startMediaProgressReporting();
               return;
             }
-            this.lastRendererPlayingDetectedAt = 0;
+            const evStillPlaying = DlnaService.getSelectedRendererRecentEventTransportState(120000);
+            const shouldLogSoapPause = (now - this.lastRemoteUiPausedFromSoapLogAt) >= 12000
+              && evStillPlaying !== 'PLAYING'
+              && evStillPlaying !== 'TRANSITIONING';
+            if (shouldLogSoapPause) {
+              this.lastRemoteUiPausedFromSoapLogAt = now;
+              DlnaService.logRemoteMediaPlayerDiag('remote_ui_paused_from_soap_stopped', {
+                soapTransportState: soapTransportForDiag || undefined,
+                effectiveTransportState: transportState,
+                nextProgress,
+                lastPlayingDetectedAgeMs: this.lastRendererPlayingDetectedAt
+                  ? now - this.lastRendererPlayingDetectedAt
+                  : undefined,
+                eventTransportState: evStillPlaying || undefined,
+              });
+            }
             this.remoteAutoAdvanceAwaitUntil = 0;
             this.lastRendererProgressAt = now;
             this.lastRendererProgressSeconds = Math.max(0, nextProgress);
@@ -1649,6 +1799,33 @@ class MediaPlayerService {
                 this.lastRendererPlayingDetectedAt = now;
               }
               this.updateMediaPlaybackProgress(nextProgress);
+              this.syncSelectedRendererNextTrack({
+                currentTrack: mediaPlaybackCurrentMediaTrack,
+                currentProgress: nextProgress,
+              });
+              if (Number.isFinite(trackDuration) && trackDuration > 0 && nextProgress >= trackDuration - 1.5) {
+                this.remoteTransitioningSinceMs = 0;
+                this.remoteZeroPositionPlayingSince = 0;
+                this.lastRendererPlayingDetectedAt = 0;
+                this.incrementTrackPlayCount(mediaPlaybackCurrentMediaTrack);
+                this.playNext();
+                return;
+              }
+              const stuckTransitioningMs = this.remoteTransitioningSinceMs > 0
+                ? now - this.remoteTransitioningSinceMs
+                : 0;
+              const nudgeCooldownOk = !this.lastStuckTransitioningPlayNudgeAt
+                || (now - this.lastStuckTransitioningPlayNudgeAt) >= 18000;
+              if (stuckTransitioningMs >= 12000 && nudgeCooldownOk) {
+                this.lastStuckTransitioningPlayNudgeAt = now;
+                this.remoteTransitioningSinceMs = now;
+                DlnaService.logRemoteMediaPlayerDiag('remote_stuck_transitioning_play_nudge', {
+                  stuckTransitioningMs,
+                  nextProgress,
+                  trackDuration: trackDuration > 0 ? trackDuration : undefined,
+                });
+                DlnaService.resumeSelectedRenderer().catch(() => undefined);
+              }
             }
           } else if (
             this.lastRendererTransportState === 'PLAYING'
@@ -1714,7 +1891,7 @@ class MediaPlayerService {
       if (DlnaService.isRemoteOutputRequested()) {
         const now = Date.now();
         if (this.remoteAutoAdvanceAwaitUntil <= 0) {
-          this.remoteAutoAdvanceAwaitUntil = now + 4500;
+          this.remoteAutoAdvanceAwaitUntil = now + 15000;
           this.syncSelectedRendererNextTrack({
             force: true,
             currentTrack: mediaPlaybackCurrentMediaTrack,
@@ -1830,13 +2007,33 @@ class MediaPlayerService {
       return false;
     }
     const now = Date.now();
-    const recentPlayback = this.lastRendererPlayingDetectedAt > 0
-      && (now - this.lastRendererPlayingDetectedAt) <= 8000;
+    if (this.lastTrackChangeInitiatedAt > 0
+      && (now - this.lastTrackChangeInitiatedAt) < this.trackChangeBacksyncSuppressMs) {
+      return true;
+    }
+    /** Eversolo and similar devices may emit STOPPED/empty URI for many seconds during gapless or bad SOAP; keep UI in Playing longer. */
+    const evTs = DlnaService.getSelectedRendererRecentEventTransportState(120000);
+    const eventImpliesPlayback = evTs === 'PLAYING' || evTs === 'TRANSITIONING';
+    const recentSoapPlaying = this.lastRendererPlayingDetectedAt > 0
+      && (now - this.lastRendererPlayingDetectedAt) <= 300000;
+    const recentPlayback = recentSoapPlaying || eventImpliesPlayback;
     if (!recentPlayback) {
       return false;
     }
-    return !!this.resolveRendererTrackContextId(trackUri)
-      || !!DlnaService.getSelectedRendererPendingNextTrackId();
+    const resolvedId = this.resolveRendererTrackContextId(trackUri);
+    if (resolvedId) {
+      return true;
+    }
+    if (DlnaService.getSelectedRendererPendingNextTrackId()) {
+      return true;
+    }
+    const { mediaPlayer } = store.getState();
+    const isPlaying = mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Playing
+      || mediaPlayer.mediaPlaybackState === MediaEnums.MediaPlaybackState.Loading;
+    if (isPlaying && recentPlayback) {
+      return true;
+    }
+    return false;
   }
 
   private updateMediaPlaybackProgress(mediaPlaybackProgress: number, seeking?: boolean): void {
@@ -1926,6 +2123,15 @@ class MediaPlayerService {
     if (!rendererTrackId) {
       return false;
     }
+    const uiId = String(mediaPlaybackCurrentMediaTrack?.id || '').trim();
+    const uiProvider = String((mediaPlaybackCurrentMediaTrack as { provider_id?: string } | undefined)?.provider_id || '').trim();
+    const remoteAheadOfUi = !mediaPlaybackCurrentMediaTrack
+      || (rendererTrackId !== uiId && rendererTrackId !== uiProvider);
+    if (!remoteAheadOfUi
+      && this.lastTrackChangeInitiatedAt > 0
+      && (Date.now() - this.lastTrackChangeInitiatedAt) < this.trackChangeBacksyncSuppressMs) {
+      return false;
+    }
     if (mediaPlaybackCurrentMediaTrack && rendererTrackId === String(mediaPlaybackCurrentMediaTrack.id || '')) {
       return false;
     }
@@ -1978,6 +2184,7 @@ class MediaPlayerService {
     });
     this.lastDlnaNextTrackSyncAt = 0;
     this.lastDlnaNextTrackQueueEntryId = undefined;
+    this.lastDlnaNextSyncPairKey = '';
     this.lastDlnaQueueContextPublishAt = 0;
     this.lastDlnaQueueContextPublishSignature = undefined;
     this.syncSelectedRendererNextTrack({
@@ -2176,9 +2383,12 @@ class MediaPlayerService {
       this.lastDlnaContextKey = undefined;
       this.lastDlnaNextTrackSyncAt = 0;
       this.lastDlnaNextTrackQueueEntryId = undefined;
+      this.lastDlnaNextSyncPairKey = '';
       this.lastDlnaQueueContextPublishAt = 0;
       this.lastDlnaQueueContextPublishSignature = undefined;
       this.lockedDlnaContextTracklistId = undefined;
+      this.remoteTransitioningSinceMs = 0;
+      this.lastStuckTransitioningPlayNudgeAt = 0;
     }
     if (!remoteConnectionLost || this.outputSwitchInProgress) {
       return;
@@ -2223,18 +2433,29 @@ class MediaPlayerService {
     }
     if (transportState === 'PLAYING') {
       this.lastRendererPlayingDetectedAt = now;
+      this.lastTrackChangeInitiatedAt = 0;
     }
     let progressFromSnapshot: number;
     if (Number.isFinite(positionSeconds)) {
+      const eventUntrustedZero = transportState === 'PLAYING'
+        && positionSeconds < 0.05
+        && (!rendererTrackContextId
+          || !this.lastRendererProgressTrackId
+          || rendererTrackContextId === this.lastRendererProgressTrackId);
+      if (eventUntrustedZero && this.lastRendererProgressAt <= 0) {
+        this.lastRendererProgressAt = now;
+        this.lastRendererProgressSeconds = Math.max(0, Number(mediaPlayer.mediaPlaybackCurrentMediaProgress || 0));
+        this.lastRendererProgressTrackId = rendererTrackContextId || this.lastRendererProgressTrackId;
+      }
       const bogusZero = transportState === 'PLAYING'
         && positionSeconds < 0.05
-        && this.lastRendererProgressSeconds > 8
+        && this.lastRendererProgressSeconds > 1
         && (now - this.lastRendererProgressAt) < 45000
         && this.lastRendererProgressAt > 0
         && (!rendererTrackContextId
           || !this.lastRendererProgressTrackId
           || rendererTrackContextId === this.lastRendererProgressTrackId);
-      if (bogusZero) {
+      if (bogusZero || (eventUntrustedZero && this.lastRendererProgressAt > 0)) {
         const elapsed = Math.max(0, (now - this.lastRendererProgressAt) / 1000);
         progressFromSnapshot = Math.max(0, this.lastRendererProgressSeconds + elapsed);
       } else {
@@ -2262,9 +2483,15 @@ class MediaPlayerService {
       }
       playingInstance.adoptRemoteSnapshot(adoptPayload);
     }
-    const progress = Number.isFinite(positionSeconds)
+    let progress = Number.isFinite(positionSeconds)
       ? Math.max(0, progressFromSnapshot)
       : Math.max(0, Number(mediaPlayer.mediaPlaybackCurrentMediaProgress || 0));
+    if (transportState === 'PLAYING' && !Number.isFinite(positionSeconds) && this.lastRendererProgressAt > 0) {
+      progress = Math.max(
+        progress,
+        this.lastRendererProgressSeconds + Math.max(0, (now - this.lastRendererProgressAt) / 1000),
+      );
+    }
     const shouldAttemptTrackBacksync = !!String(snapshot.currentTrackUri || '').trim()
       || transportState === 'PLAYING'
       || transportState === 'PAUSED_PLAYBACK'
@@ -2443,6 +2670,12 @@ class MediaPlayerService {
     }
   }
 
+  /**
+   * Standard DLNA: refresh {@link DlnaService.setNextMediaTrackOnSelectedRenderer} (SetNextAVTransportURI) so after each
+   * track advance the following queue item is preloaded. Aurora Pulse Launcher: may also publish full playlist
+   * (X_SetPlaylist / queue) when {@link DlnaService.shouldUseSelectedRendererQueueContext} is true. A forced sync is
+   * triggered on {@link DlnaService.rendererTrackAdvancedEventName} when the renderer’s “next” URI has become current.
+   */
   private syncSelectedRendererNextTrack(options?: {
     force?: boolean;
     currentTrack?: IMediaQueueTrack;
@@ -2453,9 +2686,6 @@ class MediaPlayerService {
     }
     const now = Date.now();
     const forceSync = !!options?.force;
-    if (!forceSync && (now - this.lastDlnaNextTrackSyncAt) < this.dlnaNextTrackSyncIntervalMs) {
-      return;
-    }
     const { mediaPlayer } = store.getState();
     const queueTracks = this.getMediaQueueTracks();
     const allQueueTracks = mediaPlayer.mediaTracks || [];
@@ -2495,10 +2725,13 @@ class MediaPlayerService {
       currentTrackId: currentTrack ? String(currentTrack.id || '') : '',
       rendererCurrentTrackId: rendererCurrentTrackId || '',
       forceSync,
+      lastDlnaNextTrackSyncAt: this.lastDlnaNextTrackSyncAt,
+      lastDlnaNextTrackQueueEntryId: this.lastDlnaNextTrackQueueEntryId,
     });
     if (this.dlnaStrictContextModeEnabled && contextChanged) {
       this.lastDlnaNextTrackSyncAt = 0;
       this.lastDlnaNextTrackQueueEntryId = undefined;
+      this.lastDlnaNextSyncPairKey = '';
       DlnaService.setNextMediaTrackOnSelectedRenderer(undefined).catch((error) => {
         debug('syncSelectedRendererNextTrack - failed to clear renderer pending next track on context switch - %o', error);
       });
@@ -2552,7 +2785,7 @@ class MediaPlayerService {
     }
     const nearTrackEnd = !!currentTrackInContext
       && Number.isFinite(Number(currentTrackInContext.track_duration))
-      && (Number(currentTrackInContext.track_duration || 0) - currentProgress) <= 12;
+      && (Number(currentTrackInContext.track_duration || 0) - currentProgress) <= 90;
     let nextTrack = this.getNextFromListForTrack(currentTrackInContext || currentTrack);
     if (contextQueueTracks.length > 0 && currentTrackInContext) {
       const contextPointer = _.findIndex(
@@ -2588,22 +2821,61 @@ class MediaPlayerService {
         nextTrack = this.getNextFromListForTrack(fallbackTrack);
       }
     }
-    if (!forceSync && !nearTrackEnd && this.lastDlnaNextTrackQueueEntryId === nextTrack?.queue_entry_id) {
-      return;
+    const syncPairKey = `${String(currentTrack?.queue_entry_id || '')}:${String(nextTrack?.queue_entry_id ?? 'none')}`;
+    const pendingRendererNextId = String(DlnaService.getSelectedRendererPendingNextTrackId() || '').trim();
+    const expectedNextId = nextTrack ? String(nextTrack.id || '').trim() : '';
+    if (pendingRendererNextId && expectedNextId && pendingRendererNextId !== expectedNextId) {
+      this.lastDlnaNextSyncPairKey = '';
+    }
+    const msSinceLastNextSync = now - (this.lastDlnaNextTrackSyncAt || 0);
+    if (
+      nextTrack
+      && expectedNextId
+      && !pendingRendererNextId
+      && msSinceLastNextSync > 35000
+    ) {
+      this.lastDlnaNextSyncPairKey = '';
+    }
+    if (!forceSync && syncPairKey === this.lastDlnaNextSyncPairKey) {
+      if (!nearTrackEnd) {
+        return;
+      }
+      if (msSinceLastNextSync < this.dlnaNearEndSetNextMinIntervalMs) {
+        return;
+      }
     }
     this.lastDlnaNextTrackSyncAt = now;
     this.lastDlnaNextTrackQueueEntryId = nextTrack?.queue_entry_id;
+    this.lastDlnaNextSyncPairKey = syncPairKey;
     DlnaService.setNextMediaTrackOnSelectedRenderer(nextTrack)
       .then((isApplied) => {
         if (isApplied) {
+          if (nearTrackEnd || forceSync) {
+            DlnaService.logRemoteMediaPlayerDiag('renderer_set_next_applied', {
+              nextTrackId: expectedNextId,
+              syncPairKey,
+              nearTrackEnd,
+              forceSync,
+            });
+          }
           return;
         }
+        DlnaService.logRemoteMediaPlayerDiag('renderer_set_next_not_applied', {
+          nextTrackId: expectedNextId,
+          syncPairKey,
+        });
         this.lastDlnaNextTrackSyncAt = 0;
         this.lastDlnaNextTrackQueueEntryId = undefined;
+        this.lastDlnaNextSyncPairKey = '';
       })
       .catch((error) => {
         this.lastDlnaNextTrackSyncAt = 0;
         this.lastDlnaNextTrackQueueEntryId = undefined;
+        this.lastDlnaNextSyncPairKey = '';
+        DlnaService.logRemoteMediaPlayerDiag('renderer_set_next_failed', {
+          nextTrackId: expectedNextId,
+          message: String((error as any)?.message || error || ''),
+        });
         debug('syncSelectedRendererNextTrack - failed to set next track on renderer - %o', error);
       });
   }

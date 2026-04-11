@@ -1,7 +1,7 @@
 {
   "name": "aurora-pulse",
   "productName": "Aurora Pulse",
-  "version": "1.5.1-beta.3",
+  "version": "1.5.1",
   "description": "A local-first music player built with Electron",
   "scripts": {
     "build": "concurrently \"npm run build:main\" \"npm run build:renderer\"",
@@ -30,10 +30,13 @@
     "postinstall": "node -r @babel/register .erb/scripts/CheckNativeDep.js && electron-builder install-app-deps && npm run prepare:sharp:host && cross-env NODE_ENV=development webpack --config ./.erb/configs/webpack.config.renderer.dev.dll.babel.js && opencollective-postinstall && yarn-deduplicate yarn.lock",
     "start": "npm run prepare:sharp:host && node -r @babel/register ./.erb/scripts/CheckPortInUse.js && npm run start:renderer",
     "start:debug": "npm run prepare:sharp:host && cross-env PORT=1213 node -r @babel/register ./.erb/scripts/CheckPortInUse.js && cross-env PORT=1213 npm run start:renderer:debug",
+    "start:debug:dap-adb": "npm run prepare:sharp:host && cross-env PORT=1213 node -r @babel/register ./.erb/scripts/CheckPortInUse.js && cross-env PORT=1213 DEBUG=aurora:*,aurora:service:dap_adb,-aurora:module:ipc:main npm run start:renderer:debug:dap-adb",
     "start:renderer": "cross-env NODE_ENV=development webpack serve --config ./.erb/configs/webpack.config.renderer.dev.babel.js",
     "start:renderer:debug": "cross-env START_MAIN_CMD=start:main:debug NODE_ENV=development webpack serve --config ./.erb/configs/webpack.config.renderer.dev.babel.js",
+    "start:renderer:debug:dap-adb": "cross-env START_MAIN_CMD=start:main:debug:dap-adb NODE_ENV=development DEBUG=aurora:*,aurora:service:dap_adb,-aurora:module:ipc:main webpack serve --config ./.erb/configs/webpack.config.renderer.dev.babel.js",
     "start:main": "webpack --config ./.erb/configs/webpack.config.main.dev.babel.js && cross-env DEBUG=aurora:*,-aurora:module:ipc:main electron ./src/main.dev.js",
     "start:main:debug": "webpack --config ./.erb/configs/webpack.config.main.dev.babel.js && cross-env DEBUG=aurora:*,-aurora:module:ipc:main electron --inspect=5858 ./src/main.dev.js",
+    "start:main:debug:dap-adb": "webpack --config ./.erb/configs/webpack.config.main.dev.babel.js && cross-env DEBUG=aurora:*,aurora:service:dap_adb,-aurora:module:ipc:main electron --inspect=5858 ./src/main.dev.js",
     "test": "jest",
     "test:ci": "jest --passWithNoTests",
     "test:watch": "jest --watch",

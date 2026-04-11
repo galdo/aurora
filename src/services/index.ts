@@ -15,6 +15,7 @@ import { NotificationService } from './notification.service';
 import { PodcastService } from './podcast.service';
 import { EqualizerService } from './equalizer.service';
 import { DlnaService } from './dlna.service';
+import { DlnaControlError, DlnaControlErrorCode } from './dlna';
 import { BitPerfectService } from './bit-perfect.service';
 import { UpdateService } from './update.service';
 
@@ -35,6 +36,8 @@ export {
   PodcastService,
   EqualizerService,
   DlnaService,
+  DlnaControlError,
+  DlnaControlErrorCode,
   BitPerfectService,
   UpdateService,
 };

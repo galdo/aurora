@@ -36,12 +36,13 @@ export class DlnaControlStackService {
     serviceType: string,
     action: string,
     args: Record<string, string>,
+    rawValueKeys?: Set<string>,
   ): Promise<Document> {
     const body = `<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
   <s:Body>
     <u:${action} xmlns:u="${serviceType}">
-      ${Object.entries(args).map(([key, value]) => `<${key}>${value}</${key}>`).join('')}
+      ${Object.entries(args).map(([key, value]) => `<${key}>${rawValueKeys?.has(key) ? value : this.escape(value)}</${key}>`).join('')}
     </u:${action}>
   </s:Body>
 </s:Envelope>`;
@@ -119,6 +120,7 @@ ${items.map((item, index) => this.buildDidlItem(item, `${Date.now()}-${index}`))
         PlaylistLength: String(items.length),
         X_ReplaceMode: '1',
       },
+      new Set(['PlaylistData']),
     );
   }
 }

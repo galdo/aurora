@@ -128,11 +128,12 @@ export function MediaCollectionContextMenu(props: {
   return (
     <Menu id={id} onVisibilityChange={triggerScrollLock}>
       {menuItems.map((menuItem, menuItemPointer) => {
+        const rowKey = `mc-menu-${menuItem}-${menuItemPointer}`;
         switch (menuItem) {
           case MediaCollectionContextMenuItem.Pin:
             return (
               <Item
-                key={MediaCollectionContextMenuItem.Pin}
+                key={rowKey}
                 id={MediaCollectionContextMenuItemAction.Pin}
                 onClick={handleMenuItemClick}
                 disabled={isPinnedStatusLoading}
@@ -155,11 +156,10 @@ export function MediaCollectionContextMenu(props: {
           case MediaCollectionContextMenuItem.AddToPlaylist:
             return (
               <Submenu
-                key={MediaCollectionContextMenuItem.AddToPlaylist}
+                key={rowKey}
                 label={I18nService.getString('label_submenu_media_collection_add_to_playlist')}
               >
                 <MediaPlaylistContextMenu
-                  key={MediaCollectionContextMenuItem.AddToPlaylist}
                   type="add"
                 />
               </Submenu>
@@ -167,7 +167,7 @@ export function MediaCollectionContextMenu(props: {
           case MediaCollectionContextMenuItem.ManagePlaylist:
             return (
               <MediaPlaylistContextMenu
-                key={MediaCollectionContextMenuItem.ManagePlaylist}
+                key={rowKey}
                 type="manage"
               />
             );
@@ -181,7 +181,7 @@ export function MediaCollectionContextMenu(props: {
             if (mediaItem?.type === MediaCollectionItemType.Album) {
               return (
                 <Item
-                  key={MediaCollectionContextMenuItem.ToggleHidden}
+                  key={rowKey}
                   id={MediaCollectionContextMenuItemAction.ToggleHidden}
                   onClick={handleMenuItemClick}
                 >
@@ -193,7 +193,7 @@ export function MediaCollectionContextMenu(props: {
             if (mediaItem?.type === MediaCollectionItemType.Playlist && mediaItem.hidden) {
               return (
                 <Item
-                  key={MediaCollectionContextMenuItem.ToggleHidden}
+                  key={rowKey}
                   id={MediaCollectionContextMenuItemAction.ToggleHidden}
                   onClick={handleMenuItemClick}
                 >
@@ -202,11 +202,9 @@ export function MediaCollectionContextMenu(props: {
               );
             }
 
-            return <></>;
+            return null;
           default:
-            return (
-              <></>
-            );
+            return null;
         }
       })}
     </Menu>

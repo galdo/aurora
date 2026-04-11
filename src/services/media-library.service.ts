@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import { createHash } from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { MediaLibraryActions, MediaTrackCoverPictureImageDataType } from '../enums';
@@ -31,8 +32,29 @@ import {
 import { MediaTrackService } from './media-track.service';
 import { MediaArtistService } from './media-artist.service';
 import { MediaAlbumService } from './media-album.service';
+import { MediaProviderService } from './media-provider.service';
 import { NotificationService } from './notification.service';
 import { PodcastService } from './podcast.service';
+import { I18nService } from './i18n.service';
+
+import MediaLocalConstants from '../providers/media-local/media-local.constants.json';
+import type { IMediaLocalSettings } from '../providers/media-local/media-local.interfaces';
+
+import {
+  adbPushLocalFile,
+  checkAdbDestinationCurrent,
+  getAuthorizedAdbDeviceSerial,
+  hashRemoteFileViaPull,
+  isAdbDeviceReachable,
+  joinDevicePosixPath,
+  forEachRemoteFileLine,
+  remoteListFilesRecursive,
+  remoteMkdirP,
+  remoteUnlink,
+  resolveAdbExecutable,
+  resolveDapStorageBasePath,
+  walkLocalFilesRecursive as dapWalkLocalFilesRecursive,
+} from './dap-adb-sync.service';
 
 const debug = require('debug')('aurora:service:media_library');
 
@@ -97,6 +119,16 @@ export class MediaLibraryService {
   static readonly dapSyncDeviceRemovedErrorCode = 'DAP_SYNC_DEVICE_REMOVED';
   private static dapSyncAbortController: AbortController | null = null;
   private static dapSyncPromise: Promise<{ copiedFiles: number; deletedFiles: number; totalTracks: number }> | null = null;
+  /** Last successful `done` snapshot for UI + localStorage (survives idle wipe / app reload). */
+  private static dapSyncLastCompletedSummary: IDapSyncProgressSnapshot | null = null;
+  private static readonly dapSyncLastSummaryStorageKey = 'aurora:dap-sync-last-summary';
+  private static dapLastSummaryHydratedFromStorage = false;
+  /** `syncDapLibraryIfEnabled` passes a monotonic id per library-sync end; skip duplicate auto-runs that would clear the summary UI. */
+  private static dapLibrarySyncGenerationLastConsumedForDone = -1;
+  /** Generation id for the DAP run started from `syncDapLibrary` (auto chain). */
+  private static dapCurrentRunLibrarySyncGeneration: number | undefined;
+  /** Silent runs overwrite raw state with planning/0 before work starts; keep showing prior `done` counts in getSnapshot until processedItems > 0. */
+  private static dapSilentRunHoldPriorSummaryForUi = false;
   private static dapSyncProgressSnapshot: IDapSyncProgressSnapshot = {
     phase: 'idle',
     isRunning: false,
@@ -358,15 +390,194 @@ export class MediaLibraryService {
       .replace(/\s+/g, ' ');
   }
 
+  private static buildDapDestinationPath(syncRootPath: string, relativePath: string): string {
+    if (!syncRootPath) {
+      return relativePath;
+    }
+    if (syncRootPath.startsWith('/')) {
+      return path.posix.join(syncRootPath, ...relativePath.split('/').filter(Boolean));
+    }
+    return path.join(syncRootPath, ...relativePath.split(/[/\\]/).filter(Boolean));
+  }
+
+  private static async resolveDapLibraryRootsForMirror(): Promise<string[]> {
+    const localSettings = await MediaProviderService.getMediaProviderSettings(MediaLocalConstants.Provider) as IMediaLocalSettings;
+    return (localSettings?.library?.directories || [])
+      .map(directory => String(directory || '').trim())
+      .filter(Boolean)
+      .map(directory => path.resolve(directory));
+  }
+
+  /**
+   * Maps a host file path to a device-relative path that mirrors the folder layout under configured library roots.
+   * Returns null if the file is not under any library directory.
+   */
+  private static tryBuildMirrorRelativePath(sourcePath: string, libraryRootsResolved: string[]): string | null {
+    if (!libraryRootsResolved.length) {
+      return null;
+    }
+    const resolvedSource = path.resolve(sourcePath);
+    const uniqueRoots = [...new Set(libraryRootsResolved.map(rootPath => path.resolve(rootPath)))].sort((a, b) => b.length - a.length);
+    let mirrorResult: string | null = null;
+    uniqueRoots.some((root) => {
+      const relativeFromRoot = path.relative(root, resolvedSource);
+      if (!relativeFromRoot || relativeFromRoot.startsWith('..') || path.isAbsolute(relativeFromRoot)) {
+        return false;
+      }
+      let relativePosix = relativeFromRoot.split(path.sep).join('/');
+      if (uniqueRoots.length > 1) {
+        const rootTag = this.truncatePathPart(this.sanitizePathPart(path.basename(root)), 80);
+        relativePosix = `${rootTag}/${relativePosix}`;
+      }
+      mirrorResult = this.sanitizeMirrorRelativePath(relativePosix);
+      return true;
+    });
+    return mirrorResult;
+  }
+
+  private static sanitizeMirrorRelativePath(relativePosix: string): string {
+    const segments = relativePosix.split('/').filter(Boolean);
+    if (!segments.length) {
+      return '';
+    }
+    const directorySegments = segments.slice(0, -1).map(segment => this.truncatePathPart(this.sanitizePathPart(segment), 200));
+    const lastSegment = segments[segments.length - 1];
+    const extension = path.posix.extname(lastSegment);
+    const baseNameWithoutExtension = extension ? lastSegment.slice(0, -extension.length) : lastSegment;
+    const fileName = this.truncatePathPart(`${this.sanitizePathPart(baseNameWithoutExtension)}${extension}`, 220);
+    return [...directorySegments, fileName].join('/');
+  }
+
+  private static buildDapMetadataLayoutRelativePath(
+    mediaTrack: IMediaTrack,
+    albumDiscNumbersByAlbumId: Map<string, Set<number>>,
+    sourceExtension: string,
+  ): { baseRelativePath: string; legacyRelativePaths: string[] } {
+    const artistName = this.truncatePathPart(this.sanitizePathPart(
+      mediaTrack.track_album?.album_artist?.artist_name || 'Unknown Artist',
+    ), 80);
+    const albumName = this.sanitizePathPart(mediaTrack.track_album?.album_name || 'Unknown Album');
+    const albumYear = String(mediaTrack.track_album?.album_year || '').trim();
+    const albumDirectoryName = this.truncatePathPart(this.sanitizePathPart(
+      albumYear ? `${albumName} - ${albumYear}` : albumName,
+    ), 120);
+    const trackNumber = String(mediaTrack.track_number || 0).padStart(2, '0');
+    const trackName = this.truncatePathPart(this.sanitizePathPart(mediaTrack.track_name || 'Unknown Track'), 120);
+    const baseFileName = this.truncatePathPart(`${trackNumber} - ${trackName}`, 140);
+    const uniqueSuffix = mediaTrack.id.slice(0, 8);
+    const albumId = String(mediaTrack.track_album_id || mediaTrack.track_album?.id || '');
+    const discNumber = this.resolveTrackDiscNumber(mediaTrack);
+    const albumDiscNumbers = albumDiscNumbersByAlbumId.get(albumId);
+    const isMultiDiscAlbum = !!albumDiscNumbers && albumDiscNumbers.size > 1;
+    const discDirectoryName = (isMultiDiscAlbum && discNumber > 0) ? `CD${discNumber}` : '';
+    const fileName = this.truncatePathPart(`${baseFileName} [${uniqueSuffix}]${sourceExtension}`, 160);
+    const baseRelativePath = path
+      .join(artistName, albumDirectoryName, discDirectoryName, fileName)
+      .split(path.sep)
+      .join('/');
+    const legacyRelativePaths = discDirectoryName
+      ? [path.join(artistName, albumDirectoryName, fileName).split(path.sep).join('/')]
+      : [];
+    return { baseRelativePath, legacyRelativePaths };
+  }
+
+  private static async buildDapLibraryTrackPlan(syncRootPath: string): Promise<{
+    trackItems: Array<{
+      relativePath: string;
+      sourcePath: string;
+      destinationPath: string;
+      legacyDestinationPaths: string[];
+      sourceSize?: number;
+      sourceMtimeMs?: number;
+    }>;
+    expectedRelativePaths: Set<string>;
+    totalExpectedMusicItems: number;
+  }> {
+    const trackDataList = await MediaTrackDatastore.findMediaTracks();
+    const mediaTracks = await MediaTrackService.buildMediaTracks(trackDataList);
+    const tracksWithPaths = mediaTracks.filter((mediaTrack) => {
+      const filePath = String((mediaTrack.extra as any)?.file_path || '');
+      return !_.isEmpty(filePath) && fs.existsSync(filePath);
+    });
+    const albumDiscNumbersByAlbumId = new Map<string, Set<number>>();
+    tracksWithPaths.forEach((mediaTrack) => {
+      const albumId = String(mediaTrack.track_album_id || mediaTrack.track_album?.id || '');
+      if (!albumId) {
+        return;
+      }
+      const discNumber = this.resolveTrackDiscNumber(mediaTrack);
+      if (discNumber <= 0) {
+        return;
+      }
+      const existingDiscNumbers = albumDiscNumbersByAlbumId.get(albumId) || new Set<number>();
+      existingDiscNumbers.add(discNumber);
+      albumDiscNumbersByAlbumId.set(albumId, existingDiscNumbers);
+    });
+
+    const { mirrorHostFolderLayout } = this.getDapSyncSettings();
+    const libraryRootsForMirror = mirrorHostFolderLayout
+      ? await this.resolveDapLibraryRootsForMirror()
+      : [];
+
+    const usedRelativePathCounts = new Map<string, number>();
+    const trackItems = tracksWithPaths.map((mediaTrack) => {
+      const sourcePath = String((mediaTrack.extra as any)?.file_path || '');
+      const sourceExtension = path.extname(sourcePath) || '.flac';
+      const mirrorRelativePath = mirrorHostFolderLayout && libraryRootsForMirror.length > 0
+        ? this.tryBuildMirrorRelativePath(sourcePath, libraryRootsForMirror)
+        : null;
+      let baseRelativePath: string;
+      let legacyRelativePaths: string[];
+      if (mirrorRelativePath) {
+        baseRelativePath = mirrorRelativePath;
+        legacyRelativePaths = [];
+      } else {
+        const metadataLayout = this.buildDapMetadataLayoutRelativePath(mediaTrack, albumDiscNumbersByAlbumId, sourceExtension);
+        baseRelativePath = metadataLayout.baseRelativePath;
+        legacyRelativePaths = metadataLayout.legacyRelativePaths;
+      }
+      const relativePathUsageCount = Number(usedRelativePathCounts.get(baseRelativePath) || 0);
+      usedRelativePathCounts.set(baseRelativePath, relativePathUsageCount + 1);
+      const relativePath = relativePathUsageCount > 0
+        ? this.disambiguateRelativePath(baseRelativePath, sourcePath, relativePathUsageCount)
+        : baseRelativePath;
+      const destinationPath = this.buildDapDestinationPath(syncRootPath, relativePath);
+      const legacyDestinationPaths = legacyRelativePaths.map(legacyRelativePath => this.buildDapDestinationPath(syncRootPath, legacyRelativePath));
+      const sourceSize = Number((mediaTrack.extra as any)?.file_size);
+      const sourceMtimeMs = Number((mediaTrack.extra as any)?.file_mtime);
+      return {
+        relativePath,
+        sourcePath,
+        destinationPath,
+        legacyDestinationPaths,
+        sourceSize: Number.isFinite(sourceSize) && sourceSize > 0 ? sourceSize : undefined,
+        sourceMtimeMs: Number.isFinite(sourceMtimeMs) && sourceMtimeMs > 0 ? sourceMtimeMs : undefined,
+      };
+    });
+
+    const expectedRelativePaths = new Set(trackItems.map(item => item.relativePath));
+    const expectedPodcastFilesCount = PodcastService.getExpectedDapSyncFileCount();
+    const totalExpectedMusicItems = trackItems.length + expectedPodcastFilesCount;
+    return {
+      trackItems,
+      expectedRelativePaths,
+      totalExpectedMusicItems,
+    };
+  }
+
   static getDapSyncSettings(): {
     targetDirectory: string;
     autoSyncEnabled: boolean;
     deleteMissingOnDevice: boolean;
+    transport: 'filesystem' | 'adb';
+    mirrorHostFolderLayout: boolean;
   } {
     const fallback = {
       targetDirectory: '',
       autoSyncEnabled: false,
       deleteMissingOnDevice: true,
+      transport: 'filesystem' as const,
+      mirrorHostFolderLayout: true,
     };
 
     const rawSettings = localStorage.getItem(this.dapSyncSettingsStorageKey);
@@ -376,10 +587,14 @@ export class MediaLibraryService {
 
     try {
       const parsedSettings = JSON.parse(rawSettings);
+      const rawTransport = String(parsedSettings?.transport || '').toLowerCase();
+      const transport: 'filesystem' | 'adb' = rawTransport === 'adb' ? 'adb' : 'filesystem';
       return {
         targetDirectory: String(parsedSettings?.targetDirectory || ''),
         autoSyncEnabled: Boolean(parsedSettings?.autoSyncEnabled),
         deleteMissingOnDevice: parsedSettings?.deleteMissingOnDevice !== false,
+        transport,
+        mirrorHostFolderLayout: parsedSettings?.mirrorHostFolderLayout !== false,
       };
     } catch (_error) {
       return fallback;
@@ -390,21 +605,36 @@ export class MediaLibraryService {
     targetDirectory: string;
     autoSyncEnabled: boolean;
     deleteMissingOnDevice: boolean;
+    transport: 'filesystem' | 'adb';
+    mirrorHostFolderLayout: boolean;
   }) {
     let normalizedTargetDirectory = String(input.targetDirectory || '').trim();
     if (normalizedTargetDirectory && path.basename(normalizedTargetDirectory).toLowerCase() === this.dapSyncDirectoryName.toLowerCase()) {
       normalizedTargetDirectory = path.dirname(normalizedTargetDirectory);
     }
     const previousTargetDirectory = String(this.dapSyncProgressSnapshot.targetDirectory || '').trim();
-    const targetDirectoryChanged = normalizedTargetDirectory !== previousTargetDirectory;
+    const previousIsAdbVirtual = previousTargetDirectory.startsWith('adb:');
+    const settingsAdbEmpty = input.transport === 'adb' && !normalizedTargetDirectory;
+    const trivialAdbTargetDrift = settingsAdbEmpty && previousIsAdbVirtual;
+    const targetDirectoryChanged = normalizedTargetDirectory !== previousTargetDirectory && !trivialAdbTargetDrift;
+    const previousMirrorHostFolderLayout = this.getDapSyncSettings().mirrorHostFolderLayout;
+    const mirrorHostFolderLayoutChanged = Boolean(input.mirrorHostFolderLayout) !== Boolean(previousMirrorHostFolderLayout);
 
     localStorage.setItem(this.dapSyncSettingsStorageKey, JSON.stringify({
       targetDirectory: normalizedTargetDirectory,
       autoSyncEnabled: Boolean(input.autoSyncEnabled),
       deleteMissingOnDevice: Boolean(input.deleteMissingOnDevice),
+      transport: input.transport === 'adb' ? 'adb' : 'filesystem',
+      mirrorHostFolderLayout: Boolean(input.mirrorHostFolderLayout),
     }));
 
-    if (!this.dapSyncProgressSnapshot.isRunning && targetDirectoryChanged) {
+    if (!this.dapSyncProgressSnapshot.isRunning && (targetDirectoryChanged || mirrorHostFolderLayoutChanged)) {
+      this.dapSyncLastCompletedSummary = null;
+      try {
+        localStorage.removeItem(this.dapSyncLastSummaryStorageKey);
+      } catch (_e) {
+        /* ignore */
+      }
       this.updateDapSyncProgress({
         phase: 'idle',
         isRunning: false,
@@ -422,10 +652,68 @@ export class MediaLibraryService {
     }
   }
 
+  private static hydrateDapLastSummaryFromStorage() {
+    if (this.dapLastSummaryHydratedFromStorage || typeof localStorage === 'undefined') {
+      return;
+    }
+    this.dapLastSummaryHydratedFromStorage = true;
+    try {
+      const raw = localStorage.getItem(this.dapSyncLastSummaryStorageKey);
+      if (raw && !this.dapSyncLastCompletedSummary) {
+        this.dapSyncLastCompletedSummary = JSON.parse(raw) as IDapSyncProgressSnapshot;
+      }
+    } catch (_e) {
+      /* ignore */
+    }
+  }
+
+  private static persistDapLastCompletedSummary(snapshot: IDapSyncProgressSnapshot) {
+    try {
+      localStorage.setItem(this.dapSyncLastSummaryStorageKey, JSON.stringify(snapshot));
+    } catch (_e) {
+      /* ignore */
+    }
+  }
+
   static getDapSyncProgressSnapshot(): IDapSyncProgressSnapshot {
-    return {
-      ...this.dapSyncProgressSnapshot,
-    };
+    this.hydrateDapLastSummaryFromStorage();
+    const live = this.dapSyncProgressSnapshot;
+    const last = this.dapSyncLastCompletedSummary;
+    const syncInFlight = this.dapSyncPromise != null || live.isRunning;
+
+    // After a finished sync, keep showing its statistics until a new run actually starts (manual or auto).
+    // If the live snapshot was reset to empty idle (e.g. side effects), fall back to the last completed summary.
+    if (!syncInFlight && last) {
+      const blankIdle = !live.isRunning
+        && live.phase === 'idle'
+        && live.processedItems === 0
+        && live.totalItems === 0
+        && live.copiedFiles === 0
+        && live.deletedFiles === 0;
+      if (blankIdle) {
+        return { ...last };
+      }
+    }
+
+    // Silent auto-sync: first updates are planning/0 — overlay prior done counts until this run reports progress.
+    if (
+      syncInFlight
+      && this.dapSilentRunHoldPriorSummaryForUi
+      && last
+      && live.isRunning
+      && live.processedItems === 0
+      && last.totalItems > 0
+    ) {
+      return {
+        ...live,
+        processedItems: last.processedItems,
+        totalItems: last.totalItems,
+        copiedFiles: last.copiedFiles,
+        deletedFiles: last.deletedFiles,
+      };
+    }
+
+    return { ...live };
   }
 
   static subscribeDapSyncProgress(listener: (snapshot: IDapSyncProgressSnapshot) => void): () => void {
@@ -454,21 +742,581 @@ export class MediaLibraryService {
     this.cancelDapLibrarySync();
     this.clearDapSyncCheckpoint();
     this.clearDapSyncState();
-    const settings = this.getDapSyncSettings();
-    const targetDirectory = String(settings.targetDirectory || '').trim();
+    if (this.dapSyncProgressSnapshot.isRunning) {
+      this.updateDapSyncProgress({
+        phase: 'aborted',
+        isRunning: false,
+        canResume: true,
+        errorMessage: undefined,
+      });
+    }
+  }
+
+  private static mapAdbSyncInitError(error: unknown): string {
+    const code = String((error as Error)?.message || error);
+    if (code === 'ADB_NOT_FOUND') {
+      return I18nService.getString('label_settings_dap_adb_error_no_adb');
+    }
+    if (code === 'ADB_NO_DEVICE') {
+      return I18nService.getString('label_settings_dap_adb_error_no_device');
+    }
+    if (code === 'ADB_UNAUTHORIZED') {
+      return I18nService.getString('label_settings_dap_adb_error_unauthorized');
+    }
+    if (code === 'ADB_MULTIPLE_DEVICES') {
+      return I18nService.getString('label_settings_dap_adb_error_multiple_devices');
+    }
+    if (code === 'ADB_DEVICES_TIMED_OUT') {
+      return I18nService.getString('label_settings_dap_adb_error_devices_timeout');
+    }
+    if (code === 'ADB_INVALID_DEVICE_SERIAL') {
+      return I18nService.getString('label_settings_dap_adb_error_invalid_serial');
+    }
+    return code;
+  }
+
+  /**
+   * Push library to a single USB-debugging Android device via adb (Music + Podcasts under SD if writable, else internal).
+   */
+  private static runDapAdbLibrarySync(options?: {
+    deleteMissingOnDevice?: boolean;
+    silent?: boolean;
+  }): Promise<{ copiedFiles: number; deletedFiles: number; totalTracks: number }> {
+    const abortController = new AbortController();
+    this.dapSyncAbortController = abortController;
+    const { signal } = abortController;
+    const startedAt = Date.now();
+    let adbPathForMonitor = '';
+    let serialForMonitor = '';
+
+    const syncPromise = (async () => {
+      if (signal.aborted) {
+        throw this.toDapAbortError();
+      }
+
+      // Build the local track list before touching ADB. Remote paths use `musicSyncRoot` + `relativePath` later;
+      // placeholder root only affects unused `destinationPath` fields for this transport.
+      const planPlaceholderRoot = path.posix.join('/', this.dapSyncDirectoryName);
+      const {
+        trackItems,
+        expectedRelativePaths,
+        totalExpectedMusicItems,
+      } = await this.buildDapLibraryTrackPlan(planPlaceholderRoot);
+
+      this.updateDapSyncProgress({
+        phase: 'planning',
+        isRunning: true,
+        processedItems: 0,
+        totalItems: totalExpectedMusicItems,
+        copiedFiles: 0,
+        deletedFiles: 0,
+        startedAt,
+        targetDirectory: '',
+        syncRootPath: '',
+        canResume: false,
+        resumedFromProcessedItems: 0,
+        errorMessage: undefined,
+      });
+
+      let adbPath: string;
+      let serial: string;
+      let storageBase: string;
+      try {
+        adbPath = await resolveAdbExecutable(signal);
+        adbPathForMonitor = adbPath;
+        serial = await getAuthorizedAdbDeviceSerial(adbPath, signal);
+        serialForMonitor = serial;
+        storageBase = await resolveDapStorageBasePath(adbPath, serial, signal);
+      } catch (error) {
+        throw new Error(this.mapAdbSyncInitError(error));
+      }
+
+      const musicSyncRoot = path.posix.join(storageBase, this.dapSyncDirectoryName);
+      const podcastRemoteRoot = path.posix.join(storageBase, PodcastService.podcastDirectoryName);
+      const dapTargetVirtual = `adb:${serial}`;
+
+      const deviceMonitor = setInterval(() => {
+        if (this.dapSyncAbortController !== abortController || !adbPathForMonitor || !serialForMonitor) {
+          return;
+        }
+        isAdbDeviceReachable(adbPathForMonitor, serialForMonitor).then((ok) => {
+          if (!ok && this.dapSyncAbortController === abortController) {
+            abortController.abort();
+          }
+        }).catch(() => undefined);
+      }, 2500);
+
+      try {
+        const currentCheckpoint = this.loadDapSyncCheckpoint(dapTargetVirtual, musicSyncRoot);
+        const currentSyncState = this.loadDapSyncState(dapTargetVirtual, musicSyncRoot);
+        const syncStateEntries = new Map(Object.entries(currentSyncState?.entries || {}));
+        const completedRelativePathSet = new Set(currentCheckpoint?.completedRelativePaths || []);
+        let copiedFiles = currentCheckpoint?.copiedFiles || 0;
+        let deletedFiles = currentCheckpoint?.deletedFiles || 0;
+        let skippedFiles = 0;
+
+        this.updateDapSyncProgress({
+          phase: 'planning',
+          isRunning: true,
+          processedItems: 0,
+          totalItems: totalExpectedMusicItems,
+          copiedFiles,
+          deletedFiles,
+          startedAt,
+          targetDirectory: dapTargetVirtual,
+          syncRootPath: musicSyncRoot,
+          canResume: false,
+          resumedFromProcessedItems: completedRelativePathSet.size,
+          errorMessage: undefined,
+        });
+
+        const deleteMissingOnDevice = options?.deleteMissingOnDevice ?? this.getDapSyncSettings().deleteMissingOnDevice;
+
+        const hashRemoteForCompare = (remote: string, sig?: AbortSignal) => hashRemoteFileViaPull(
+          adbPath,
+          serial,
+          remote,
+          (p, s) => this.hashFileSha1(p, s),
+          sig,
+        );
+
+        let planningProcessedItems = 0;
+        let planningLastProgressUpdateAt = 0;
+        const resumeValidation = await Promise.map(trackItems, async (trackItem) => {
+          if (signal.aborted) {
+            throw this.toDapAbortError();
+          }
+          const remotePath = joinDevicePosixPath(musicSyncRoot, trackItem.relativePath);
+          const destinationCheck = await checkAdbDestinationCurrent({
+            adbPath,
+            serial,
+            sourcePath: trackItem.sourcePath,
+            remotePath,
+            sourceMeta: {
+              sourceSize: trackItem.sourceSize,
+              sourceMtimeMs: trackItem.sourceMtimeMs,
+              syncStateEntry: syncStateEntries.get(trackItem.relativePath),
+              signal,
+            },
+            hashLocalFile: (p, s) => this.hashFileSha1(p, s),
+            hashRemoteFile: hashRemoteForCompare,
+          });
+          if (destinationCheck.isCurrent && destinationCheck.syncStateEntry) {
+            syncStateEntries.set(trackItem.relativePath, destinationCheck.syncStateEntry as IDapSyncStateEntry);
+          }
+          planningProcessedItems += 1;
+          const now = Date.now();
+          if (planningProcessedItems % 20 === 0 || (now - planningLastProgressUpdateAt) > 250 || planningProcessedItems >= trackItems.length) {
+            planningLastProgressUpdateAt = now;
+            this.updateDapSyncProgress({
+              phase: 'planning',
+              isRunning: true,
+              processedItems: planningProcessedItems,
+              totalItems: totalExpectedMusicItems,
+              copiedFiles,
+              deletedFiles,
+              startedAt,
+              targetDirectory: dapTargetVirtual,
+              syncRootPath: musicSyncRoot,
+              canResume: false,
+              resumedFromProcessedItems: completedRelativePathSet.size,
+              errorMessage: undefined,
+            });
+          }
+          return {
+            ...trackItem,
+            remotePath,
+            alreadyCompleted: destinationCheck.isCurrent,
+          };
+        }, { concurrency: 4 });
+
+        const resumedValidRelativePaths = resumeValidation
+          .filter(item => item.alreadyCompleted)
+          .map(item => item.relativePath);
+        const resumedValidRelativePathSet = new Set(resumedValidRelativePaths);
+        const pendingTrackItems = resumeValidation.filter(item => !item.alreadyCompleted);
+
+        this.persistDapSyncCheckpoint({
+          targetDirectory: dapTargetVirtual,
+          syncRootPath: musicSyncRoot,
+          completedRelativePaths: resumedValidRelativePaths,
+          copiedFiles,
+          deletedFiles,
+        });
+
+        this.updateDapSyncProgress({
+          phase: 'copying',
+          isRunning: true,
+          processedItems: resumedValidRelativePathSet.size,
+          totalItems: totalExpectedMusicItems,
+          copiedFiles,
+          deletedFiles,
+          startedAt,
+          targetDirectory: dapTargetVirtual,
+          syncRootPath: musicSyncRoot,
+          canResume: false,
+          resumedFromProcessedItems: resumedValidRelativePathSet.size,
+          errorMessage: undefined,
+        });
+
+        let lastCheckpointPersistAt = 0;
+        let lastProgressUpdateAt = 0;
+        const persistDapProgressState = (force = false) => {
+          const now = Date.now();
+          if (!force && resumedValidRelativePathSet.size > 0 && resumedValidRelativePathSet.size % 20 !== 0 && (now - lastCheckpointPersistAt) < 1200) {
+            return;
+          }
+          lastCheckpointPersistAt = now;
+          this.persistDapSyncCheckpoint({
+            targetDirectory: dapTargetVirtual,
+            syncRootPath: musicSyncRoot,
+            completedRelativePaths: [...resumedValidRelativePathSet],
+            copiedFiles,
+            deletedFiles,
+          });
+          this.persistDapSyncState({
+            targetDirectory: dapTargetVirtual,
+            syncRootPath: musicSyncRoot,
+            entries: Object.fromEntries(syncStateEntries.entries()),
+          });
+        };
+        const publishCopyProgress = (force = false) => {
+          const now = Date.now();
+          if (!force && resumedValidRelativePathSet.size > 0 && resumedValidRelativePathSet.size % 10 !== 0 && (now - lastProgressUpdateAt) < 200) {
+            return;
+          }
+          lastProgressUpdateAt = now;
+          this.updateDapSyncProgress({
+            phase: 'copying',
+            isRunning: true,
+            processedItems: resumedValidRelativePathSet.size,
+            totalItems: totalExpectedMusicItems,
+            copiedFiles,
+            deletedFiles,
+            startedAt,
+            targetDirectory: dapTargetVirtual,
+            syncRootPath: musicSyncRoot,
+            canResume: false,
+            resumedFromProcessedItems: resumedValidRelativePathSet.size,
+            errorMessage: undefined,
+          });
+        };
+
+        await Promise.map(pendingTrackItems, async (trackItem) => {
+          if (signal.aborted) {
+            throw this.toDapAbortError();
+          }
+
+          let trackSynchronized = false;
+          let trackSyncCheck: Awaited<ReturnType<typeof checkAdbDestinationCurrent>> | undefined;
+          const { remotePath } = trackItem as { remotePath: string };
+          try {
+            await remoteMkdirP(adbPath, serial, path.posix.dirname(remotePath), signal);
+            const preCopyCheck = await checkAdbDestinationCurrent({
+              adbPath,
+              serial,
+              sourcePath: trackItem.sourcePath,
+              remotePath,
+              sourceMeta: {
+                sourceSize: trackItem.sourceSize,
+                sourceMtimeMs: trackItem.sourceMtimeMs,
+                syncStateEntry: syncStateEntries.get(trackItem.relativePath),
+                signal,
+              },
+              hashLocalFile: (p, s) => this.hashFileSha1(p, s),
+              hashRemoteFile: hashRemoteForCompare,
+            });
+            const shouldCopy = !preCopyCheck.isCurrent;
+            if (shouldCopy) {
+              await adbPushLocalFile(adbPath, serial, trackItem.sourcePath, remotePath, signal);
+              copiedFiles += 1;
+              trackSyncCheck = await checkAdbDestinationCurrent({
+                adbPath,
+                serial,
+                sourcePath: trackItem.sourcePath,
+                remotePath,
+                sourceMeta: {
+                  sourceSize: trackItem.sourceSize,
+                  sourceMtimeMs: trackItem.sourceMtimeMs,
+                  syncStateEntry: syncStateEntries.get(trackItem.relativePath),
+                  signal,
+                },
+                hashLocalFile: (p, s) => this.hashFileSha1(p, s),
+                hashRemoteFile: hashRemoteForCompare,
+              });
+              trackSynchronized = trackSyncCheck.isCurrent;
+            } else {
+              trackSyncCheck = preCopyCheck;
+              trackSynchronized = true;
+            }
+          } catch (error) {
+            if (signal.aborted) {
+              throw this.toDapAbortError();
+            }
+            skippedFiles += 1;
+            debug('Skipping ADB DAP sync file after error: %o', {
+              sourcePath: trackItem.sourcePath,
+              remotePath,
+              error: String((error as any)?.message || error),
+            });
+          }
+
+          if (!trackSynchronized) {
+            publishCopyProgress();
+            return;
+          }
+
+          resumedValidRelativePathSet.add(trackItem.relativePath);
+          const syncStateEntry = trackSyncCheck?.syncStateEntry;
+          if (syncStateEntry) {
+            syncStateEntries.set(trackItem.relativePath, syncStateEntry as IDapSyncStateEntry);
+          }
+          persistDapProgressState();
+          publishCopyProgress();
+        }, { concurrency: 1 });
+        persistDapProgressState(true);
+        publishCopyProgress(true);
+
+        if (signal.aborted) {
+          throw this.toDapAbortError();
+        }
+
+        if (deleteMissingOnDevice) {
+          const musicPrefix = musicSyncRoot.endsWith('/') ? musicSyncRoot : `${musicSyncRoot}/`;
+          const staleRelativePaths = [...syncStateEntries.keys()].filter(relativePath => !expectedRelativePaths.has(relativePath));
+          staleRelativePaths.forEach(relativePath => syncStateEntries.delete(relativePath));
+
+          let cleaningScanLines = 0;
+          const publishCleaningProgress = (force = false) => {
+            if (!force && cleaningScanLines % 80 !== 0) {
+              return;
+            }
+            const gap = Math.max(0, totalExpectedMusicItems - resumedValidRelativePathSet.size);
+            const cleaningAdvance = gap > 0 ? Math.min(gap, cleaningScanLines) : 0;
+            this.updateDapSyncProgress({
+              phase: 'cleaning',
+              isRunning: true,
+              processedItems: Math.min(
+                totalExpectedMusicItems,
+                resumedValidRelativePathSet.size + cleaningAdvance,
+              ),
+              totalItems: totalExpectedMusicItems,
+              copiedFiles,
+              deletedFiles,
+              startedAt,
+              targetDirectory: dapTargetVirtual,
+              syncRootPath: musicSyncRoot,
+              canResume: false,
+              resumedFromProcessedItems: resumedValidRelativePathSet.size,
+              errorMessage: undefined,
+            });
+          };
+
+          this.updateDapSyncProgress({
+            phase: 'cleaning',
+            isRunning: true,
+            processedItems: resumedValidRelativePathSet.size,
+            totalItems: totalExpectedMusicItems,
+            copiedFiles,
+            deletedFiles,
+            startedAt,
+            targetDirectory: dapTargetVirtual,
+            syncRootPath: musicSyncRoot,
+            canResume: false,
+            resumedFromProcessedItems: resumedValidRelativePathSet.size,
+            errorMessage: undefined,
+          });
+
+          await forEachRemoteFileLine(adbPath, serial, musicSyncRoot, async (remoteFile) => {
+            if (signal.aborted) {
+              throw this.toDapAbortError();
+            }
+            cleaningScanLines += 1;
+            publishCleaningProgress();
+            if (cleaningScanLines % 120 === 0) {
+              await new Promise<void>(r => setImmediate(r));
+            }
+            if (!remoteFile.startsWith(musicPrefix)) {
+              return;
+            }
+            const relativePath = remoteFile.slice(musicPrefix.length).split(path.sep).join('/');
+            if (expectedRelativePaths.has(relativePath)) {
+              return;
+            }
+            if (!this.isManagedDapMusicRelativePath(relativePath) || this.isIgnoredDapRelativePath(relativePath)) {
+              return;
+            }
+            const removed = await remoteUnlink(adbPath, serial, remoteFile, signal);
+            if (removed) {
+              deletedFiles += 1;
+            }
+            persistDapProgressState();
+            publishCleaningProgress(true);
+          }, signal);
+          persistDapProgressState(true);
+          publishCleaningProgress(true);
+        }
+
+        const tmpRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'aurora-dap-adb-'));
+        let tmpPodcastsExists = false;
+        let podcastSyncResult = {
+          copiedFiles: 0,
+          deletedFiles: 0,
+          totalFiles: 0,
+          syncedFiles: 0,
+        };
+        try {
+          podcastSyncResult = await PodcastService.syncPodcastsToDap({
+            targetDirectory: tmpRoot,
+            deleteMissingOnDevice,
+            signal,
+          });
+          const tmpPodcasts = path.join(tmpRoot, PodcastService.podcastDirectoryName);
+          tmpPodcastsExists = await fs.promises.stat(tmpPodcasts).then(s => s.isDirectory()).catch(() => false);
+          const expectedPodcastRel = new Set<string>();
+          if (tmpPodcastsExists) {
+            const localPodFiles = await dapWalkLocalFilesRecursive(tmpPodcasts);
+            localPodFiles.forEach((f) => {
+              expectedPodcastRel.add(path.relative(tmpPodcasts, f).split(path.sep).join('/'));
+            });
+            await Promise.map(localPodFiles, async (localFile) => {
+              if (signal.aborted) {
+                throw this.toDapAbortError();
+              }
+              const rel = path.relative(tmpPodcasts, localFile).split(path.sep).join('/');
+              const remotePod = joinDevicePosixPath(podcastRemoteRoot, rel);
+              await remoteMkdirP(adbPath, serial, path.posix.dirname(remotePod), signal);
+              await adbPushLocalFile(adbPath, serial, localFile, remotePod, signal);
+            }, { concurrency: 1 });
+          }
+
+          if (deleteMissingOnDevice && tmpPodcastsExists) {
+            const podPrefix = podcastRemoteRoot.endsWith('/') ? podcastRemoteRoot : `${podcastRemoteRoot}/`;
+            const remotePodFiles = await remoteListFilesRecursive(adbPath, serial, podcastRemoteRoot, signal);
+            await Promise.map(remotePodFiles, async (remotePodPath) => {
+              if (signal.aborted) {
+                throw this.toDapAbortError();
+              }
+              if (!remotePodPath.startsWith(podPrefix)) {
+                return;
+              }
+              const rel = remotePodPath.slice(podPrefix.length).split(path.sep).join('/');
+              if (!expectedPodcastRel.has(rel)) {
+                await remoteUnlink(adbPath, serial, remotePodPath, signal);
+                deletedFiles += 1;
+              }
+            }, { concurrency: 1 });
+          }
+        } finally {
+          await fs.promises.rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+
+        copiedFiles += podcastSyncResult.copiedFiles;
+        deletedFiles += podcastSyncResult.deletedFiles;
+        const totalExpectedItemsWithPodcasts = trackItems.length + podcastSyncResult.totalFiles;
+        const synchronizedItemsWithPodcasts = resumedValidRelativePathSet.size + podcastSyncResult.syncedFiles;
+        const missingItems = Math.max(0, totalExpectedItemsWithPodcasts - synchronizedItemsWithPodcasts);
+
+        this.persistDapSyncState({
+          targetDirectory: dapTargetVirtual,
+          syncRootPath: musicSyncRoot,
+          entries: Object.fromEntries(syncStateEntries.entries()),
+        });
+
+        this.clearDapSyncCheckpoint();
+        const result = {
+          copiedFiles,
+          deletedFiles,
+          totalTracks: synchronizedItemsWithPodcasts,
+        };
+
+        this.updateDapSyncProgress({
+          phase: 'done',
+          isRunning: false,
+          processedItems: synchronizedItemsWithPodcasts,
+          totalItems: totalExpectedItemsWithPodcasts,
+          copiedFiles: result.copiedFiles,
+          deletedFiles: result.deletedFiles,
+          startedAt,
+          targetDirectory: dapTargetVirtual,
+          syncRootPath: musicSyncRoot,
+          canResume: false,
+          resumedFromProcessedItems: 0,
+          errorMessage: missingItems > 0 ? `${missingItems} Datei(en) fehlen und werden beim nächsten Sync nachgeholt.` : undefined,
+        });
+
+        if (!options?.silent) {
+          NotificationService.showMessage(`DAP Sync (ADB): ${result.copiedFiles} kopiert, ${result.deletedFiles} gelöscht, ${result.totalTracks} Titel synchronisiert, ${skippedFiles} übersprungen.`);
+        }
+
+        return result;
+      } finally {
+        clearInterval(deviceMonitor);
+      }
+    })()
+      .catch((error) => {
+        const abortedByUser = error?.message === this.dapSyncAbortErrorCode || error?.name === 'AbortError';
+        if (abortedByUser) {
+          const dapTargetVirtual = serialForMonitor ? `adb:${serialForMonitor}` : '';
+          const snap = this.getDapSyncProgressSnapshot();
+          const checkpoint = dapTargetVirtual
+            ? this.loadDapSyncCheckpoint(dapTargetVirtual, String(snap.syncRootPath || '').trim() || '')
+            : null;
+          this.updateDapSyncProgress({
+            phase: 'aborted',
+            isRunning: false,
+            canResume: true,
+            resumedFromProcessedItems: checkpoint?.completedRelativePaths.length || 0,
+            errorMessage: undefined,
+          });
+          return {
+            copiedFiles: this.dapSyncProgressSnapshot.copiedFiles,
+            deletedFiles: this.dapSyncProgressSnapshot.deletedFiles,
+            totalTracks: this.dapSyncProgressSnapshot.totalItems,
+          };
+        }
+        const normalizedErrorMessage = String(error?.message || error);
+        this.updateDapSyncProgress({
+          phase: 'error',
+          isRunning: false,
+          canResume: false,
+          targetDirectory: serialForMonitor ? `adb:${serialForMonitor}` : '',
+          syncRootPath: '',
+          errorMessage: normalizedErrorMessage,
+        });
+        throw error;
+      })
+      .finally(() => {
+        this.dapCurrentRunLibrarySyncGeneration = undefined;
+        this.dapSilentRunHoldPriorSummaryForUi = false;
+        if (this.dapSyncAbortController === abortController) {
+          this.dapSyncAbortController = null;
+        }
+        this.dapSyncPromise = null;
+      });
+
+    return syncPromise;
+  }
+
+  /** Clears counters for a new run (manual Sync only — silent auto-sync keeps the last summary until progress updates). */
+  private static prepareDapSyncProgressForNewRun(transport: 'filesystem' | 'adb', targetDirectoryForUi: string) {
+    const td = String(targetDirectoryForUi || '').trim();
+    const syncRootPath = transport === 'filesystem' && td
+      ? path.join(td, this.dapSyncDirectoryName)
+      : '';
     this.updateDapSyncProgress({
-      phase: 'idle',
-      isRunning: false,
+      phase: 'planning',
+      isRunning: true,
       processedItems: 0,
       totalItems: 0,
       copiedFiles: 0,
       deletedFiles: 0,
-      startedAt: 0,
-      targetDirectory,
-      syncRootPath: targetDirectory ? path.join(targetDirectory, this.dapSyncDirectoryName) : '',
+      startedAt: Date.now(),
+      targetDirectory: transport === 'adb' ? '' : td,
+      syncRootPath,
+      errorMessage: undefined,
       canResume: false,
       resumedFromProcessedItems: 0,
-      errorMessage: undefined,
     });
   }
 
@@ -476,12 +1324,36 @@ export class MediaLibraryService {
     targetDirectory?: string;
     deleteMissingOnDevice?: boolean;
     silent?: boolean;
+    transport?: 'filesystem' | 'adb';
+    /** Set by `syncDapLibraryIfEnabled` to dedupe auto runs after the same library-sync completion. */
+    librarySyncGeneration?: number;
   }): Promise<{ copiedFiles: number; deletedFiles: number; totalTracks: number }> {
     if (this.dapSyncPromise) {
       return this.dapSyncPromise;
     }
 
+    this.dapCurrentRunLibrarySyncGeneration = options?.librarySyncGeneration;
+    this.dapSilentRunHoldPriorSummaryForUi = !!options?.silent;
+
     const settings = this.getDapSyncSettings();
+    const transport = options?.transport ?? settings.transport ?? 'filesystem';
+
+    if (transport === 'adb') {
+      if (!options?.silent) {
+        this.prepareDapSyncProgressForNewRun('adb', '');
+      }
+      this.saveDapSyncSettings({
+        targetDirectory: String(settings.targetDirectory || '').trim(),
+        autoSyncEnabled: settings.autoSyncEnabled,
+        deleteMissingOnDevice: options?.deleteMissingOnDevice ?? settings.deleteMissingOnDevice,
+        transport: 'adb',
+        mirrorHostFolderLayout: settings.mirrorHostFolderLayout,
+      });
+      const adbPromise = this.runDapAdbLibrarySync(options);
+      this.dapSyncPromise = adbPromise;
+      return adbPromise;
+    }
+
     const configuredTargetDirectory = String(options?.targetDirectory || settings.targetDirectory || '').trim();
     if (!configuredTargetDirectory) {
       throw new Error('No DAP target directory configured');
@@ -491,10 +1363,15 @@ export class MediaLibraryService {
     if (path.basename(dapTargetDirectory).toLowerCase() === this.dapSyncDirectoryName.toLowerCase()) {
       dapTargetDirectory = path.dirname(dapTargetDirectory);
     }
+    if (!options?.silent) {
+      this.prepareDapSyncProgressForNewRun('filesystem', dapTargetDirectory);
+    }
     this.saveDapSyncSettings({
       targetDirectory: dapTargetDirectory,
       autoSyncEnabled: settings.autoSyncEnabled,
       deleteMissingOnDevice: settings.deleteMissingOnDevice,
+      transport: 'filesystem',
+      mirrorHostFolderLayout: settings.mirrorHostFolderLayout,
     });
 
     const abortController = new AbortController();
@@ -542,78 +1419,11 @@ export class MediaLibraryService {
         errorMessage: undefined,
       });
 
-      const trackDataList = await MediaTrackDatastore.findMediaTracks();
-      const mediaTracks = await MediaTrackService.buildMediaTracks(trackDataList);
-      const tracksWithPaths = mediaTracks.filter((mediaTrack) => {
-        const filePath = String((mediaTrack.extra as any)?.file_path || '');
-        return !_.isEmpty(filePath) && fs.existsSync(filePath);
-      });
-      const albumDiscNumbersByAlbumId = new Map<string, Set<number>>();
-      tracksWithPaths.forEach((mediaTrack) => {
-        const albumId = String(mediaTrack.track_album_id || mediaTrack.track_album?.id || '');
-        if (!albumId) {
-          return;
-        }
-        const discNumber = this.resolveTrackDiscNumber(mediaTrack);
-        if (discNumber <= 0) {
-          return;
-        }
-        const existingDiscNumbers = albumDiscNumbersByAlbumId.get(albumId) || new Set<number>();
-        existingDiscNumbers.add(discNumber);
-        albumDiscNumbersByAlbumId.set(albumId, existingDiscNumbers);
-      });
-
-      const usedRelativePathCounts = new Map<string, number>();
-      const trackItems = tracksWithPaths.map((mediaTrack) => {
-        const sourcePath = String((mediaTrack.extra as any)?.file_path || '');
-        const sourceExtension = path.extname(sourcePath) || '.flac';
-        const artistName = this.truncatePathPart(this.sanitizePathPart(
-          mediaTrack.track_album?.album_artist?.artist_name || 'Unknown Artist',
-        ), 80);
-        const albumName = this.sanitizePathPart(mediaTrack.track_album?.album_name || 'Unknown Album');
-        const albumYear = String(mediaTrack.track_album?.album_year || '').trim();
-        const albumDirectoryName = this.truncatePathPart(this.sanitizePathPart(
-          albumYear ? `${albumName} - ${albumYear}` : albumName,
-        ), 120);
-        const trackNumber = String(mediaTrack.track_number || 0).padStart(2, '0');
-        const trackName = this.truncatePathPart(this.sanitizePathPart(mediaTrack.track_name || 'Unknown Track'), 120);
-        const baseFileName = this.truncatePathPart(`${trackNumber} - ${trackName}`, 140);
-        const uniqueSuffix = mediaTrack.id.slice(0, 8);
-        const albumId = String(mediaTrack.track_album_id || mediaTrack.track_album?.id || '');
-        const discNumber = this.resolveTrackDiscNumber(mediaTrack);
-        const albumDiscNumbers = albumDiscNumbersByAlbumId.get(albumId);
-        const isMultiDiscAlbum = !!albumDiscNumbers && albumDiscNumbers.size > 1;
-        const discDirectoryName = (isMultiDiscAlbum && discNumber > 0) ? `CD${discNumber}` : '';
-        const fileName = this.truncatePathPart(`${baseFileName} [${uniqueSuffix}]${sourceExtension}`, 160);
-        const baseRelativePath = path
-          .join(artistName, albumDirectoryName, discDirectoryName, fileName)
-          .split(path.sep)
-          .join('/');
-        const relativePathUsageCount = Number(usedRelativePathCounts.get(baseRelativePath) || 0);
-        usedRelativePathCounts.set(baseRelativePath, relativePathUsageCount + 1);
-        const relativePath = relativePathUsageCount > 0
-          ? this.disambiguateRelativePath(baseRelativePath, sourcePath, relativePathUsageCount)
-          : baseRelativePath;
-        const legacyRelativePaths = discDirectoryName
-          ? [path.join(artistName, albumDirectoryName, fileName).split(path.sep).join('/')]
-          : [];
-        const destinationPath = path.join(syncRootPath, relativePath.split('/').join(path.sep));
-        const legacyDestinationPaths = legacyRelativePaths.map(legacyRelativePath => path.join(syncRootPath, legacyRelativePath.split('/').join(path.sep)));
-        const sourceSize = Number((mediaTrack.extra as any)?.file_size);
-        const sourceMtimeMs = Number((mediaTrack.extra as any)?.file_mtime);
-        return {
-          relativePath,
-          sourcePath,
-          destinationPath,
-          legacyDestinationPaths,
-          sourceSize: Number.isFinite(sourceSize) && sourceSize > 0 ? sourceSize : undefined,
-          sourceMtimeMs: Number.isFinite(sourceMtimeMs) && sourceMtimeMs > 0 ? sourceMtimeMs : undefined,
-        };
-      });
-
-      const expectedRelativePaths = new Set(trackItems.map(item => item.relativePath));
-      const expectedPodcastFilesCount = PodcastService.getExpectedDapSyncFileCount();
-      const totalExpectedMusicItems = trackItems.length + expectedPodcastFilesCount;
+      const {
+        trackItems,
+        expectedRelativePaths,
+        totalExpectedMusicItems,
+      } = await this.buildDapLibraryTrackPlan(syncRootPath);
       this.updateDapSyncProgress({
         phase: 'planning',
         isRunning: true,
@@ -951,6 +1761,8 @@ export class MediaLibraryService {
       })
       .finally(() => {
         clearInterval(dapTargetAvailabilityMonitor);
+        this.dapCurrentRunLibrarySyncGeneration = undefined;
+        this.dapSilentRunHoldPriorSummaryForUi = false;
         if (this.dapSyncAbortController === abortController) {
           this.dapSyncAbortController = null;
         }
@@ -963,16 +1775,32 @@ export class MediaLibraryService {
 
   static async syncDapLibraryIfEnabled(options?: {
     silent?: boolean;
+    /** Incremented in app when the media library finishes a sync pass (dedupes duplicate auto DAP after the same completion). */
+    librarySyncGeneration?: number;
   }): Promise<void> {
     const settings = this.getDapSyncSettings();
-    if (!settings.autoSyncEnabled || !settings.targetDirectory) {
+    if (!settings.autoSyncEnabled) {
+      return;
+    }
+    if (settings.transport === 'filesystem' && !String(settings.targetDirectory || '').trim()) {
+      return;
+    }
+
+    const silent = options?.silent ?? true;
+    const gen = options?.librarySyncGeneration;
+    const raw = this.dapSyncProgressSnapshot;
+    if (silent && gen !== undefined
+      && raw.phase === 'done' && !raw.isRunning
+      && gen === this.dapLibrarySyncGenerationLastConsumedForDone) {
       return;
     }
 
     await this.syncDapLibrary({
       targetDirectory: settings.targetDirectory,
       deleteMissingOnDevice: settings.deleteMissingOnDevice,
-      silent: options?.silent ?? true,
+      silent,
+      transport: settings.transport,
+      librarySyncGeneration: gen,
     });
   }
 
@@ -1160,6 +1988,14 @@ export class MediaLibraryService {
       elapsedMs,
       etaMs,
     };
+
+    if (nextSnapshot.phase === 'done' && !nextSnapshot.isRunning) {
+      this.dapSyncLastCompletedSummary = { ...this.dapSyncProgressSnapshot };
+      this.persistDapLastCompletedSummary(this.dapSyncLastCompletedSummary);
+      if (this.dapCurrentRunLibrarySyncGeneration !== undefined) {
+        this.dapLibrarySyncGenerationLastConsumedForDone = this.dapCurrentRunLibrarySyncGeneration;
+      }
+    }
 
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(this.dapSyncProgressEventName, {

@@ -63,6 +63,7 @@ function Stage() {
   const location = useLocation();
   const mediaIsSyncing = useSelector((state: RootState) => state.mediaLibrary.mediaIsSyncing);
   const mediaSyncStateRef = useRef(mediaIsSyncing);
+  const librarySyncGenerationRef = useRef(0);
 
   // ui related handlers need to be registered under router tree
   useEffect(() => {
@@ -134,7 +135,11 @@ function Stage() {
     const wasSyncing = mediaSyncStateRef.current;
     mediaSyncStateRef.current = mediaIsSyncing;
     if (!mediaIsSyncing && wasSyncing) {
-      MediaLibraryService.syncDapLibraryIfEnabled().catch(() => {});
+      librarySyncGenerationRef.current += 1;
+      MediaLibraryService.syncDapLibraryIfEnabled({
+        silent: true,
+        librarySyncGeneration: librarySyncGenerationRef.current,
+      }).catch(() => {});
     }
     return () => {};
   }, [mediaIsSyncing]);
@@ -145,7 +150,10 @@ function Stage() {
         return;
       }
       const dapSyncSettings = MediaLibraryService.getDapSyncSettings();
-      if (!dapSyncSettings.autoSyncEnabled || !dapSyncSettings.targetDirectory) {
+      if (!dapSyncSettings.autoSyncEnabled) {
+        return;
+      }
+      if (dapSyncSettings.transport === 'filesystem' && !dapSyncSettings.targetDirectory) {
         return;
       }
       const dapSyncSnapshot = MediaLibraryService.getDapSyncProgressSnapshot();
@@ -156,6 +164,7 @@ function Stage() {
         targetDirectory: dapSyncSettings.targetDirectory,
         deleteMissingOnDevice: dapSyncSettings.deleteMissingOnDevice,
         silent: true,
+        transport: dapSyncSettings.transport,
       }).catch(() => {});
     }, 12000);
 
