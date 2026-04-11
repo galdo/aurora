@@ -78,6 +78,8 @@ jobs:
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
+          # yarn.lock can resolve packages as git+ssh://git@github.com/... (no SSH in CI → exit 128 without this).
+          git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
 
@@ -143,6 +145,8 @@ jobs:
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
+          # yarn.lock can resolve packages as git+ssh://git@github.com/... (no SSH in CI → exit 128 without this).
+          git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
 
@@ -222,6 +226,8 @@ jobs:
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
+          # yarn.lock can resolve packages as git+ssh://git@github.com/... (no SSH in CI → exit 128 without this).
+          git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
 
