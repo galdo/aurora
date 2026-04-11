@@ -155,6 +155,9 @@
     "url": "https://github.com/galdo/aurora/issues"
   },
   "homepage": "https://github.com/galdo/aurora",
+  "resolutions": {
+    "@electron/node-gyp": "git+https://github.com/electron/node-gyp.git#06b29aafb7708acef8b3669835c8a7857ebc92d2"
+  },
   "devDependencies": {
     "@babel/core": "^7.12.9",
     "@babel/plugin-proposal-class-properties": "^7.12.1",

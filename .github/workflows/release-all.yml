@@ -78,7 +78,12 @@ jobs:
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
-          # yarn.lock can resolve packages as git+ssh://git@github.com/... (no SSH in CI → exit 128 without this).
+          # Yarn may still fetch git+ssh from lockfile; git insteadOf is not always applied → keep lockfile on git+https.
+          if grep -q 'git+ssh://git@github.com' yarn.lock; then
+            echo '::error::yarn.lock uses git+ssh for github.com — replace resolved URL with git+https:// (see @electron/node-gyp).'
+            grep -n 'git+ssh://' yarn.lock || true
+            exit 1
+          fi
           git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -145,7 +150,12 @@ jobs:
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
-          # yarn.lock can resolve packages as git+ssh://git@github.com/... (no SSH in CI → exit 128 without this).
+          # Yarn may still fetch git+ssh from lockfile; git insteadOf is not always applied → keep lockfile on git+https.
+          if grep -q 'git+ssh://git@github.com' yarn.lock; then
+            echo '::error::yarn.lock uses git+ssh for github.com — replace resolved URL with git+https:// (see @electron/node-gyp).'
+            grep -n 'git+ssh://' yarn.lock || true
+            exit 1
+          fi
           git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -226,7 +236,12 @@ jobs:
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
-          # yarn.lock can resolve packages as git+ssh://git@github.com/... (no SSH in CI → exit 128 without this).
+          # Yarn may still fetch git+ssh from lockfile; git insteadOf is not always applied → keep lockfile on git+https.
+          if grep -q 'git+ssh://git@github.com' yarn.lock; then
+            echo '::error::yarn.lock uses git+ssh for github.com — replace resolved URL with git+https:// (see @electron/node-gyp).'
+            grep -n 'git+ssh://' yarn.lock || true
+            exit 1
+          fi
           git config --global url."https://github.com/".insteadOf "git+ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
           git config --global url."https://github.com/".insteadOf "git@github.com:"
