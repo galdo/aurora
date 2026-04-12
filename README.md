@@ -50,8 +50,6 @@ Library management is optimized for local folder structures and larger collectio
 
 Playlist support covers both explicit manual curation and smart collection logic. Artwork generation and sorting behavior have been improved to stay robust even in mixed or generated collections, which makes playlists viable both for everyday listening and for structured thematic cataloging.
 
-![Aurora Pulse - Playlists](docs/images/placeholder-playlists.png)
-
 ### DAP Sync
 
 DAP sync extends your local workflow to portable players with **filesystem** or **ADB (USB)** transport. Copy with progress, ETA, resume, and cancellation as first-class controls—built for the messy reality of cables, reconnects, and interrupted sessions. **ADB** mode targets Android-class devices: automatic writable storage resolution, optional **mirror your desktop library folder layout**, and a cleaning phase designed for very large libraries without choking the UI. **Filesystem** mode remains ideal when your player mounts as a drive.
