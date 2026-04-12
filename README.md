@@ -10,6 +10,14 @@ Aurora Pulse is a local-first, audiophile-focused desktop player for listeners w
 
 ---
 
+## What’s new since 1.5.0
+
+**1.5.x** doubles down on *where* you listen and *how* reliably your library follows you. On the desktop, **DAP sync over ADB** lets you push music and podcasts to a USB-connected Android player without mounting it as a disk—complete with SD-first storage discovery and shell-safe paths for real-world filenames (spaces, parentheses, and more). Prefer your PC folder tree on the device? Toggle **mirror host folder layout** and keep your library structure 1:1 under `Music/`, or fall back to classic tag-based layout.
+
+Large sync sessions stay honest: **planning → copying → cleaning** progress is clearer, remote cleanup **streams** file listings so huge libraries don’t stall at the finish line, and **DLNA / remote playback** keeps getting smarter—tighter queue handling, calmer transitions, and renderer state that stays glued to what you hear.
+
+---
+
 ## Why Aurora Pulse
 
 Aurora Pulse is built around a simple idea: your music library should stay yours, your playback chain should remain transparent, and your day-to-day listening should feel fast instead of fragile. The application keeps local playback and local data ownership at the center while exposing the quality details that matter in serious listening scenarios, including file and stream characteristics directly in the player context.
@@ -46,7 +54,7 @@ Playlist support covers both explicit manual curation and smart collection logic
 
 ### DAP Sync
 
-DAP sync extends your local workflow to portable devices with a focus on operational stability. Progress tracking, ETA, resume, and cancellation are available as first-class controls, and the sync engine has been hardened for reconnect, restart, and interruption scenarios that happen in real device usage.
+DAP sync extends your local workflow to portable players with **filesystem** or **ADB (USB)** transport. Copy with progress, ETA, resume, and cancellation as first-class controls—built for the messy reality of cables, reconnects, and interrupted sessions. **ADB** mode targets Android-class devices: automatic writable storage resolution, optional **mirror your desktop library folder layout**, and a cleaning phase designed for very large libraries without choking the UI. **Filesystem** mode remains ideal when your player mounts as a drive.
 
 ![Aurora Pulse - DAP Sync](docs/images/placeholder-dap-sync.png)
 
@@ -64,7 +72,21 @@ CD import is oriented toward archival quality and practical cleanup reduction. T
 
 ### DLNA / Remote Playback
 
-The DLNA stack has been significantly expanded to support remote playback scenarios with higher reliability. Command sequencing is serialized per renderer to reduce race conditions, transition handling between tracks is more robust, metadata compatibility has been improved for stricter renderer implementations, and bidirectional synchronization continues to evolve so player and renderer remain in sync during remote control operations.
+The DLNA stack is built for **living-room and companion devices**—not just “it plays,” but *it stays in sync*. Command sequencing is serialized per renderer to reduce race conditions, track-to-track transitions are handled with care, and metadata compatibility keeps improving for picky renderers. The player and the renderer are continuously reconciled so your on-screen queue, transport state, and what’s actually playing tell the same story.
+
+---
+
+## Aurora Pulse × Aurora Pulse Launcher — the power duo
+
+**The desktop is your mission control. Your phone is the encore.**
+
+[Aurora Pulse Launcher](./pulse-laucher/README.md) is the Android experience built for the same philosophy as Aurora Pulse: *your* library, *your* rhythm, without renting your habits back from a cloud. Pair it with Aurora Pulse on macOS, Windows, or Linux and you get a deliberate **two-screen story**: curate, sync, and drive playback from the big screen; slip the same world into your pocket when you walk away.
+
+On the **DLNA** side, Aurora Pulse is tuned for queue-aware, launcher-friendly remote playback—so handoffs between the desktop player and a dedicated Android listening surface feel intentional, not accidental. Together, they’re not two random apps with a logo in common; they’re **one ecosystem** split across the desk and the commute.
+
+**Want in early?** The Launcher is under active development; rough edges are part of the ride, and your feedback steers the roadmap. Apply for the **beta program** and help shape the Android side of Aurora:
+
+**→ [Aurora Pulse Launcher — Beta tester application](https://forms.gle/KBymYocF7hieTFJZ7)**
 
 ---
 
@@ -90,7 +112,7 @@ Aurora Pulse is intentionally local-first in both architecture and operating mod
 
 ## Development Status
 
-Aurora Pulse is in active development with a strong focus on audio confidence, sync resilience, and operational reliability in larger collections. Recent releases include substantial DLNA hardening work, expanded remote synchronization behavior, stronger DAP sync stability, and broader consistency improvements across the app shell.
+Aurora Pulse is in active development with a strong focus on audio confidence, sync resilience, and operational reliability in larger collections. The **1.5** generation emphasizes **ADB DAP sync**, **mirror-folder workflows**, **streaming-safe device cleanup**, and **DLNA / remote playback** refinements—including paths that play nicely with **Aurora Pulse Launcher** on Android. Expect the desktop and mobile stories to keep converging: one library, two surfaces, zero lock-in.
 
 If you want a visual product-style overview, see the landing page at [docs/landing_page/index.html](docs/landing_page/index.html).
 
