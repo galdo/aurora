@@ -24,6 +24,21 @@ import styles from './sidebar.component.css';
 
 const cx = classNames.bind(styles);
 
+function SidebarBuyMeCoffee() {
+  return (
+    <a
+      href="https://buymeacoffee.com/better_craft"
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cx('sidebar-bmc-link')}
+      title="Buy me a coffee"
+    >
+      <span className={cx('sidebar-bmc-emoji')}>☕</span>
+      <span className={cx('sidebar-bmc-text')}>Buy me a coffee</span>
+    </a>
+  );
+}
+
 function SidebarQuickAccess() {
   return (
     <div className={cx('sidebar-quick-access', 'app-scrollable')}>
@@ -188,6 +203,7 @@ function SidebarContent() {
       <SidebarBrandingLogo/>
       <SidebarNavigationList/>
       <SidebarQuickAccess/>
+      <SidebarBuyMeCoffee/>
     </div>
   );
 }

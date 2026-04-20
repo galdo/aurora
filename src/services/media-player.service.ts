@@ -85,6 +85,10 @@ class MediaPlayerService {
         if (!DlnaService.isRemoteOutputRequested()) {
           return;
         }
+        // Schritt 6: When the renderer auto-advances (gapless / SetNextAVTransportURI promotion),
+        // immediately backsync the UI to the new current track before syncing the next-next track.
+        // Without this, the UI would lag behind the renderer until the next snapshot cycle.
+        this.backsyncCurrentTrackFromSelectedRenderer();
         this.syncSelectedRendererNextTrack({ force: true });
       });
       window.addEventListener('beforeunload', () => {

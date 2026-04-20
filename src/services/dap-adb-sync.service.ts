@@ -114,6 +114,44 @@ export function isPlausibleAdbDeviceSerial(serial: string): boolean {
   return /^[a-zA-Z0-9._\-:]+$/.test(s);
 }
 
+/**
+ * On macOS, GUI-launched Electron apps do NOT inherit the user's shell
+ * environment (~/.zshrc, ~/.zprofile, etc.).  `process.env.PATH` only contains
+ * the minimal system PATH (/usr/bin:/bin:/usr/sbin:/sbin) — Homebrew paths
+ * like /opt/homebrew/bin (ARM) or /usr/local/bin (Intel) are missing.
+ *
+ * This helper runs the user's login shell once to capture the full PATH so
+ * that `adb` installed via `brew install android-platform-tools` is found.
+ */
+let resolvedShellPathCache: string | null = null;
+async function getShellPath(): Promise<string> {
+  if (resolvedShellPathCache !== null) {
+    return resolvedShellPathCache;
+  }
+  if (process.platform !== 'darwin' && process.platform !== 'linux') {
+    resolvedShellPathCache = process.env.PATH || '';
+    return resolvedShellPathCache;
+  }
+  try {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const { stdout } = await execFileAsync(shell, ['-l', '-i', '-c', 'echo __PATH__="$PATH"'], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      env: { ...process.env },
+    });
+    const match = stdout.match(/__PATH__=(.+)/);
+    if (match?.[1]) {
+      resolvedShellPathCache = match[1].trim();
+      dapLog('Resolved login-shell PATH: %s', resolvedShellPathCache);
+      return resolvedShellPathCache;
+    }
+  } catch (e) {
+    dapLog('Failed to resolve login-shell PATH: %s', e);
+  }
+  resolvedShellPathCache = process.env.PATH || '';
+  return resolvedShellPathCache;
+}
+
 export async function resolveAdbExecutable(signal?: AbortSignal): Promise<string> {
   const candidates: string[] = [];
   const push = (c?: string) => {
@@ -121,15 +159,49 @@ export async function resolveAdbExecutable(signal?: AbortSignal): Promise<string
       candidates.push(c);
     }
   };
+
+  // 1. Explicit env var override
   push(process.env.ADB_PATH);
+
+  // 2. ANDROID_HOME / ANDROID_SDK_ROOT
   const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
   if (androidHome) {
     push(path.join(androidHome, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb'));
   }
+
+  // 3. macOS: Android Studio default + Homebrew standard locations
   if (process.platform === 'darwin') {
     push(path.join(os.homedir(), 'Library/Android/sdk/platform-tools/adb'));
+    // Homebrew on Apple Silicon (ARM64)
+    push('/opt/homebrew/bin/adb');
+    // Homebrew on Intel Mac / manual installs
+    push('/usr/local/bin/adb');
   }
+
+  // 4. Linux common locations
+  if (process.platform === 'linux') {
+    push('/usr/bin/adb');
+    push('/usr/local/bin/adb');
+    push(path.join(os.homedir(), 'Android/Sdk/platform-tools/adb'));
+  }
+
+  // 5. Bare 'adb' — relies on PATH
   push('adb');
+
+  // 6. On macOS/Linux, also try to resolve the full login-shell PATH and
+  //    look for adb in each of its directories (catches custom locations).
+  if (process.platform === 'darwin' || process.platform === 'linux') {
+    try {
+      const shellPath = await getShellPath();
+      for (const dir of shellPath.split(':')) {
+        if (dir) {
+          push(path.join(dir, 'adb'));
+        }
+      }
+    } catch (_e) {
+      /* non-fatal — we already have the hardcoded candidates above */
+    }
+  }
 
   const tried = new Set<string>();
   for (const candidate of candidates) {

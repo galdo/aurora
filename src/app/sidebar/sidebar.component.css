@@ -198,3 +198,68 @@
   padding-top: var(--selectable-focus-ring-size);
   padding-bottom: var(--selectable-focus-ring-size);
 }
+
+/* Buy me a coffee link */
+.sidebar-bmc-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  background-color: rgba(0, 146, 51, 0.08);
+  color: var(--text-dark-color);
+  border: none;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: var(--selectable-item-transition);
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  margin-left: var(--scrollable-scrollbar-width);
+  margin-right: var(--scrollable-scrollbar-width);
+}
+
+.sidebar-bmc-link:hover {
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+}
+
+.sidebar-bmc-link:active {
+  transform: scale(0.98);
+}
+
+.sidebar-bmc-emoji {
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.8;
+}
+
+.sidebar-bmc-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Light theme: BMC button */
+:global(html[data-theme='light']) .sidebar-bmc-link {
+  background-color: rgba(0, 146, 51, 0.06);
+}
+
+:global(html[data-theme='light']) .sidebar-bmc-link:hover {
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+}
+
+@media (prefers-color-scheme: light) {
+  :global(html[data-theme='auto']) .sidebar-bmc-link {
+    background-color: rgba(0, 146, 51, 0.06);
+  }
+
+  :global(html[data-theme='auto']) .sidebar-bmc-link:hover {
+    background-color: var(--button-primary-bg-color);
+    color: #fff;
+  }
+}

@@ -178,9 +178,9 @@ export class DlnaService {
   private static readonly snapshotMinIntervalMs = 260;
   private static readonly snapshotCacheTtlMs = 2200;
   /** NOTIFY must be this fresh to skip a full SOAP round-trip while GENA is subscribed. */
-  private static readonly snapshotGenaEventMaxAgeForSoapBypassMs = 12000;
+  private static readonly snapshotGenaEventMaxAgeForSoapBypassMs = 3000;
   /** Full GetTransportInfo/GetPositionInfo merge at least this often for track URI + renderer quirks (GENA may omit RelTime). */
-  private static readonly snapshotFullSoapReconcileIntervalWhenGenaMs = 4500;
+  private static readonly snapshotFullSoapReconcileIntervalWhenGenaMs = 1800;
   private static readonly snapshotFailureBackoffBaseMs = 350;
   private static readonly snapshotFailureBackoffMaxMs = 2400;
   private static readonly rendererEventRenewIntervalMs = 20000;
@@ -220,6 +220,12 @@ export class DlnaService {
   private static rendererPlaybackOperationTargetTrackKeyByRendererId: Map<string, string> = new Map();
   private static rendererCurrentTrackIdByRendererId: Map<string, string> = new Map();
   private static rendererPendingNextTrackIdByRendererId: Map<string, string> = new Map();
+  /**
+   * Stores metadata+URL of the pending-next track so that after auto-advance
+   * we can re-send SetAVTransportURI to update display metadata and clear
+   * the renderer's stale NextURI (fixes Eversolo repeat-track + wrong-title bugs).
+   */
+  private static rendererPendingNextTrackReanchorByRendererId: Map<string, { streamUrl: string; metadata: string; compatibilityMetadata: string }> = new Map();
   /** Consecutive SetNext failures per renderer; after 2 we schedule async recovery (snapshot → promote or direct play). */
   private static setNextConsecutiveFailureCountByRendererId: Map<string, number> = new Map();
   private static setNextRecoveryScheduledTimeoutByRendererId: Map<string, ReturnType<typeof setTimeout>> = new Map();
@@ -233,6 +239,8 @@ export class DlnaService {
   private static rendererEventSubscriptionInFlightByRendererId: Map<string, Promise<void>> = new Map();
   private static rendererRcEventSubscriptionInFlightByRendererId: Map<string, Promise<void>> = new Map();
   private static rendererLastSentTrackUriByRendererId: Map<string, string> = new Map();
+  /** Timestamp (Date.now()) when the last SetAVTransportURI was sent per renderer; used to grace-window NO_MEDIA_PRESENT events. */
+  private static rendererLastSentTrackUriAtByRendererId: Map<string, number> = new Map();
   private static rendererTrackChangeActiveUntilByRendererId: Map<string, number> = new Map();
   private static rendererEventLastSeqBySid: Map<string, number> = new Map();
   private static rendererRcEventSubscriptionSidByRendererId: Map<string, string> = new Map();
@@ -1147,6 +1155,7 @@ export class DlnaService {
       this.rendererTrackChangeActiveUntilByRendererId.set(renderer.id, Date.now() + 10000);
       this.rendererCurrentTrackIdByRendererId.set(renderer.id, mediaTrackId);
       this.rendererPendingNextTrackIdByRendererId.delete(renderer.id);
+      this.rendererPendingNextTrackReanchorByRendererId.delete(renderer.id);
       const streamUrl = this.getTrackStreamUrlForRenderer(renderer, mediaTrackId);
       const metadataNonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const metadata = this.buildRendererTrackMetadata(mediaTrack, streamUrl, 'full', metadataNonce);
@@ -1248,6 +1257,7 @@ export class DlnaService {
             },
           );
           this.rendererPendingNextTrackIdByRendererId.delete(renderer.id);
+          this.rendererPendingNextTrackReanchorByRendererId.delete(renderer.id);
           this.setNextConsecutiveFailureCountByRendererId.delete(renderer.id);
           return true;
         } catch {
@@ -1269,6 +1279,7 @@ export class DlnaService {
       const result = await this.setRendererNextTransportUri(renderer, streamUrl, metadata, compatibilityMetadata);
       if (result) {
         this.rendererPendingNextTrackIdByRendererId.set(renderer.id, mediaTrackId);
+        this.rendererPendingNextTrackReanchorByRendererId.set(renderer.id, { streamUrl, metadata, compatibilityMetadata });
         this.setNextConsecutiveFailureCountByRendererId.delete(renderer.id);
         return true;
       }
@@ -1479,6 +1490,55 @@ export class DlnaService {
     window.dispatchEvent(new CustomEvent(this.rendererTrackAdvancedEventName, {
       detail: { rendererId },
     }));
+    // Re-anchor the promoted track: send SetAVTransportURI to update display metadata
+    // and clear stale NextURI. Scheduled with setTimeout to avoid command-queue deadlock
+    // (emitRendererTrackAdvanced is called from within serialized commands).
+    setTimeout(() => {
+      this.reanchorPromotedTrackOnRenderer(rendererId).catch(() => undefined);
+    }, 150);
+  }
+
+  /**
+   * After a renderer auto-advances to the queued next track, re-send SetAVTransportURI
+   * for the now-current (promoted) track. This:
+   * 1. Updates the displayed metadata (title/artist/album/cover) on the renderer.
+   * 2. Clears the renderer's stale NextAVTransportURI so subsequent SetNextAVTransportURI calls work.
+   * Fixes Eversolo repeat-track and wrong-title bugs.
+   */
+  private static async reanchorPromotedTrackOnRenderer(rendererId: string): Promise<void> {
+    const renderer = this.rendererDevices.get(rendererId);
+    if (!renderer) return;
+    if (!this.isRemoteOutputSelected() || this.selectedRendererId !== rendererId) return;
+
+    const pendingMeta = this.rendererPendingNextTrackReanchorByRendererId.get(rendererId);
+    if (!pendingMeta) return;
+    this.rendererPendingNextTrackReanchorByRendererId.delete(rendererId);
+
+    await this.runRendererCommandSerialized(renderer, 'reanchor_promoted', async () => {
+      this.rendererTrackChangeActiveUntilByRendererId.set(rendererId, Date.now() + 5000);
+      try {
+        await this.setRendererTransportUri(
+          renderer,
+          pendingMeta.streamUrl,
+          pendingMeta.metadata,
+          pendingMeta.compatibilityMetadata,
+          'primary',
+        );
+        this.writeDlnaLog('info', 'reanchor_promoted_track_ok', {
+          rendererId,
+          rendererName: renderer.friendlyName,
+          streamUrl: pendingMeta.streamUrl,
+        });
+      } catch (error: any) {
+        this.writeDlnaLog('warn', 'reanchor_promoted_track_failed', {
+          rendererId,
+          rendererName: renderer.friendlyName,
+          error: String(error?.message || error || ''),
+        });
+      } finally {
+        this.rendererTrackChangeActiveUntilByRendererId.delete(rendererId);
+      }
+    });
   }
 
   private static maybePromotePendingNextTrack(
@@ -2423,6 +2483,7 @@ export class DlnaService {
         });
       }
       this.rendererPendingNextTrackIdByRendererId.delete(renderer.id);
+      this.rendererPendingNextTrackReanchorByRendererId.delete(renderer.id);
       this.rendererCurrentTrackIdByRendererId.delete(renderer.id);
       this.rendererLastSentTrackUriByRendererId.delete(renderer.id);
       this.preferredNextMetadataModeByRendererId.delete(renderer.id);
@@ -3265,6 +3326,10 @@ ${albumArtLines.join('\n')}
     if (!playSucceeded) {
       return false;
     }
+    /* Schritt 7: Reset snapshot backoff after successful Play command so polling
+       resumes immediately instead of waiting out a stale backoff window. */
+    this.selectedRendererSnapshotBackoffUntilByRendererId.delete(renderer.id);
+    this.selectedRendererSnapshotFailureCount = 0;
     if (seekPositionSeconds > 0) {
       await this.seekSelectedRenderer(seekPositionSeconds).catch(() => false);
     }
@@ -3445,6 +3510,7 @@ ${albumArtLines.join('\n')}
     await applyMode(0);
     if (applied) {
       this.rendererLastSentTrackUriByRendererId.set(renderer.id, streamUrl);
+      this.rendererLastSentTrackUriAtByRendererId.set(renderer.id, Date.now());
       return;
     }
     await this.sendSoapRequest(
@@ -3455,6 +3521,7 @@ ${albumArtLines.join('\n')}
       this.transportSetupSoapRequestTimeoutMs,
     );
     this.rendererLastSentTrackUriByRendererId.set(renderer.id, streamUrl);
+    this.rendererLastSentTrackUriAtByRendererId.set(renderer.id, Date.now());
   }
 
   private static async setRendererNextTransportUri(
@@ -4192,7 +4259,11 @@ ${items}
         const trackLikelyUnchanged = !incomingTrackUri || !prevTrackUri || incomingTrackUri === prevTrackUri;
         const previousStateUpper = String(previousEventSnapshot?.transportState || '').toUpperCase();
         const previousPositionSeconds = Number(previousEventSnapshot?.positionSeconds || 0);
+        /** Schritt 2: NO_MEDIA_PRESENT nur innerhalb von 2s nach letztem SetAVTransportURI ignorieren */
+        const lastSetUriAt = Number(this.rendererLastSentTrackUriAtByRendererId?.get(rendererId) || 0);
+        const noMediaWithinSetUriGrace = lastSetUriAt > 0 && (Date.now() - lastSetUriAt) <= 2000;
         const suspiciousNoMediaNotify = String(nextTransportState || '').toUpperCase() === 'NO_MEDIA_PRESENT'
+          && noMediaWithinSetUriGrace
           && trackLikelyUnchanged
           && !!(incomingTrackUri || prevTrackUri)
           && previousStateUpper !== ''
@@ -4216,13 +4287,26 @@ ${items}
           });
           nextTransportState = previousEventSnapshot?.transportState || nextTransportState;
         }
-        /** Same URI + STOPPED with RelTime≈0 after PLAYING often appears during gapless / NOTIFY skew (not a user Stop mid-track). */
+        /**
+         * Schritt 1: Same URI + STOPPED with RelTime≈0 after PLAYING — may be gapless skew OR a real track end.
+         * Compare previousPositionSeconds against the known track duration to distinguish the two cases.
+         * If the renderer was near the end of the track (>= 85% of duration), treat it as a real track end.
+         */
+        const currentTrackIdForDuration = String(this.rendererCurrentTrackIdByRendererId.get(rendererId) || '').trim();
+        const knownTrackDuration = currentTrackIdForDuration
+          ? Number(this.browseLibraryCache?.trackById?.get(currentTrackIdForDuration)?.duration
+            || this.trackMap.get(currentTrackIdForDuration)?.duration || 0)
+          : 0;
+        const nearTrackEnd = knownTrackDuration > 10
+          && previousPositionSeconds > 0
+          && previousPositionSeconds >= (knownTrackDuration * 0.85);
         const suspiciousStoppedGaplessNotify = String(nextTransportState || '').toUpperCase() === 'STOPPED'
           && trackLikelyUnchanged
           && !!(incomingTrackUri || prevTrackUri)
           && (previousStateUpper === 'PLAYING' || previousStateUpper === 'TRANSITIONING')
           && previousPositionSeconds > 2
-          && notifyRelAtTrackStart;
+          && notifyRelAtTrackStart
+          && !nearTrackEnd;
         if (suspiciousStoppedGaplessNotify) {
           this.writeDlnaLog('info', 'renderer_event_notify_stopped_ignored_gapless', {
             rendererId,
@@ -4231,12 +4315,14 @@ ${items}
             previousTransportState: previousEventSnapshot?.transportState || undefined,
             hasTrackUri: !!(incomingTrackUri || prevTrackUri),
             previousPositionSeconds: Number.isFinite(previousPositionSeconds) ? previousPositionSeconds : undefined,
+            knownTrackDuration: knownTrackDuration > 0 ? knownTrackDuration : undefined,
           });
           nextTransportState = 'TRANSITIONING';
         }
+        /** Schritt 3: Grace-Window nur für Events des alten Tracks; bei URI-Wechsel durchlassen */
         const eventTrackChangeActiveUntil = Number(this.rendererTrackChangeActiveUntilByRendererId.get(rendererId) || 0);
         const eventIsTrackChangeActive = eventTrackChangeActiveUntil > 0 && Date.now() < eventTrackChangeActiveUntil;
-        if (eventIsTrackChangeActive) {
+        if (eventIsTrackChangeActive && trackLikelyUnchanged) {
           const ntUpper = String(nextTransportState || '').toUpperCase();
           if (ntUpper === 'STOPPED' || ntUpper === 'NO_MEDIA_PRESENT') {
             nextTransportState = 'TRANSITIONING';
@@ -4250,7 +4336,9 @@ ${items}
             const sec = Math.max(0, Number(parsed));
             const transitionOrUnknown = tsUpper === 'TRANSITIONING' || tsUpper === '';
             const prevPos = Number(previousEventSnapshot?.positionSeconds || 0);
-            const keepPrevOnBogusZero = sec === 0 && trackLikelyUnchanged && prevPos > 0.5
+            /** Schritt 5: Position 0 bei Track-URI-Wechsel immer akzeptieren */
+            const uriActuallyChanged = incomingTrackUri && prevTrackUri && incomingTrackUri !== prevTrackUri;
+            const keepPrevOnBogusZero = sec === 0 && trackLikelyUnchanged && !uriActuallyChanged && prevPos > 0.5
               && (transitionOrUnknown || tsUpper === 'PLAYING');
             nextPositionSeconds = keepPrevOnBogusZero
               ? previousEventSnapshot?.positionSeconds

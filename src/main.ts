@@ -20,7 +20,7 @@ import path from 'path';
 import fs from 'fs';
 import http, { IncomingMessage, ServerResponse } from 'http';
 import { randomBytes } from 'crypto';
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import * as electronUpdater from 'electron-updater';
 import electronLog from 'electron-log/main';
 import electronDebug from 'electron-debug';
@@ -105,6 +105,71 @@ type AppWhatsNewPayload = {
   releaseDate?: string;
   releaseNotes: string;
 };
+
+/**
+ * On macOS (and Linux), GUI-launched Electron apps do NOT inherit the user's
+ * shell environment (~/.zshrc, ~/.zprofile, etc.).  `process.env.PATH` only
+ * contains the minimal system PATH (/usr/bin:/bin:/usr/sbin:/sbin).
+ *
+ * Homebrew paths like /opt/homebrew/bin (ARM) or /usr/local/bin (Intel) are
+ * missing, which means external tools such as ffmpeg, flac, metaflac and adb
+ * cannot be found by `spawnSync` / `execFile` calls.
+ *
+ * This function enriches `process.env.PATH` once at startup by:
+ *  1. Adding well-known Homebrew / system tool directories.
+ *  2. Attempting to resolve the full PATH from the user's login shell.
+ *
+ * The synchronous shell-PATH resolution is intentionally done early (before
+ * any module or window is created) so that every subsequent `spawnSync` or
+ * `execFile` call automatically benefits from the enriched PATH.
+ */
+function enrichProcessPath(): void {
+  if (process.platform !== 'darwin' && process.platform !== 'linux') {
+    return;
+  }
+
+  const currentPath = process.env.PATH || '';
+  const currentDirs = new Set(currentPath.split(':').filter(Boolean));
+
+  // Well-known directories that are commonly missing in GUI-launched apps
+  const wellKnownDirs = [
+    '/opt/homebrew/bin', // Homebrew on Apple Silicon
+    '/opt/homebrew/sbin',
+    '/usr/local/bin', // Homebrew on Intel / manual installs
+    '/usr/local/sbin',
+    '/usr/local/opt/ruby/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ];
+
+  const missingDirs = wellKnownDirs.filter(dir => !currentDirs.has(dir));
+
+  // Try to resolve the full PATH from the user's login shell (synchronous,
+  // with a short timeout so it never blocks startup for long).
+  let shellPathDirs: string[] = [];
+  try {
+    const loginShell = process.env.SHELL || '/bin/zsh';
+    const result = execFileSync(loginShell, ['-l', '-i', '-c', 'echo __PATH__="$PATH"'], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const match = result.match(/__PATH__=(.+)/);
+    if (match?.[1]) {
+      shellPathDirs = match[1].trim().split(':').filter(dir => dir && !currentDirs.has(dir));
+    }
+  } catch (_error) {
+    // Non-fatal — we still have the well-known directories as fallback.
+  }
+
+  // Merge: shell-resolved dirs first (higher priority), then well-known dirs
+  const allNewDirs = [...new Set([...shellPathDirs, ...missingDirs])];
+  if (allNewDirs.length > 0) {
+    process.env.PATH = `${currentPath}:${allNewDirs.join(':')}`;
+  }
+}
 
 function createElectronLogger(name: string, filePath: string) {
   const logger = electronLog.create({ logId: name });
@@ -191,6 +256,7 @@ class App implements IAppMain {
     this.dataPath = this.debug ? `${APP_DATA_DIR_NAME}-debug` : APP_DATA_DIR_NAME;
     this.htmlFilePath = path.join(__dirname, 'index.html');
 
+    enrichProcessPath();
     this.configureUserDataPath();
     this.migrateLegacyUserDataPath();
     this.configureLogger();
@@ -1137,6 +1203,7 @@ class App implements IAppMain {
       mainWindow.webContents.on('console-message', (_event, _level, message) => {
         const text = typeof message === 'string' ? message : String(message ?? '');
         if (text.includes('[dap-adb]')) {
+          // eslint-disable-next-line no-console
           console.log(text);
         }
       });
