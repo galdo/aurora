@@ -1,6 +1,6 @@
 {
   "name": "aurora-pulse-app",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "main": "./main.prod.js",
   "scripts": {
     "electron-rebuild": "node -r ../.erb/scripts/BabelRegister.js ../.erb/scripts/ElectronRebuild.js",

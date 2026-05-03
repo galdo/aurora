@@ -53,3 +53,4 @@ export * from './text/text-marquee.component';
 export * from './text-input/text-input.component';
 export * from './tooltip/tooltip.component';
 export * from './upload/upload-overlay.component';
+export * from './news-modal/news-modal.component';

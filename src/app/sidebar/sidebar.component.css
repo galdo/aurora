@@ -204,7 +204,6 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
   padding: 12px 16px;
   background-color: rgba(0, 146, 51, 0.08);
   color: var(--text-dark-color);

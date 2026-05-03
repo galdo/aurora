@@ -5,6 +5,7 @@ import { MemoryRouter as Router, useHistory, useLocation } from 'react-router-do
 import _ from 'lodash';
 
 import { MediaSession, MediaPlayer } from '../components';
+import { NewsModal } from '../components/news-modal';
 import { Routes } from '../constants';
 import { ContextMenuProvider, ModalProvider, NotificationProvider } from '../contexts';
 import { IAppStatePersistor } from '../interfaces';
@@ -426,6 +427,7 @@ function Window() {
         <ModalProvider>
           <ContextMenuProvider>
             <Stage/>
+            <NewsModal/>
             <Player active={playerIsActive}/>
             <GlobalMediaSideView/>
           </ContextMenuProvider>

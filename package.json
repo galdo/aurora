@@ -1,7 +1,7 @@
 {
   "name": "aurora-pulse",
   "productName": "Aurora Pulse",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "A local-first music player built with Electron",
   "scripts": {
     "build": "concurrently \"npm run build:main\" \"npm run build:renderer\"",
