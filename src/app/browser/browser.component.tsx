@@ -48,33 +48,20 @@ const TopBarSearchStateKey = 'aurora:topbar-search-query';
 const TopBarSearchChangeEvent = 'aurora:topbar-search-changed';
 
 function getWindowsControlsSafeWidth() {
-  const scaleFactor = Number(window.devicePixelRatio || 1);
-
-  if (scaleFactor >= 2) {
-    return 236;
-  }
-  if (scaleFactor >= 1.75) {
-    return 220;
-  }
-  if (scaleFactor >= 1.5) {
-    return 206;
-  }
-  if (scaleFactor >= 1.25) {
-    return 190;
-  }
-
-  return 176;
+  // Windows title bar buttons have a base width of ~138px at 96 DPI (1x scale).
+  // They scale proportionally with the display scale factor.
+  const scaleFactor = Math.max(1, Number(window.devicePixelRatio || 1));
+  const baseControlsWidth = 138;
+  const safetyMargin = 16;
+  return Math.ceil(baseControlsWidth * scaleFactor) + safetyMargin;
 }
 
 function getWindowsControlsSafeHeight() {
-  const scaleFactor = Number(window.devicePixelRatio || 1);
-  if (scaleFactor >= 1.75) {
-    return 70;
-  }
-  if (scaleFactor >= 1.5) {
-    return 66;
-  }
-  return 62;
+  // Windows title bar height scales with DPI. Base ~54px at 1x.
+  const scaleFactor = Math.max(1, Number(window.devicePixelRatio || 1));
+  const baseHeight = 54;
+  const minHeight = 62;
+  return Math.max(minHeight, Math.ceil(baseHeight * scaleFactor));
 }
 
 function BrowserLinks() {
