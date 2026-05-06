@@ -891,13 +891,6 @@ class App implements IAppMain {
     }
     const themeColors = this.getMainWindowThemeColors();
     targetWindow.setBackgroundColor(themeColors.backgroundColor);
-    if (this.platform !== PlatformOS.Darwin && typeof (targetWindow as any).setTitleBarOverlay === 'function') {
-      (targetWindow as any).setTitleBarOverlay({
-        color: themeColors.backgroundColor,
-        symbolColor: themeColors.titleBarSymbolColor,
-        height: 54,
-      });
-    }
   }
 
   private loadPendingWhatsNew() {
@@ -1181,13 +1174,6 @@ class App implements IAppMain {
       icon: this.iconPath,
       title: APP_DISPLAY_NAME,
       titleBarStyle: isDarwin ? 'hiddenInset' : 'hidden',
-      ...(!isDarwin ? {
-        titleBarOverlay: {
-          color: themeColors.backgroundColor,
-          symbolColor: themeColors.titleBarSymbolColor,
-          height: 54,
-        },
-      } : {}),
       frame: false,
       webPreferences: {
         nodeIntegration: true,
@@ -1315,8 +1301,14 @@ class App implements IAppMain {
     mainWindow.on('move', queuePersistWindowState);
     mainWindow.on('maximize', queuePersistWindowState);
     mainWindow.on('unmaximize', queuePersistWindowState);
-    mainWindow.on('enter-full-screen', queuePersistWindowState);
-    mainWindow.on('leave-full-screen', queuePersistWindowState);
+    mainWindow.on('enter-full-screen', () => {
+      queuePersistWindowState();
+      this.hideTitleBarOverlay(mainWindow);
+    });
+    mainWindow.on('leave-full-screen', () => {
+      queuePersistWindowState();
+      this.showTitleBarOverlay(mainWindow);
+    });
 
     // when a new browser window is requested
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1922,6 +1914,56 @@ class App implements IAppMain {
       this.mediaHardwareShortcutWarningShown = true;
       console.warn('registerMediaHardwareShortcuts - global registration unavailable (likely claimed by macOS/other app); using MediaSession handlers only');
     }
+  }
+
+  /**
+   * Hides the native title bar overlay (minimize/maximize/close buttons) on
+   * Windows and Linux. Called when entering fullscreen mode — those controls
+   * must only be visible in windowed mode.
+   */
+  private hideTitleBarOverlay(targetWindow?: BrowserWindow): void {
+    const win = targetWindow || this.mainWindow;
+    if (!win || win.isDestroyed() || this.platform === PlatformOS.Darwin) {
+      return;
+    }
+    if (typeof (win as any).setTitleBarOverlay === 'function') {
+      try {
+        (win as any).setTitleBarOverlay({
+          color: '#00000000',
+          symbolColor: '#00000000',
+          height: 0,
+        });
+      } catch (_error) {
+        // Fallback: some Electron versions may not support height=0
+      }
+    }
+    // Notify the renderer so it can hide the CSS padding for window controls
+    this.sendMessageToRenderer(IPCRendererCommChannel.UIFullScreenChanged, true);
+  }
+
+  /**
+   * Restores the native title bar overlay (minimize/maximize/close buttons) on
+   * Windows and Linux. Called when leaving fullscreen mode.
+   */
+  private showTitleBarOverlay(targetWindow?: BrowserWindow): void {
+    const win = targetWindow || this.mainWindow;
+    if (!win || win.isDestroyed() || this.platform === PlatformOS.Darwin) {
+      return;
+    }
+    const themeColors = this.getMainWindowThemeColors();
+    if (typeof (win as any).setTitleBarOverlay === 'function') {
+      try {
+        (win as any).setTitleBarOverlay({
+          color: themeColors.backgroundColor,
+          symbolColor: themeColors.titleBarSymbolColor,
+          height: 54,
+        });
+      } catch (_error) {
+        // Non-fatal
+      }
+    }
+    // Notify the renderer so it can restore the CSS padding for window controls
+    this.sendMessageToRenderer(IPCRendererCommChannel.UIFullScreenChanged, false);
   }
 
   private isUrlLocal(url: string): boolean {

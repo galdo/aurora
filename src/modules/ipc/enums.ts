@@ -52,6 +52,7 @@ export enum IPCRendererCommChannel {
   UIOpenSettings = 'ui:open_settings',
   UIAppUpdateStateChanged = 'ui:app_update_state_changed',
   UIAppBeforeQuit = 'ui:app_before_quit',
+  UIFullScreenChanged = 'ui:fullscreen_changed',
   // media
   MediaHardwareControl = 'media:hardware_control',
   // device

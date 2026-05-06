@@ -184,7 +184,7 @@ function SidebarNavigationList() {
 
 function SidebarHeader() {
   return (
-    <div className={cx('sidebar-header', 'app-window-drag')}>
+    <div className={cx('sidebar-header')}>
       {AppService.details.platform !== PlatformOS.Darwin && (
         <Button
           icon={Icons.Menu}

@@ -35,6 +35,7 @@ import {
 } from '../../services';
 import { Icons, Routes } from '../../constants';
 import { PlatformOS } from '../../modules/platform/platform.enums';
+import { IPCRenderer, IPCRendererCommChannel } from '../../modules/ipc';
 import MediaLocalLibraryService from '../../providers/media-local/media-local-library.service';
 import { StringUtils } from '../../utils';
 
@@ -234,15 +235,36 @@ function BrowserHeader() {
   const mediaPlaylistsCount = useSelector((state: RootState) => state.mediaLibrary.mediaPlaylists.length);
   const currentTrackId = useSelector((state: RootState) => state.mediaPlayer.mediaPlaybackCurrentMediaTrack?.id);
   const [isSyncRunning, setIsSyncRunning] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const [windowsControlsSafeWidth, setWindowsControlsSafeWidth] = useState(getWindowsControlsSafeWidth());
   const [windowsControlsSafeHeight, setWindowsControlsSafeHeight] = useState(getWindowsControlsSafeHeight());
   const history = useHistory();
   const location = useLocation();
   const { showModal } = useModal();
   const isWindows = AppService.details.platform === PlatformOS.Windows;
+  const isLinux = AppService.details.platform === PlatformOS.Linux;
+  const isNonDarwin = isWindows || isLinux;
   const isPlaylistModule = location.pathname.startsWith(Routes.LibraryPlaylists);
   const isPodcastModule = location.pathname.startsWith(Routes.Podcasts);
   const shouldShowCreateButton = isPlaylistModule || isPodcastModule;
+
+  // Listen for fullscreen state changes from main process
+  useEffect(() => {
+    if (!isNonDarwin) {
+      return () => {};
+    }
+
+    const listener = IPCRenderer.addMessageHandler(
+      IPCRendererCommChannel.UIFullScreenChanged,
+      (fullScreenState: boolean) => {
+        setIsFullScreen(fullScreenState);
+      },
+    );
+
+    return () => {
+      IPCRenderer.removeMessageHandler(IPCRendererCommChannel.UIFullScreenChanged, listener);
+    };
+  }, [isNonDarwin]);
 
   useEffect(() => {
     if (!isWindows) {
@@ -262,12 +284,15 @@ function BrowserHeader() {
     };
   }, [isWindows]);
 
+  // In fullscreen mode on Windows/Linux, do not show the windows-specific header styling
+  const showWindowsHeader = isWindows && !isFullScreen;
+
   return (
     <div
       className={cx('browser-header', 'app-window-drag', {
-        'browser-header-windows': isWindows,
+        'browser-header-windows': showWindowsHeader,
       })}
-      style={isWindows
+      style={showWindowsHeader
         ? {
           '--windows-controls-safe-width': `${windowsControlsSafeWidth}px`,
           '--windows-controls-safe-height': `${windowsControlsSafeHeight}px`,

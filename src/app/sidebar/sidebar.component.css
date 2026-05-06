@@ -27,6 +27,14 @@
   align-items: center;
   justify-content: flex-start;
   padding: 0 30px;
+  -webkit-app-region: drag;
+}
+
+.sidebar-header > * {
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+  position: relative;
+  z-index: 10;
 }
 
 .sidebar-branding {

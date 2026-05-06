@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.5] - 2026-05-06
+
+### Fixed
+- Burger menu (hamburger icon) on Windows and Linux no longer blocked by the window drag region — clicks are now properly received
+- Window controls (Minimize, Maximize, Close) are now hidden in fullscreen mode on Windows and Linux as per design rules — they only appear in windowed mode
+
+### Added
+- `PlatformOS.Linux` enum value for explicit Linux platform detection
+- `UIFullScreenChanged` IPC channel for communicating fullscreen state to the renderer process
+
+### Changed
+- Sidebar header drag region moved from global `app-window-drag` class to CSS-only with explicit `z-index` elevation for child interactive elements
+- Browser header dynamically removes Windows-specific padding and title bar overlay styling when entering fullscreen
+
 ## [1.5.1-beta3] - 2026-03-19
 
 ### Added
