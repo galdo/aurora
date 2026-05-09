@@ -360,5 +360,14 @@
   "label_dashboard_hours_suffix": "h",
   "label_dashboard_top_page_aria": "Toplisten-Seite {pageNumber}",
   "tooltip_dashboard_prev_page": "Vorherige Seite anzeigen",
-  "tooltip_dashboard_next_page": "Nächste Seite anzeigen"
+  "tooltip_dashboard_next_page": "Nächste Seite anzeigen",
+  "tooltip_more_menu": "Mehr",
+  "label_library_stats": "Bibliotheksstatistiken",
+  "label_sync_library": "Bibliothek synchronisieren",
+  "label_zoom_in": "Darstellung vergrößern",
+  "label_zoom_out": "Darstellung verkleinern",
+  "label_section_navigation": "Navigation",
+  "label_section_sort": "Sortierung",
+  "tooltip_sort_ascending": "Aufsteigend",
+  "tooltip_sort_descending": "Absteigend"
 }

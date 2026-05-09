@@ -161,3 +161,111 @@
     margin-right: 8px;
   }
 }
+
+/* Browser More Menu (⋮) */
+
+.browser-more-trigger {
+  flex: 0 0 auto;
+}
+
+.browser-more-button.open {
+  background-color: var(--selectable-focused-bg-color);
+}
+
+.browser-more-dropdown {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  min-width: 220px;
+  max-width: 300px;
+  max-height: 80vh;
+  overflow-y: auto;
+  border-radius: 12px;
+  background-color: var(--stage-overlay-bg-color);
+  border: 1px solid var(--stage-overlay-outline-color);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  animation: browser-more-appear 0.15s ease-out;
+}
+
+.browser-more-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-disabled-color);
+  padding: 6px 12px 4px;
+}
+
+.browser-more-separator {
+  height: 1px;
+  background-color: var(--stage-overlay-outline-color);
+  margin: 4px 8px;
+}
+
+.browser-more-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-light-color);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: var(--selectable-item-transition);
+  white-space: nowrap;
+  width: 100%;
+}
+
+.browser-more-item:hover,
+.browser-more-item:focus-visible {
+  background-color: var(--selectable-focused-bg-color);
+  color: var(--selectable-hovered-color);
+  outline: none;
+}
+
+.browser-more-item:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.browser-more-item-active {
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+}
+
+.browser-more-item-active:hover {
+  background-color: var(--button-primary-bg-color);
+  opacity: 0.9;
+}
+
+.browser-more-item-icon {
+  width: 18px;
+  text-align: center;
+  opacity: 0.8;
+  flex: 0 0 18px;
+}
+
+.browser-more-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes browser-more-appear {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

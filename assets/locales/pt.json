@@ -352,5 +352,14 @@
   "label_dashboard_hours_suffix": "h",
   "label_dashboard_top_page_aria": "Top list page {pageNumber}",
   "tooltip_dashboard_prev_page": "Show previous page",
-  "tooltip_dashboard_next_page": "Show next page"
+  "tooltip_dashboard_next_page": "Show next page",
+  "tooltip_more_menu": "Mais",
+  "label_library_stats": "Estatísticas da biblioteca",
+  "label_sync_library": "Sincronizar biblioteca",
+  "label_zoom_in": "Aumentar",
+  "label_zoom_out": "Diminuir",
+  "label_section_navigation": "Navegação",
+  "label_section_sort": "Ordenação",
+  "tooltip_sort_ascending": "Crescente",
+  "tooltip_sort_descending": "Decrescente"
 }

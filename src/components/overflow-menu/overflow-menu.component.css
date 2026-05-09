@@ -1,0 +1,173 @@
+/* OverflowMenu - Action Buttons */
+
+.overflow-menu-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.overflow-menu-items {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.overflow-menu-item-wrapper {
+  flex: 0 0 auto;
+}
+
+.overflow-menu-chevron-wrapper {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.overflow-menu-chevron-button {
+  transition: transform 0.2s ease;
+}
+
+.overflow-menu-chevron-button.open {
+  background-color: var(--selectable-focused-bg-color);
+}
+
+.overflow-menu-dropdown {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  min-width: 200px;
+  border-radius: 12px;
+  background-color: var(--stage-overlay-bg-color);
+  border: 1px solid var(--stage-overlay-outline-color);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  animation: overflow-dropdown-appear 0.15s ease-out;
+}
+
+.overflow-menu-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-light-color);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: var(--selectable-item-transition);
+  white-space: nowrap;
+}
+
+.overflow-menu-dropdown-item:hover,
+.overflow-menu-dropdown-item:focus-visible {
+  background-color: var(--selectable-focused-bg-color);
+  color: var(--selectable-hovered-color);
+  outline: none;
+}
+
+.overflow-menu-dropdown-item:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.overflow-menu-dropdown-item-icon {
+  width: 18px;
+  text-align: center;
+  opacity: 0.8;
+}
+
+.overflow-menu-dropdown-item-label {
+  flex: 1;
+}
+
+/* OverflowNavigationList - Navigation Tabs */
+
+.overflow-nav-container {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.overflow-nav-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.overflow-nav-chevron-wrapper {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.overflow-nav-chevron-button {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: transform 0.2s ease;
+}
+
+.overflow-nav-chevron-button.open {
+  background-color: var(--selectable-focused-bg-color);
+}
+
+.overflow-nav-dropdown {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  min-width: 180px;
+  border-radius: 12px;
+  background-color: var(--stage-overlay-bg-color);
+  border: 1px solid var(--stage-overlay-outline-color);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(16px) saturate(1.1);
+  -webkit-backdrop-filter: blur(16px) saturate(1.1);
+  animation: overflow-dropdown-appear 0.15s ease-out;
+}
+
+.overflow-nav-dropdown-item {
+  border-radius: 8px;
+  transition: var(--selectable-item-transition);
+}
+
+.overflow-nav-dropdown-item:hover {
+  background-color: var(--selectable-focused-bg-color);
+}
+
+/* The navigation links inside the dropdown should appear as block items */
+.overflow-nav-dropdown-item :global(.app-nav-link) {
+  display: block;
+  padding: 10px 14px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+/* Animation */
+@keyframes overflow-dropdown-appear {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

@@ -54,3 +54,5 @@ export * from './text-input/text-input.component';
 export * from './tooltip/tooltip.component';
 export * from './upload/upload-overlay.component';
 export * from './news-modal/news-modal.component';
+export * from './overflow-menu/overflow-menu.component';
+export * from './top-menu-bar/index';

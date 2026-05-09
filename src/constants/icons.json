@@ -1,9 +1,10 @@
 {
-  "Add": "fas fa-plus",
+"Add": "fas fa-plus",
   "AddCircle": "fas fa-plus-circle",
   "AlbumPlaceholder": "fas fa-compact-disc",
   "ArtistPlaceholder": "fas fa-user",
   "Bug": "fas fa-bug",
+  "ChevronDown": "fas fa-chevron-down",
   "Close": "fas fa-times",
   "Completed": "fas fa-check-circle",
   "Delete": "fas fa-trash",
@@ -20,6 +21,7 @@
   "MediaLiked": "fas fa-heart",
   "MediaPin": "fas fa-thumbtack",
   "Menu": "fas fa-bars",
+  "MoreVertical": "fas fa-ellipsis-v",
   "NavigationBack": "fas fa-chevron-left",
   "NavigationForward": "fas fa-chevron-right",
   "PlaylistPlaceholder": "fas fa-music",
@@ -45,5 +47,7 @@
   "Image": "fas fa-image",
   "Info": "fas fa-info-circle",
   "Import": "fas fa-file-import",
-  "TrackPlaceholder": "fas fa-record-vinyl"
+  "TrackPlaceholder": "fas fa-record-vinyl",
+  "ZoomIn": "fas fa-search-plus",
+  "ZoomOut": "fas fa-search-minus"
 }

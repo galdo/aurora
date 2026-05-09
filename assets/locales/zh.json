@@ -352,5 +352,14 @@
   "label_dashboard_hours_suffix": "h",
   "label_dashboard_top_page_aria": "Top list page {pageNumber}",
   "tooltip_dashboard_prev_page": "Show previous page",
-  "tooltip_dashboard_next_page": "Show next page"
+  "tooltip_dashboard_next_page": "Show next page",
+  "tooltip_more_menu": "更多",
+  "label_library_stats": "媒体库统计",
+  "label_sync_library": "同步媒体库",
+  "label_zoom_in": "放大",
+  "label_zoom_out": "缩小",
+  "label_section_navigation": "导航",
+  "label_section_sort": "排序",
+  "tooltip_sort_ascending": "升序",
+  "tooltip_sort_descending": "降序"
 }

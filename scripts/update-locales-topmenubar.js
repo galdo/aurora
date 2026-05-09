@@ -1,0 +1,148 @@
+const fs = require('fs');
+const path = require('path');
+
+const newKeys = {
+  de: {
+    tooltip_more_menu: 'Mehr',
+    label_library_stats: 'Bibliotheksstatistiken',
+    label_sync_library: 'Bibliothek synchronisieren',
+    label_zoom_in: 'Darstellung vergrößern',
+    label_zoom_out: 'Darstellung verkleinern',
+    label_section_navigation: 'Navigation',
+    label_section_sort: 'Sortierung',
+    tooltip_sort_ascending: 'Aufsteigend',
+    tooltip_sort_descending: 'Absteigend',
+  },
+  en: {
+    tooltip_more_menu: 'More',
+    label_library_stats: 'Library statistics',
+    label_sync_library: 'Sync library',
+    label_zoom_in: 'Zoom in',
+    label_zoom_out: 'Zoom out',
+    label_section_navigation: 'Navigation',
+    label_section_sort: 'Sort',
+    tooltip_sort_ascending: 'Ascending',
+    tooltip_sort_descending: 'Descending',
+  },
+  es: {
+    tooltip_more_menu: 'Más',
+    label_library_stats: 'Estadísticas de la biblioteca',
+    label_sync_library: 'Sincronizar biblioteca',
+    label_zoom_in: 'Ampliar vista',
+    label_zoom_out: 'Reducir vista',
+    label_section_navigation: 'Navegación',
+    label_section_sort: 'Ordenar',
+    tooltip_sort_ascending: 'Ascendente',
+    tooltip_sort_descending: 'Descendente',
+  },
+  fr: {
+    tooltip_more_menu: 'Plus',
+    label_library_stats: 'Statistiques de la bibliothèque',
+    label_sync_library: 'Synchroniser la bibliothèque',
+    label_zoom_in: 'Agrandir',
+    label_zoom_out: 'Réduire',
+    label_section_navigation: 'Navigation',
+    label_section_sort: 'Tri',
+    tooltip_sort_ascending: 'Croissant',
+    tooltip_sort_descending: 'Décroissant',
+  },
+  it: {
+    tooltip_more_menu: 'Altro',
+    label_library_stats: 'Statistiche della libreria',
+    label_sync_library: 'Sincronizza libreria',
+    label_zoom_in: 'Ingrandisci',
+    label_zoom_out: 'Riduci',
+    label_section_navigation: 'Navigazione',
+    label_section_sort: 'Ordinamento',
+    tooltip_sort_ascending: 'Crescente',
+    tooltip_sort_descending: 'Decrescente',
+  },
+  ja: {
+    tooltip_more_menu: 'その他',
+    label_library_stats: 'ライブラリ統計',
+    label_sync_library: 'ライブラリを同期',
+    label_zoom_in: '表示を拡大',
+    label_zoom_out: '表示を縮小',
+    label_section_navigation: 'ナビゲーション',
+    label_section_sort: '並べ替え',
+    tooltip_sort_ascending: '昇順',
+    tooltip_sort_descending: '降順',
+  },
+  pl: {
+    tooltip_more_menu: 'Więcej',
+    label_library_stats: 'Statystyki biblioteki',
+    label_sync_library: 'Synchronizuj bibliotekę',
+    label_zoom_in: 'Powiększ widok',
+    label_zoom_out: 'Pomniejsz widok',
+    label_section_navigation: 'Nawigacja',
+    label_section_sort: 'Sortowanie',
+    tooltip_sort_ascending: 'Rosnąco',
+    tooltip_sort_descending: 'Malejąco',
+  },
+  pt: {
+    tooltip_more_menu: 'Mais',
+    label_library_stats: 'Estatísticas da biblioteca',
+    label_sync_library: 'Sincronizar biblioteca',
+    label_zoom_in: 'Aumentar',
+    label_zoom_out: 'Diminuir',
+    label_section_navigation: 'Navegação',
+    label_section_sort: 'Ordenação',
+    tooltip_sort_ascending: 'Crescente',
+    tooltip_sort_descending: 'Decrescente',
+  },
+  ru: {
+    tooltip_more_menu: 'Ещё',
+    label_library_stats: 'Статистика библиотеки',
+    label_sync_library: 'Синхронизировать библиотеку',
+    label_zoom_in: 'Увеличить',
+    label_zoom_out: 'Уменьшить',
+    label_section_navigation: 'Навигация',
+    label_section_sort: 'Сортировка',
+    tooltip_sort_ascending: 'По возрастанию',
+    tooltip_sort_descending: 'По убыванию',
+  },
+  tr: {
+    tooltip_more_menu: 'Daha fazla',
+    label_library_stats: 'Kütüphane istatistikleri',
+    label_sync_library: 'Kütüphaneyi senkronize et',
+    label_zoom_in: 'Büyüt',
+    label_zoom_out: 'Küçült',
+    label_section_navigation: 'Gezinme',
+    label_section_sort: 'Sıralama',
+    tooltip_sort_ascending: 'Artan',
+    tooltip_sort_descending: 'Azalan',
+  },
+  zh: {
+    tooltip_more_menu: '更多',
+    label_library_stats: '媒体库统计',
+    label_sync_library: '同步媒体库',
+    label_zoom_in: '放大',
+    label_zoom_out: '缩小',
+    label_section_navigation: '导航',
+    label_section_sort: '排序',
+    tooltip_sort_ascending: '升序',
+    tooltip_sort_descending: '降序',
+  },
+  hi: {
+    tooltip_more_menu: 'अधिक',
+    label_library_stats: 'लाइब्रेरी आँकड़े',
+    label_sync_library: 'लाइब्रेरी सिंक करें',
+    label_zoom_in: 'बड़ा करें',
+    label_zoom_out: 'छोटा करें',
+    label_section_navigation: 'नेविगेशन',
+    label_section_sort: 'क्रमबद्ध',
+    tooltip_sort_ascending: 'आरोही',
+    tooltip_sort_descending: 'अवरोही',
+  },
+};
+
+const localesDir = path.join(__dirname, '..', 'assets', 'locales');
+for (const [lang, keys] of Object.entries(newKeys)) {
+  const filePath = path.join(localesDir, `${lang}.json`);
+  if (!fs.existsSync(filePath)) { console.log('SKIP', lang); continue; }
+  const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  Object.assign(data, keys);
+  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`);
+  console.log('Updated', lang, `(${Object.keys(data).length} keys)`);
+}
+console.log('Done!');
