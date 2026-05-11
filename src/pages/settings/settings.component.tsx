@@ -792,6 +792,23 @@ export function SettingsPage() {
                   </div>
                 )}
               </div>
+              <div className={cx('settings-row')} style={{ marginTop: '12px' }}>
+                <div>
+                  <div className={cx('settings-subheading')}>Sync-Status zurücksetzen</div>
+                  <div className={cx('settings-description')}>
+                    Setzt den gespeicherten Sync-Status zurück. Beim nächsten Sync werden alle Dateien erneut geprüft und bei Bedarf kopiert (z.B. nach Formatierung der SD-Karte).
+                  </div>
+                </div>
+                <Button
+                  variant={['secondary']}
+                  onButtonSubmit={() => {
+                    MediaLibraryService.abortAndResetDapLibrarySyncState();
+                    window.alert('Sync-Status wurde zurückgesetzt. Beim nächsten Sync werden alle Dateien erneut übertragen.');
+                  }}
+                >
+                  Zurücksetzen
+                </Button>
+              </div>
             </div>
           </div>
 
