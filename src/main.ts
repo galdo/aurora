@@ -20,7 +20,7 @@ import path from 'path';
 import fs from 'fs';
 import http, { IncomingMessage, ServerResponse } from 'http';
 import { randomBytes } from 'crypto';
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import * as electronUpdater from 'electron-updater';
 import electronLog from 'electron-log/main';
 import electronDebug from 'electron-debug';
@@ -58,6 +58,22 @@ import { MenuBuilder } from './main/builders';
 
 const sourceMapSupport = require('source-map-support');
 const debug = require('debug')('aurora_pulse:main');
+
+// ---------------------------------------------------------------------------
+// Startup performance marks (#12)
+// Lightweight timestamps so we can quantify each phase of the startup chain.
+// Output is grep-friendly: `[STARTUP_MARK] +<ms> <label>`.
+// Set AURORA_STARTUP_MARKS=0 to silence in production builds.
+// ---------------------------------------------------------------------------
+const startupMarksT0 = Date.now();
+const startupMarksEnabled = process.env.AURORA_STARTUP_MARKS !== '0';
+function startupMark(label: string, extra?: Record<string, any>) {
+  if (!startupMarksEnabled) return;
+  const elapsedMs = Date.now() - startupMarksT0;
+  // eslint-disable-next-line no-console
+  console.log(`[STARTUP_MARK] +${elapsedMs}ms ${label}${extra ? ` ${JSON.stringify(extra)}` : ''}`);
+}
+startupMark('main_module_loaded');
 
 const APP_DISPLAY_NAME = 'Aurora Pulse';
 const APP_DATA_DIR_NAME = 'Aurora_Pulse';
@@ -107,35 +123,24 @@ type AppWhatsNewPayload = {
 };
 
 /**
- * On macOS (and Linux), GUI-launched Electron apps do NOT inherit the user's
- * shell environment (~/.zshrc, ~/.zprofile, etc.).  `process.env.PATH` only
- * contains the minimal system PATH (/usr/bin:/bin:/usr/sbin:/sbin).
+ * Quickly enriches `process.env.PATH` with **well-known directories only** (no
+ * shell spawn). Cheap, sub-millisecond. Runs synchronously at the very start so
+ * that core tooling like `/opt/homebrew/bin` is reachable for any subsequent
+ * `spawnSync`/`execFile` calls.
  *
- * Homebrew paths like /opt/homebrew/bin (ARM) or /usr/local/bin (Intel) are
- * missing, which means external tools such as ffmpeg, flac, metaflac and adb
- * cannot be found by `spawnSync` / `execFile` calls.
- *
- * This function enriches `process.env.PATH` once at startup by:
- *  1. Adding well-known Homebrew / system tool directories.
- *  2. Attempting to resolve the full PATH from the user's login shell.
- *
- * The synchronous shell-PATH resolution is intentionally done early (before
- * any module or window is created) so that every subsequent `spawnSync` or
- * `execFile` call automatically benefits from the enriched PATH.
+ * The slower login-shell PATH resolution is moved to {@link enrichProcessPathFromLoginShellAsync}
+ * which fires after `app.whenReady()` and never blocks the splash window.
  */
-function enrichProcessPath(): void {
+function enrichProcessPathFast(): void {
   if (process.platform !== 'darwin' && process.platform !== 'linux') {
     return;
   }
-
   const currentPath = process.env.PATH || '';
   const currentDirs = new Set(currentPath.split(':').filter(Boolean));
-
-  // Well-known directories that are commonly missing in GUI-launched apps
   const wellKnownDirs = [
-    '/opt/homebrew/bin', // Homebrew on Apple Silicon
+    '/opt/homebrew/bin',
     '/opt/homebrew/sbin',
-    '/usr/local/bin', // Homebrew on Intel / manual installs
+    '/usr/local/bin',
     '/usr/local/sbin',
     '/usr/local/opt/ruby/bin',
     '/usr/bin',
@@ -143,32 +148,65 @@ function enrichProcessPath(): void {
     '/usr/sbin',
     '/sbin',
   ];
-
   const missingDirs = wellKnownDirs.filter(dir => !currentDirs.has(dir));
+  if (missingDirs.length > 0) {
+    process.env.PATH = `${currentPath}:${missingDirs.join(':')}`;
+  }
+}
 
-  // Try to resolve the full PATH from the user's login shell (synchronous,
-  // with a short timeout so it never blocks startup for long).
-  let shellPathDirs: string[] = [];
-  try {
-    const loginShell = process.env.SHELL || '/bin/zsh';
-    const result = execFileSync(loginShell, ['-l', '-i', '-c', 'echo __PATH__="$PATH"'], {
-      encoding: 'utf8',
-      timeout: 5_000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    const match = result.match(/__PATH__=(.+)/);
-    if (match?.[1]) {
-      shellPathDirs = match[1].trim().split(':').filter(dir => dir && !currentDirs.has(dir));
+/**
+ * Asynchronously resolves the user's full login-shell PATH and merges any
+ * additional directories. Runs **after** the splash window is already visible
+ * so it can never delay startup. Honours a hard 4-second timeout — if the
+ * user's shell takes longer (slow nvm/conda/oh-my-zsh init), we just keep the
+ * well-known fallback PATH and move on.
+ *
+ * Tools that depend on user-shell PATH (e.g. `ffmpeg`, `adb`, `flac`) usually
+ * are not invoked in the first seconds of startup, so a brief delay until this
+ * resolves is acceptable.
+ */
+function enrichProcessPathFromLoginShellAsync(): Promise<void> {
+  return new Promise((resolve) => {
+    if (process.platform !== 'darwin' && process.platform !== 'linux') {
+      resolve();
+      return;
     }
-  } catch (_error) {
-    // Non-fatal — we still have the well-known directories as fallback.
-  }
-
-  // Merge: shell-resolved dirs first (higher priority), then well-known dirs
-  const allNewDirs = [...new Set([...shellPathDirs, ...missingDirs])];
-  if (allNewDirs.length > 0) {
-    process.env.PATH = `${currentPath}:${allNewDirs.join(':')}`;
-  }
+    const startedAt = Date.now();
+    const loginShell = process.env.SHELL || '/bin/zsh';
+    execFile(
+      loginShell,
+      ['-l', '-i', '-c', 'echo __PATH__="$PATH"'],
+      { encoding: 'utf8', timeout: 4_000 },
+      (error, stdout) => {
+        const elapsedMs = Date.now() - startedAt;
+        if (error || !stdout) {
+          startupMark('path_enrich_login_shell_done', { elapsedMs, applied: false, reason: error ? String(error.code || error.message || error) : 'no_stdout' });
+          resolve();
+          return;
+        }
+        try {
+          const match = String(stdout).match(/__PATH__=(.+)/);
+          const resolvedPath = match?.[1]?.trim();
+          if (resolvedPath) {
+            const currentPath = process.env.PATH || '';
+            const currentDirs = new Set(currentPath.split(':').filter(Boolean));
+            const newDirs = resolvedPath
+              .split(':')
+              .filter(dir => dir && !currentDirs.has(dir));
+            if (newDirs.length > 0) {
+              process.env.PATH = `${currentPath}:${newDirs.join(':')}`;
+            }
+            startupMark('path_enrich_login_shell_done', { elapsedMs, applied: newDirs.length > 0, addedDirs: newDirs.length });
+          } else {
+            startupMark('path_enrich_login_shell_done', { elapsedMs, applied: false, reason: 'no_match' });
+          }
+        } catch (_parseError) {
+          startupMark('path_enrich_login_shell_done', { elapsedMs, applied: false, reason: 'parse_error' });
+        }
+        resolve();
+      },
+    );
+  });
 }
 
 function createElectronLogger(name: string, filePath: string) {
@@ -244,6 +282,7 @@ class App implements IAppMain {
   private themeMode: AppThemeMode = 'auto';
 
   constructor() {
+    startupMark('app_constructor_start');
     this.env = process.env.NODE_ENV;
     this.debug = process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD === 'true';
     this.prod = process.env.NODE_ENV === 'production';
@@ -256,19 +295,27 @@ class App implements IAppMain {
     this.dataPath = this.debug ? `${APP_DATA_DIR_NAME}-debug` : APP_DATA_DIR_NAME;
     this.htmlFilePath = path.join(__dirname, 'index.html');
 
-    enrichProcessPath();
+    // #1: fast path-enrichment only (no shell spawn) — login-shell PATH is
+    // resolved asynchronously after the splash window is up.
+    enrichProcessPathFast();
+    startupMark('path_enrich_fast_done');
     this.configureUserDataPath();
+    startupMark('user_data_path_configured');
     this.migrateLegacyUserDataPath();
+    startupMark('legacy_user_data_migrated');
     this.configureLogger();
     this.loadUpdateSettings();
     this.loadThemeSettings();
     this.loadPendingWhatsNew();
+    startupMark('settings_loaded');
     this.configureApp();
     this.installSourceMapSupport();
     this.installDebugSupport();
     this.registerBuilders();
     this.registerModules();
+    startupMark('builders_modules_registered');
     this.registerEvents();
+    startupMark('app_events_registered');
 
     // console.log generally not allowed, but this one is important
     // eslint-disable-next-line no-console
@@ -282,6 +329,7 @@ class App implements IAppMain {
       chromium: _.get(process, 'versions.chrome'),
       time: new Date().toISOString(),
     });
+    startupMark('app_constructor_end');
   }
 
   quit(): void {
@@ -1141,7 +1189,7 @@ class App implements IAppMain {
   }
 
   private async createWindow(): Promise<BrowserWindow> {
-    await this.installExtensions();
+    startupMark('create_window_start');
     const isDarwin = this.platform === PlatformOS.Darwin;
     const primaryDisplayWorkArea = screen.getPrimaryDisplay().workAreaSize;
     const defaultWidth = Math.max(
@@ -1153,12 +1201,28 @@ class App implements IAppMain {
       Math.round(primaryDisplayWorkArea.height * this.windowDefaultSizeRatio),
     );
 
+    // #3: Show splash window FIRST, before any potentially slow work like
+    // electron-devtools-installer (which downloads/loads extensions in dev).
     const splashWindow = this.createSplashWindow();
     this.splashWindow = splashWindow;
     splashWindow.once('ready-to-show', () => {
       splashWindow.show();
+      startupMark('splash_window_shown');
     });
     splashWindow.loadURL(this.getSplashDataURL());
+    startupMark('splash_window_load_url_called');
+
+    // #1 follow-up: now that the user has visible feedback, kick off the
+    // login-shell PATH resolution in the background. Tools that need it are
+    // not used in the very first phase of startup, so we have headroom.
+    enrichProcessPathFromLoginShellAsync().catch(() => undefined);
+
+    // installExtensions runs only in dev mode AND only when ENABLE_ELECTRON_EXTENSIONS=true,
+    // so this is a no-op for production builds. We still await here to keep the
+    // existing dev-mode behaviour (extensions need to be loaded before the
+    // renderer attaches) but the splash is already visible at this point.
+    await this.installExtensions();
+    startupMark('install_extensions_done');
 
     const themeColors = this.getMainWindowThemeColors();
     const savedWindowState = this.loadWindowState();
@@ -1232,11 +1296,12 @@ class App implements IAppMain {
     };
 
     let mainWindowShown = false;
-    const showMainWindow = () => {
+    const showMainWindow = (reason: string) => {
       if (mainWindowShown || mainWindow.isDestroyed()) {
         return;
       }
       mainWindowShown = true;
+      startupMark('main_window_show', { reason });
       this.closeSplashWindow();
       if (this.startMinimized) {
         mainWindow.minimize();
@@ -1252,11 +1317,21 @@ class App implements IAppMain {
         mainWindow.show();
         mainWindow.focus();
       }
+      // #4: register auto-updater AFTER the main window is shown so the
+      // initial network check can never delay the user-visible startup.
+      // Small additional delay so that React/services can settle on first
+      // paint before we burn CPU/network on the update channel.
+      setTimeout(() => {
+        startupMark('register_auto_updater_deferred');
+        this.registerAutoUpdater();
+      }, 5000);
     };
 
+    startupMark('main_window_load_file_start');
     mainWindow
       .loadFile(this.htmlFilePath)
       .then(() => {
+        startupMark('main_window_load_file_resolved');
         debug('main window loaded HTML - %s', this.htmlFilePath);
       })
       .catch((error) => {
@@ -1264,9 +1339,9 @@ class App implements IAppMain {
         return mainWindow.loadURL(this.getStartupErrorDataURL(this.htmlFilePath));
       });
 
-    mainWindow.once('ready-to-show', showMainWindow);
-    mainWindow.webContents.once('did-finish-load', showMainWindow);
-    const showFallbackTimeout = setTimeout(showMainWindow, 3500);
+    mainWindow.once('ready-to-show', () => showMainWindow('ready_to_show'));
+    mainWindow.webContents.once('did-finish-load', () => showMainWindow('did_finish_load'));
+    const showFallbackTimeout = setTimeout(() => showMainWindow('fallback_timeout'), 3500);
 
     mainWindow.on('closed', () => {
       if (persistWindowStateTimeout) {
@@ -1336,9 +1411,11 @@ class App implements IAppMain {
 
     // run builders
     this.runBuilders(mainWindow);
+    startupMark('builders_run_done');
 
-    // register handler for auto-updates
-    this.registerAutoUpdater();
+    // #4: auto-updater is now registered inside `showMainWindow` (deferred).
+    // Keeping this block free of registerAutoUpdater() guarantees that the
+    // initial network call cannot delay the user-visible startup.
 
     return mainWindow;
   }

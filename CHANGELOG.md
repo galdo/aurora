@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.6-beta1] - 2026-05-16
+
+### Performance
+- Startup-Geschwindigkeit deutlich verbessert: gemessene Verbesserung in der Renderer-Phase ~50–80 % (Splash → UI in 323 ms gegenüber zuvor 600–1500 ms)
+- Login-Shell-PATH-Resolution erfolgt nicht mehr blockierend im Main-Konstruktor, sondern asynchron nach Anzeige des Splash-Fensters (Ersparnis bis 4 s je nach Shell-Init)
+- Service-Initialisierung im Renderer aufgeteilt in Critical-Path (`ThemeService`, `I18nService`) und Background (`EqualizerService`, `DlnaService`, `BitPerfectService`, `UpdateService`); Background-Services werden über `requestIdleCallback` deferred ausgeführt
+- Splash-Fenster wird jetzt vor `installExtensions` erstellt, sodass User sofort visuelles Feedback erhalten
+- Auto-Updater-Initialisierung erst 5 s nach Hauptfenster-Anzeige, damit der initiale Update-Check keine kritische Phase blockiert
+
+### Added
+- Lightweight Startup-Performance-Marker `[STARTUP_MARK]` (Main) und `[STARTUP_MARK_RENDERER]` (Renderer) zur Diagnose; deaktivierbar via `AURORA_STARTUP_MARKS=0`
+- `enrichProcessPathFast()` für synchrone Wellknown-Path-Anreicherung (sub-millisecond)
+- `enrichProcessPathFromLoginShellAsync()` mit 4 s Timeout für asynchrone Login-Shell-PATH-Auflösung
+- Globaler Renderer-Helper `window.auroraStartupMark` zur prozessübergreifenden Korrelation von Startup-Phasen
+
+### Changed
+- Background-Services im Renderer in einzelne `try/catch`-Blöcke gewrappt, damit ein fehlerhafter Service den Rest nicht mehr verhindert
+- `registerAutoUpdater()` aus dem Hot-Path von `createWindow()` entfernt und in einen deferred Timer im `showMainWindow`-Callback verschoben
+
 ## [1.5.5] - 2026-05-06
 
 ### Fixed

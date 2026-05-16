@@ -6,6 +6,23 @@ import log from 'electron-log/renderer';
 import './index.global.css';
 import { App } from './app/app.component';
 
+// ---------------------------------------------------------------------------
+// Renderer startup performance marks (#12)
+// Mirrors the lightweight marker scheme from main.ts so we can correlate
+// timings across both processes. Output: `[STARTUP_MARK_RENDERER] +<ms> <label>`.
+// ---------------------------------------------------------------------------
+const startupMarksT0 = Date.now();
+const startupMarksEnabled = process.env.AURORA_STARTUP_MARKS !== '0';
+function startupMark(label: string, extra?: Record<string, any>) {
+  if (!startupMarksEnabled) return;
+  const elapsedMs = Date.now() - startupMarksT0;
+  // eslint-disable-next-line no-console
+  console.log(`[STARTUP_MARK_RENDERER] +${elapsedMs}ms ${label}${extra ? ` ${JSON.stringify(extra)}` : ''}`);
+}
+// Expose globally so other modules (services, app component) can mark too.
+(window as any).auroraStartupMark = startupMark;
+startupMark('renderer_module_loaded');
+
 const isDebug = process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD === 'true';
 const isProd = process.env.NODE_ENV === 'production';
 

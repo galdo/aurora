@@ -455,31 +455,85 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    // #12: align with main.ts/index.tsx marker scheme so we can correlate
+    // start-up timings end-to-end. The hook is exposed by index.tsx.
+    const mark: (label: string, extra?: Record<string, any>) => void = (window as any).auroraStartupMark
+      || (() => {});
+
+    mark('app_component_effect_start');
     setAppStateIsLoading(true);
 
+    // #2: critical-path services — needed for the very first render
+    // (theme + i18n affect every component). Keep these synchronous.
     ThemeService.initialize();
+    mark('theme_service_initialized');
     I18nService.initialize();
-    EqualizerService.initialize();
-    DlnaService.initialize();
-    BitPerfectService.initialize();
-    UpdateService.initialize();
+    mark('i18n_service_initialized');
 
-    // register media providers
+    // register media providers (cheap; pure JS, no I/O)
     const mediaLocalProvider = new MediaLocalProvider();
     MediaProviderService.registerMediaProvider(mediaLocalProvider);
+    mark('media_provider_registered');
 
-    // register state persistors
+    // register state persistors (no I/O, just builds a registry)
     _.forEach(statePersistors, (statePersistor: IAppStatePersistor, stateKey: string) => {
       registerStatePersistor(stateKey, statePersistor);
     });
+    mark('state_persistors_registered');
 
+    // Begin state hydration (NeDB-backed). This is the dominant blocker
+    // before the user sees the actual UI, so we kick it off immediately.
+    mark('load_state_start');
     loadState(store)
       .then(() => {
+        mark('load_state_resolved');
         setAppStateIsLoading(false);
+        mark('app_state_loading_set_false');
       })
       .catch((error) => {
         throw new Error(`App encountered error while loading state - ${error.message}`);
       });
+
+    // #2: background services — not needed for first paint. Defer them so
+    // the UI can render and become interactive sooner. `requestIdleCallback`
+    // gives the browser a chance to schedule them when the main thread is
+    // free; `setTimeout` is the safe fallback for older runtimes.
+    const scheduleBackgroundInit = (typeof (window as any).requestIdleCallback === 'function')
+      ? (cb: () => void) => (window as any).requestIdleCallback(cb, { timeout: 2000 })
+      : (cb: () => void) => window.setTimeout(cb, 0);
+
+    scheduleBackgroundInit(() => {
+      mark('background_services_init_start');
+      try {
+        EqualizerService.initialize();
+        mark('equalizer_service_initialized');
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('EqualizerService.initialize failed', error);
+      }
+      try {
+        DlnaService.initialize();
+        mark('dlna_service_initialized');
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('DlnaService.initialize failed', error);
+      }
+      try {
+        BitPerfectService.initialize();
+        mark('bit_perfect_service_initialized');
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('BitPerfectService.initialize failed', error);
+      }
+      try {
+        UpdateService.initialize();
+        mark('update_service_initialized');
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('UpdateService.initialize failed', error);
+      }
+      mark('background_services_init_done');
+    });
   }, []);
 
   return (
