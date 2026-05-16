@@ -2099,35 +2099,36 @@ export class DlnaService {
     const snapshotPromise = (async (): Promise<DlnaRendererSnapshot | undefined> => {
       DlnaControlTelemetry.beginOperation('renderer_snapshot_poll', rendererId);
       try {
-        const [transportInfoResponse, positionInfoResponse, mediaInfoResponse] = await Promise.all([
-          this.sendSoapRequest(
-            renderer.avTransportControlUrl,
-            renderer.avTransportServiceType,
-            'GetTransportInfo',
-            {
-              InstanceID: '0',
-            },
-            this.snapshotTransportSoapRequestTimeoutMs,
-          ).catch(() => ''),
-          this.sendSoapRequest(
-            renderer.avTransportControlUrl,
-            renderer.avTransportServiceType,
-            'GetPositionInfo',
-            {
-              InstanceID: '0',
-            },
-            this.snapshotPositionSoapRequestTimeoutMs,
-          ).catch(() => ''),
-          this.sendSoapRequest(
-            renderer.avTransportControlUrl,
-            renderer.avTransportServiceType,
-            'GetMediaInfo',
-            {
-              InstanceID: '0',
-            },
-            this.snapshotMediaSoapRequestTimeoutMs,
-          ).catch(() => ''),
-        ]);
+        // Serialize SOAP calls to avoid NanoHTTPD thread-pool exhaustion on renderers
+        // with limited concurrency (e.g. Vibe/Pulse Launcher). Parallel calls caused
+        // GetPositionInfo to timeout → positionSeconds=0 while curl worked fine.
+        const transportInfoResponse = await this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'GetTransportInfo',
+          {
+            InstanceID: '0',
+          },
+          this.snapshotTransportSoapRequestTimeoutMs,
+        ).catch(() => '');
+        const positionInfoResponse = await this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'GetPositionInfo',
+          {
+            InstanceID: '0',
+          },
+          this.snapshotPositionSoapRequestTimeoutMs,
+        ).catch(() => '');
+        const mediaInfoResponse = await this.sendSoapRequest(
+          renderer.avTransportControlUrl,
+          renderer.avTransportServiceType,
+          'GetMediaInfo',
+          {
+            InstanceID: '0',
+          },
+          this.snapshotMediaSoapRequestTimeoutMs,
+        ).catch(() => '');
         let volumeResponse = '';
         let muteResponse = '';
         const snapshotAt = Date.now();
