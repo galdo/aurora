@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>app.better_craft.aurorapulse</id>
+  <name>Aurora Pulse</name>
+  <summary>A local-first music player with DLNA streaming support</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <description>
+    <p>
+      Aurora Pulse is a beautifully crafted, local-first music player that puts your
+      personal music library front and center. It supports a wide range of audio formats
+      including FLAC, MP3, AAC, OGG, WAV and more.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Local library management with automatic metadata and cover art</li>
+      <li>DLNA/UPnP streaming to network renderers</li>
+      <li>Podcast support with discovery and subscriptions</li>
+      <li>Gapless playback and crossfade</li>
+      <li>CD ripping and DAP synchronization</li>
+      <li>Light and dark themes</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">app.better_craft.aurorapulse.desktop</launchable>
+
+  <url type="homepage">https://github.com/galdo/aurora</url>
+  <url type="bugtracker">https://github.com/galdo/aurora/issues</url>
+
+  <developer id="app.better_craft">
+    <name>better_craft</name>
+  </developer>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main interface showing the music library</caption>
+      <image>https://raw.githubusercontent.com/galdo/aurora/main/docs/images/screenshot-main-ui.png</image>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="1.5.6" date="2026-05-17">
+      <description>
+        <p>Latest release with DLNA improvements and bug fixes.</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">900</display_length>
+  </requires>
+</component>

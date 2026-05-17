@@ -104,7 +104,8 @@
     "linux": {
       "target": [
         "AppImage",
-        "flatpak"
+        "flatpak",
+        "tar.gz"
       ],
       "category": "Development",
       "icon": "assets/icons"

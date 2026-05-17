@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Aurora Pulse
+GenericName=Music Player
+Comment=A local-first music player with DLNA streaming support
+Exec=aurora-pulse %U
+Icon=app.better_craft.aurorapulse
+Type=Application
+Terminal=false
+Categories=Audio;Music;Player;AudioVideo;
+MimeType=audio/mpeg;audio/flac;audio/ogg;audio/wav;audio/x-wav;audio/mp4;audio/aac;audio/x-aiff;audio/x-m4a;
+StartupWMClass=Aurora Pulse
+Keywords=music;player;audio;local;flac;streaming;dlna;
