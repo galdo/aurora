@@ -41,8 +41,11 @@ class MediaPlayerService {
   private lastDlnaNextTrackQueueEntryId?: string;
   /** Dedupe SetNext: pair of (current queue entry, next queue entry). Next-only dedupe missed track 3 when "current" lagged renderer. */
   private lastDlnaNextSyncPairKey = '';
-  /** Same pair near track end: limit SetNext repeats (progress ticks used to bypass dedupe and flooded the renderer). */
-  private readonly dlnaNearEndSetNextMinIntervalMs = 4000;
+  /** Same pair near track end: limit SetNext repeats (progress ticks used to bypass dedupe and flooded the renderer).
+   * Eversolo / Platinum-based renderers stay in TRANSITIONING while playing. Combined with "near track end"
+   * the old 4s interval caused a SetNext storm. 15s gives standard renderers enough time to pick up the next URI
+   * while no longer flooding non-standard renderers that linger in TRANSITIONING. */
+  private readonly dlnaNearEndSetNextMinIntervalMs = 15000;
   private lastDlnaQueueContextPublishAt = 0;
   private lastDlnaQueueContextPublishSignature?: string;
   private dlnaStrictContextModeEnabled = true;
@@ -65,6 +68,16 @@ class MediaPlayerService {
   /** Monotonic clock when SOAP/effective state last became TRANSITIONING (watchdog for stuck gapless). */
   private remoteTransitioningSinceMs = 0;
   private lastStuckTransitioningPlayNudgeAt = 0;
+  /**
+   * Deduplication guard for position-regression auto-advance.
+   * Prevents the same fromTrackId advance from firing repeatedly when the Eversolo stays
+   * in TRANSITIONING + position=0 after consuming SetNextAVTransportURI. Without this guard,
+   * the remoteZeroPositionPlayingSince interpolation rebuilds lastRendererProgressSeconds to
+   * >= 15 within seconds, re-triggering the detection in an infinite loop.
+   */
+  private lastAutoAdvanceFromTrackId = '';
+  private lastAutoAdvanceAt = 0;
+  private readonly autoAdvanceDedupeCooldownMs = 120000;
 
   constructor() {
     DlnaService.initialize();
@@ -2186,6 +2199,13 @@ class MediaPlayerService {
         mediaPlaybackProgress: 0,
       },
     });
+    // Reset progress state SYNCHRONOUSLY so the next progress tick doesn't
+    // overwrite the 0 with the stale value from the previous track.
+    this.lastRendererProgressSeconds = 0;
+    this.lastRendererProgressAt = Date.now();
+    this.remoteZeroPositionPlayingSince = 0;
+    this.lastTrackChangeInitiatedAt = Date.now();
+    this.lastAutoAdvanceFromTrackId = '';
     this.lastDlnaNextTrackSyncAt = 0;
     this.lastDlnaNextTrackQueueEntryId = undefined;
     this.lastDlnaNextSyncPairKey = '';

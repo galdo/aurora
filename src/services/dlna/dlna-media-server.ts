@@ -622,6 +622,32 @@ export function handleMediaServerHttpRequest(deps: DlnaMediaServerDeps, request:
   response.end('Not found');
 }
 
+/**
+ * P0-1 — Self-test the freshly-bound listener so we don't silently leave a half-broken state.
+ * Reaches the local description.xml the same way a real DMR would, with a tight timeout.
+ * Failure means the OS accepted bind() but real LAN traffic cannot reach :58200
+ * (typical causes: macOS Application Firewall, IPv6-only interface bind, NAT in containerised setups).
+ */
+async function performMediaServerSelfTest(deps: DlnaMediaServerDeps): Promise<{ ok: boolean; reason?: string; servingIp?: string }> {
+  const ipAddresses = deps.getIpAddresses();
+  const servingIp = ipAddresses.find(ip => ip && ip !== '127.0.0.1') || ipAddresses[0] || '127.0.0.1';
+  const url = `http://${servingIp}:${deps.port}/description.xml`;
+  const abortController = new AbortController();
+  const timeoutHandle = setTimeout(() => abortController.abort(), 1500);
+  try {
+    const response = await fetch(url, { signal: abortController.signal });
+    if (!response.ok) {
+      return { ok: false, reason: `HTTP ${response.status}`, servingIp };
+    }
+    return { ok: true, servingIp };
+  } catch (error) {
+    const message = String((error as Error)?.message || error || '');
+    return { ok: false, reason: message || 'network unreachable', servingIp };
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 export async function startMediaServer(deps: DlnaMediaServerDeps): Promise<void> {
   if (deps.getHttpServer()) {
     deps.emitState();
@@ -640,6 +666,24 @@ export async function startMediaServer(deps: DlnaMediaServerDeps): Promise<void>
         resolve();
       });
     });
+    // P0-1: verify the listener is reachable on the LAN IP, not just the kernel-side bind succeeded.
+    const selfTest = await performMediaServerSelfTest(deps);
+    if (!selfTest.ok) {
+      deps.writeDlnaLog('error', 'media_server_self_test_failed', {
+        port: deps.port,
+        servingIp: selfTest.servingIp,
+        reason: selfTest.reason,
+        dlnaLayer: 'dlna.media_server',
+      });
+      const reachabilityMessage = `DLNA Media Server bound on TCP ${deps.port} but is not reachable over the LAN (${selfTest.reason || 'unknown'}). Check macOS Application Firewall and ensure port ${deps.port} is allowed for Aurora Pulse.`;
+      deps.setLastError(reachabilityMessage);
+    } else {
+      deps.writeDlnaLog('info', 'media_server_self_test_ok', {
+        port: deps.port,
+        servingIp: selfTest.servingIp,
+        dlnaLayer: 'dlna.media_server',
+      });
+    }
     startSsdpBroadcast(deps);
     deps.refreshBrowseLibrary().catch((error) => {
       debug('refreshBrowseLibrary initial call failed - %o', error);
