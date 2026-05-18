@@ -137,24 +137,21 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .dlna .visual{border-radius:var(--rl);border:1px solid var(--line);overflow:hidden;background:var(--bg2);box-shadow:0 12px 36px rgba(0,0,0,.4)}
 .dlna .visual img{width:100%;display:block}
 
-/* Vibe showcase */
+/* Vibe showcase — portrait phone screenshots, overlay caption */
 .vibew{background:linear-gradient(180deg,var(--bg1) 0%,var(--bg) 100%);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.vibe-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
-@media(max-width:980px){.vibe-grid{grid-template-columns:repeat(2,1fr);gap:20px}}
-@media(max-width:600px){.vibe-grid{grid-template-columns:1fr;gap:18px}}
-/* First two cards span 1 col each, hero card spans 2 cols on large screens for emphasis */
-.vibe-grid .vibe-card.feature{grid-column:span 2}
-@media(max-width:980px){.vibe-grid .vibe-card.feature{grid-column:span 2}}
-@media(max-width:600px){.vibe-grid .vibe-card.feature{grid-column:span 1}}
-.vibe-card{background:var(--bg1);border:1px solid var(--line);border-radius:var(--rl);overflow:hidden;transition:all .3s;position:relative;display:flex;flex-direction:column}
+.vibe-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:18px}
+@media(max-width:1100px){.vibe-grid{grid-template-columns:repeat(3,1fr);gap:18px}}
+@media(max-width:720px){.vibe-grid{grid-template-columns:repeat(2,1fr);gap:16px}}
+@media(max-width:440px){.vibe-grid{grid-template-columns:1fr;gap:14px}}
+.vibe-card{background:var(--bg1);border:1px solid var(--line);border-radius:var(--rl);overflow:hidden;transition:all .3s;position:relative;aspect-ratio:9/16;cursor:default}
 .vibe-card:hover{border-color:rgba(249,115,22,.4);transform:translateY(-4px);box-shadow:0 16px 40px rgba(0,0,0,.5),0 0 32px var(--orange-soft)}
-.vibe-card .imgwrap{position:relative;background:#000;aspect-ratio:526/296;overflow:hidden}
-.vibe-card .imgwrap img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .35s}
-.vibe-card:hover .imgwrap img{transform:scale(1.025)}
-.vibe-card .meta{padding:20px 22px;border-top:1px solid var(--line);flex:1}
-.vibe-card h4{font-size:16px;font-weight:700;margin-bottom:6px;letter-spacing:-.005em}
-.vibe-card p{font-size:13.5px;color:var(--m);line-height:1.6;margin:0}
-.vibe-card .pill{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--orange-soft);color:var(--orange);border:1px solid rgba(249,115,22,.22);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+.vibe-card img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .45s}
+.vibe-card:hover img{transform:scale(1.04)}
+/* Overlay caption — sits at the bottom of the image, semi-transparent so the screenshot stays readable through it */
+.vibe-card .meta{position:absolute;left:0;right:0;bottom:0;padding:14px 14px 14px;background:linear-gradient(to top,rgba(2,4,8,.92) 0%,rgba(2,4,8,.78) 50%,rgba(2,4,8,0) 100%);color:var(--t);pointer-events:none}
+.vibe-card .meta h4{font-size:14px;font-weight:700;margin:0 0 4px;letter-spacing:-.005em;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.vibe-card .meta p{font-size:11.5px;color:rgba(255,255,255,.78);line-height:1.45;margin:0;text-shadow:0 1px 2px rgba(0,0,0,.55);display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.vibe-card .meta .pill{display:inline-block;font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:5px;background:rgba(249,115,22,.92);color:#1F0800;border:none;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;box-shadow:0 2px 8px rgba(0,0,0,.4)}
 
 .vibe-cta{margin-top:48px;text-align:center;padding:36px 24px;background:var(--bg1);border:1px solid var(--line);border-radius:var(--rl);position:relative;overflow:hidden}
 .vibe-cta::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%,var(--orange-soft) 0%,transparent 60%);pointer-events:none}
@@ -245,8 +242,10 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .coffee-fab .cup{font-size:16px;line-height:1}
 @media(max-width:520px){.coffee-fab{padding:11px 14px;font-size:0}.coffee-fab .cup{font-size:18px}}
 
-/* Google Play badge button — official store badge as image link */
-.gp-badge{display:inline-flex;align-items:center;justify-content:center;padding:0;background:transparent;border:none;border-radius:10px;transition:all .25s;line-height:0}
-.gp-badge img{height:54px;width:auto;display:block;border-radius:8px}
+/* Google Play badge button — official store badge as image link.
+   Height matches an adjacent .btn (~50px including border-radius), image scales
+   proportionally without distortion thanks to width:auto. */
+.gp-badge{display:inline-flex;align-items:center;justify-content:center;padding:0;background:transparent;border:none;border-radius:10px;transition:all .25s;line-height:0;height:50px;flex:0 0 auto}
+.gp-badge img{height:100%;width:auto;display:block;object-fit:contain}
 .gp-badge:hover{transform:translateY(-2px);filter:drop-shadow(0 8px 24px rgba(255,255,255,.12))}
-.gp-badge.sm img{height:46px}
+.gp-badge.sm{height:44px}
