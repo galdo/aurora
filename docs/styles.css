@@ -34,8 +34,8 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .nb{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;transition:all .2s;border:1px solid transparent;text-decoration:none}
 .nb-g{color:var(--t);border-color:var(--line2);background:var(--glass)}
 .nb-g:hover{border-color:var(--cyan);background:var(--cyan-soft);color:var(--cyan)}
-.nb-p{background:var(--green);color:#012913;box-shadow:0 0 0 1px var(--green),0 4px 16px var(--green-glow)}
-.nb-p:hover{transform:translateY(-1px);box-shadow:0 0 0 1px var(--green),0 8px 24px var(--green-glow)}
+.nb-p{background:var(--cyan);color:#001A1F;box-shadow:0 0 0 1px var(--cyan),0 4px 16px var(--cyan-glow)}
+.nb-p:hover{transform:translateY(-1px);box-shadow:0 0 0 1px var(--cyan),0 8px 24px var(--cyan-glow)}
 .mt{display:none;background:none;border:none;color:var(--t);font-size:22px;cursor:pointer;padding:6px}
 @media(max-width:880px){
   .mt{display:block}
@@ -55,8 +55,8 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .hlead strong{color:var(--t);font-weight:600}
 .hcta{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-bottom:48px}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:14px 26px;border-radius:var(--r);font-size:15px;font-weight:700;transition:all .25s;border:1px solid transparent;text-decoration:none}
-.bp{background:var(--green);color:#012913;box-shadow:0 0 0 1px var(--green),0 8px 24px var(--green-glow)}
-.bp:hover{transform:translateY(-2px);box-shadow:0 0 0 1px var(--green),0 14px 36px var(--green-glow)}
+.bp{background:var(--cyan);color:#001A1F;box-shadow:0 0 0 1px var(--cyan),0 8px 24px var(--cyan-glow)}
+.bp:hover{transform:translateY(-2px);box-shadow:0 0 0 1px var(--cyan),0 14px 36px var(--cyan-glow)}
 .bo{background:var(--orange);color:#1F0800;box-shadow:0 0 0 1px var(--orange),0 8px 24px var(--orange-glow)}
 .bo:hover{transform:translateY(-2px);box-shadow:0 0 0 1px var(--orange),0 14px 36px var(--orange-glow)}
 .bse{background:transparent;color:var(--t);border-color:var(--line2)}
@@ -73,7 +73,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .fr{border-radius:var(--rl);border:1px solid var(--line);overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.55),0 0 0 1px var(--line);background:var(--bg1);transition:transform .3s;position:relative}
 .fr:hover{transform:translateY(-4px)}
 .fr img{width:100%;height:auto;display:block}
-.fr .label{position:absolute;top:12px;left:12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:4px 10px;border-radius:7px;background:rgba(2,4,8,.7);color:var(--cyan);border:1px solid rgba(34,211,238,.25);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.fr .label{position:absolute;top:12px;left:12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:4px 10px;border-radius:7px;background:rgba(2,4,8,.7);color:var(--green);border:1px solid rgba(29,185,84,.32);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 
 /* Section */
 .sec{max-width:1240px;margin:0 auto;padding:96px 24px}
@@ -223,12 +223,22 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .bmc h3 .grad-g{background:linear-gradient(135deg,var(--green) 0%,var(--green-bright) 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .bmc p{color:var(--m);font-size:15px;line-height:1.7;margin-bottom:24px}
 .bmc-btns{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}
-.bg-btn{display:inline-flex;align-items:center;gap:8px;padding:14px 26px;border-radius:var(--r);font-size:15px;font-weight:700;text-decoration:none;border:1px solid transparent;transition:all .25s;background:var(--green);color:#012913;box-shadow:0 0 0 1px var(--green),0 8px 24px var(--green-glow)}
-.bg-btn:hover{transform:translateY(-2px);box-shadow:0 0 0 1px var(--green),0 14px 36px var(--green-glow)}
+/* Buy Me A Coffee — official brand color #FFDD00, dark text */
+.bmc .heart{background:rgba(255,221,0,.14);color:#FFDD00;border:1px solid rgba(255,221,0,.4)}
+.bmc h3 .grad-g{background:linear-gradient(135deg,#FFDD00 0%,#FFC83C 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.bmc::before{background:radial-gradient(ellipse at 50% 0%,rgba(255,221,0,.14) 0%,transparent 65%)}
+.bg-btn{display:inline-flex;align-items:center;gap:8px;padding:14px 26px;border-radius:var(--r);font-size:15px;font-weight:700;text-decoration:none;border:1px solid transparent;transition:all .25s;background:#FFDD00;color:#1A1A1A;box-shadow:0 0 0 1px #FFDD00,0 8px 24px rgba(255,221,0,.32)}
+.bg-btn:hover{transform:translateY(-2px);box-shadow:0 0 0 1px #FFDD00,0 14px 36px rgba(255,221,0,.45);color:#1A1A1A}
 .bg-btn .cup{font-size:18px;line-height:1}
 
-/* Floating coffee FAB (always visible in viewport bottom-right) */
-.coffee-fab{position:fixed;right:20px;bottom:20px;z-index:90;display:inline-flex;align-items:center;gap:8px;padding:11px 18px;border-radius:999px;font-size:13px;font-weight:700;text-decoration:none;background:var(--green);color:#012913;box-shadow:0 0 0 1px var(--green),0 10px 30px var(--green-glow),0 4px 12px rgba(0,0,0,.4);transition:all .25s;border:none}
-.coffee-fab:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 0 0 1px var(--green),0 16px 40px var(--green-glow),0 6px 16px rgba(0,0,0,.5);color:#012913}
+/* Floating coffee FAB — Buy Me A Coffee yellow */
+.coffee-fab{position:fixed;right:20px;bottom:20px;z-index:90;display:inline-flex;align-items:center;gap:8px;padding:11px 18px;border-radius:999px;font-size:13px;font-weight:700;text-decoration:none;background:#FFDD00;color:#1A1A1A;box-shadow:0 0 0 1px #FFDD00,0 10px 30px rgba(255,221,0,.35),0 4px 12px rgba(0,0,0,.4);transition:all .25s;border:none}
+.coffee-fab:hover{transform:translateY(-2px) scale(1.03);box-shadow:0 0 0 1px #FFDD00,0 16px 40px rgba(255,221,0,.5),0 6px 16px rgba(0,0,0,.5);color:#1A1A1A}
 .coffee-fab .cup{font-size:16px;line-height:1}
 @media(max-width:520px){.coffee-fab{padding:11px 14px;font-size:0}.coffee-fab .cup{font-size:18px}}
+
+/* Google Play badge button — official store badge as image link */
+.gp-badge{display:inline-flex;align-items:center;justify-content:center;padding:0;background:transparent;border:none;border-radius:10px;transition:all .25s;line-height:0}
+.gp-badge img{height:54px;width:auto;display:block;border-radius:8px}
+.gp-badge:hover{transform:translateY(-2px);filter:drop-shadow(0 8px 24px rgba(255,255,255,.12))}
+.gp-badge.sm img{height:46px}
