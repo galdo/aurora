@@ -139,14 +139,22 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 
 /* Vibe showcase */
 .vibew{background:linear-gradient(180deg,var(--bg1) 0%,var(--bg) 100%);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.vibe-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
-.vibe-card{background:var(--bg1);border:1px solid var(--line);border-radius:var(--rl);overflow:hidden;transition:all .3s;position:relative}
+.vibe-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+@media(max-width:980px){.vibe-grid{grid-template-columns:repeat(2,1fr);gap:20px}}
+@media(max-width:600px){.vibe-grid{grid-template-columns:1fr;gap:18px}}
+/* First two cards span 1 col each, hero card spans 2 cols on large screens for emphasis */
+.vibe-grid .vibe-card.feature{grid-column:span 2}
+@media(max-width:980px){.vibe-grid .vibe-card.feature{grid-column:span 2}}
+@media(max-width:600px){.vibe-grid .vibe-card.feature{grid-column:span 1}}
+.vibe-card{background:var(--bg1);border:1px solid var(--line);border-radius:var(--rl);overflow:hidden;transition:all .3s;position:relative;display:flex;flex-direction:column}
 .vibe-card:hover{border-color:rgba(249,115,22,.4);transform:translateY(-4px);box-shadow:0 16px 40px rgba(0,0,0,.5),0 0 32px var(--orange-soft)}
-.vibe-card img{width:100%;aspect-ratio:526/296;object-fit:cover;display:block;background:#000}
-.vibe-card .meta{padding:18px 20px;border-top:1px solid var(--line)}
-.vibe-card h4{font-size:15px;font-weight:700;margin-bottom:4px;letter-spacing:-.005em}
-.vibe-card p{font-size:13px;color:var(--m);line-height:1.55;margin:0}
-.vibe-card .pill{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--orange-soft);color:var(--orange);border:1px solid rgba(249,115,22,.22);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+.vibe-card .imgwrap{position:relative;background:#000;aspect-ratio:526/296;overflow:hidden}
+.vibe-card .imgwrap img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .35s}
+.vibe-card:hover .imgwrap img{transform:scale(1.025)}
+.vibe-card .meta{padding:20px 22px;border-top:1px solid var(--line);flex:1}
+.vibe-card h4{font-size:16px;font-weight:700;margin-bottom:6px;letter-spacing:-.005em}
+.vibe-card p{font-size:13.5px;color:var(--m);line-height:1.6;margin:0}
+.vibe-card .pill{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:var(--orange-soft);color:var(--orange);border:1px solid rgba(249,115,22,.22);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
 
 .vibe-cta{margin-top:48px;text-align:center;padding:36px 24px;background:var(--bg1);border:1px solid var(--line);border-radius:var(--rl);position:relative;overflow:hidden}
 .vibe-cta::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%,var(--orange-soft) 0%,transparent 60%);pointer-events:none}
