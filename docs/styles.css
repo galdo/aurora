@@ -242,10 +242,12 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .coffee-fab .cup{font-size:16px;line-height:1}
 @media(max-width:520px){.coffee-fab{padding:11px 14px;font-size:0}.coffee-fab .cup{font-size:18px}}
 
-/* Google Play badge button — official store badge as image link.
-   Height matches an adjacent .btn (~50px including border-radius), image scales
-   proportionally without distortion thanks to width:auto. */
-.gp-badge{display:inline-flex;align-items:center;justify-content:center;padding:0;background:transparent;border:none;border-radius:10px;transition:all .25s;line-height:0;height:50px;flex:0 0 auto}
-.gp-badge img{height:100%;width:auto;display:block;object-fit:contain}
+/* Google Play badge button — official store badge as SVG image link.
+   The official badge has built-in brand padding around the logo, so the badge
+   height has to be set a bit larger than the adjacent .btn for the *visible*
+   logo to feel the same size as the button text next to it. Negative margin
+   re-aligns the badge bounding box with the button row baseline. */
+.gp-badge{display:inline-flex;align-items:center;justify-content:center;padding:0;background:transparent;border:none;border-radius:10px;transition:all .25s;line-height:0;height:64px;margin:-7px 0;flex:0 0 auto;text-decoration:none}
+.gp-badge img{height:100%;width:auto;display:block}
 .gp-badge:hover{transform:translateY(-2px);filter:drop-shadow(0 8px 24px rgba(255,255,255,.12))}
-.gp-badge.sm{height:44px}
+.gp-badge.sm{height:60px;margin:-8px 0}
