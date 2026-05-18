@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Aurora Pulse &amp; Vibe Launcher — Your Music. Your Library. Your Vibe.</title>
-<meta name="description" content="Aurora Pulse: local-first, audiophile-focused desktop player. Vibe Launcher: its Android companion with V-Music spatial UI. One ecosystem split across the desk and the commute."/>
+<title>Aurora Pulse &amp; Vibe Music &amp; Podcast Launcher — Your Music. Your Library. Your Vibe.</title>
+<meta name="description" content="Aurora Pulse: local-first, audiophile-focused desktop player. Vibe Music &amp; Podcast Launcher: its Android companion that replaces your home screen. One ecosystem split across the desk and the commute."/>
 <meta name="theme-color" content="#020408"/>
 <link rel="icon" type="image/png" href="./images/aurora-icon.png"/>
 <link rel="stylesheet" href="./styles.css"/>
@@ -45,12 +45,12 @@
     <h1>Your music. Your library. <span class="grad">Your vibe.</span></h1>
     <p class="hlead">
       <strong>Aurora Pulse</strong> is a local-first, audiophile-focused desktop player for listeners who own their music.
-      Pair it with <strong>Vibe Launcher</strong> on Android and you get one deliberate two-screen story:
+      Pair it with <strong>Vibe Music &amp; Podcast Launcher</strong> on Android and you get one deliberate two-screen story:
       curate, sync, and drive playback from the desk — slip the same world into your pocket when you walk away.
     </p>
     <div class="hcta">
       <a class="btn bp" href="#install">Download Aurora Pulse</a>
-      <a class="btn bo" href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" target="_blank" rel="noopener">Get Vibe Launcher on Play</a>
+      <a class="btn bo" href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" target="_blank" rel="noopener">Get Vibe on Google Play</a>
       <a class="btn bse" href="https://github.com/galdo/aurora" target="_blank" rel="noopener">View Source</a>
     </div>
     <div class="hmeta">
@@ -62,10 +62,12 @@
   </div>
 </section>
 
-<div class="hshots">
-  <div class="fr"><img src="./images/placeholder-main-interface.png" alt="Aurora Pulse — main interface"/></div>
-  <div class="fr"><img src="./images/vibe/vibe-album-view.webp" alt="Vibe Launcher — album view"/></div>
-  <div class="fr"><img src="./images/vibe/vibe-play-view.webp" alt="Vibe Launcher — now playing"/></div>
+<div class="hero-shot">
+  <div class="fr"><span class="label">Aurora Pulse · Desktop</span><img src="./images/placeholder-main-interface.png" alt="Aurora Pulse — main interface"/></div>
+</div>
+<div class="hero-detail">
+  <div class="fr"><span class="label">Library</span><img src="./images/placeholder-library.png" alt="Aurora Pulse — library view"/></div>
+  <div class="fr"><span class="label">Equalizer</span><img src="./images/placeholder-equalizer.png" alt="Aurora Pulse — equalizer"/></div>
 </div>
 
 <!-- ECOSYSTEM -->
@@ -94,14 +96,15 @@
 
       <div class="ecard vibe">
         <span class="etag">Android · Orange</span>
-        <h3>Vibe Launcher</h3>
+        <h3>Vibe Music &amp; Podcast Launcher</h3>
         <div class="tag">Replaces your home screen · V-Music spatial UI</div>
-        <p>Pure Kotlin / Jetpack Compose launcher. The home screen <em>is</em> the player. OLED-true black, Electric Cyan + Vivid Orange, Material 3.</p>
+        <p>Your home screen <em>is</em> the player. Music and podcasts always one tap away — no detour through a separate app, no algorithm telling you what to listen to next.</p>
         <ul>
           <li>Library, Player, Apps &amp; Settings as four equal tabs</li>
-          <li>Built-in Media3 ExoPlayer with system-level 10-band EQ</li>
-          <li>Pure-Kotlin DLNA renderer (NanoHTTPD + SSDP)</li>
-          <li>Long-press direct-play, mosaic covers for compilations</li>
+          <li>Long-press to direct-play any album, track or playlist</li>
+          <li>Mosaic covers for compilations, CD-divider aware track lists</li>
+          <li>Built-in 10-band equalizer with AutoEQ profile import</li>
+          <li>Plays to DLNA renderers around the house</li>
           <li>M3U/M3U8 playlists, Recently Played &amp; Liked tracks</li>
         </ul>
       </div>
@@ -134,7 +137,7 @@
     <div class="fc"><span class="ic">📚</span><h3>Library management</h3><p>Albums, artists, tracks, playlists in one coherent navigation model. Sideview detail access, direct playback from search, integrated metadata edits.</p></div>
     <div class="fc warm"><span class="ic">🗂</span><h3>Playlists &amp; collections</h3><p>Manual curation and smart logic side by side. Robust artwork and sorting in mixed or generated collections.</p></div>
     <div class="fc warm"><span class="ic">🔌</span><h3>DAP sync (filesystem &amp; ADB)</h3><p>Copy with progress, ETA, resume, cancellation. ADB resolves writable storage, supports mirror-folder layout, and streams cleanup so huge libraries don’t stall.</p><span class="badge">v1.5.x</span></div>
-    <div class="fc"><span class="ic">🎙</span><h3>Podcasts</h3><p>Discovery, subscription management, RSS-driven refresh. Same playback model as your music — switch context without leaving the app.</p><span class="badge warn">No cross-device sync</span></div>
+    <div class="fc"><span class="ic">🎙</span><h3>Podcasts</h3><p>Discovery, subscription management, RSS-driven refresh. Same playback model as your music — switch context without leaving the app.</p></div>
     <div class="fc"><span class="ic">💿</span><h3>CD import</h3><p>Archival-quality FLAC workflow with metadata-aware decisions and predictable cover handling. Less post-processing.</p></div>
     <div class="fc warm"><span class="ic">📡</span><h3>DLNA / remote playback</h3><p>Serialized command sequencing per renderer. Calmer transitions. Renderer state stays glued to what you hear.</p></div>
   </div>
@@ -167,39 +170,39 @@
   <section class="sec">
     <div class="sh">
       <span class="eb warm">The Android side</span>
-      <h2>Vibe Launcher — <span class="grad">your home screen, with rhythm.</span></h2>
-      <p>A pure Kotlin / Jetpack Compose launcher that <em>replaces</em> your home screen. Library, Player, Apps, Settings — four equal tabs. V-Music spatial UI: OLED-true black, Electric Cyan and Vivid Orange.</p>
+      <h2>Vibe Music &amp; Podcast Launcher — <span class="grad">your home screen, with rhythm.</span></h2>
+      <p>An Android launcher that <em>replaces</em> your home screen. Music, podcasts, your apps — under one calm spatial UI. No detour through a separate player, no algorithm telling you what to listen to next.</p>
     </div>
 
     <div class="vibe-grid">
       <div class="vibe-card">
-        <img src="./images/vibe/vibe-album-view.webp" alt="Vibe Launcher — album grid"/>
-        <div class="meta"><span class="pill">Library</span><h4>Album grid</h4><p>2-column grid with mosaic covers for compilations. Long-press to direct-play.</p></div>
+        <img src="./images/vibe/vibe-album-view.webp" alt="Vibe Music &amp; Podcast Launcher — album grid"/>
+        <div class="meta"><span class="pill">Library</span><h4>Album grid</h4><p>Browse your collection at a glance. Mosaic covers for compilations, long-press to direct-play.</p></div>
       </div>
       <div class="vibe-card">
-        <img src="./images/vibe/vibe-album-detail-view.webp" alt="Vibe Launcher — album detail"/>
-        <div class="meta"><span class="pill">Album detail</span><h4>Cover, metadata, tracks</h4><p>CD-divider aware track list with track-number cleanup and quality info.</p></div>
+        <img src="./images/vibe/vibe-album-detail-view.webp" alt="Vibe Music &amp; Podcast Launcher — album detail"/>
+        <div class="meta"><span class="pill">Album detail</span><h4>Cover, metadata, tracks</h4><p>Clean track list with multi-disc dividers and track-number cleanup. Quality info where it matters.</p></div>
       </div>
       <div class="vibe-card">
-        <img src="./images/vibe/vibe-play-view.webp" alt="Vibe Launcher — now playing"/>
-        <div class="meta"><span class="pill">Player</span><h4>Now playing</h4><p>Artwork, seek bar, like, repeat &amp; shuffle. Media3 ExoPlayer under the hood.</p></div>
+        <img src="./images/vibe/vibe-play-view.webp" alt="Vibe Music &amp; Podcast Launcher — now playing"/>
+        <div class="meta"><span class="pill">Player</span><h4>Now playing</h4><p>Artwork, seek bar, like, repeat &amp; shuffle. Tight, responsive transport — exactly what a launcher-as-player should feel like.</p></div>
       </div>
       <div class="vibe-card">
-        <img src="./images/vibe/vibe-podcast-view.webp" alt="Vibe Launcher — podcasts"/>
-        <div class="meta"><span class="pill">Podcasts</span><h4>Same playback model</h4><p>Spoken content alongside music. <strong>No cross-device playback sync.</strong></p></div>
+        <img src="./images/vibe/vibe-podcast-view.webp" alt="Vibe Music &amp; Podcast Launcher — podcasts"/>
+        <div class="meta"><span class="pill">Podcasts</span><h4>Same playback model</h4><p>Subscribe, refresh, listen. Spoken content lives next to your music — switch context without leaving the launcher.</p></div>
       </div>
       <div class="vibe-card">
-        <img src="./images/vibe/vibe-app-view.webp" alt="Vibe Launcher — apps"/>
-        <div class="meta"><span class="pill">Apps tab</span><h4>App grid with edit mode</h4><p>Drag &amp; drop, uninstall, your apps without a separate home-screen layer.</p></div>
+        <img src="./images/vibe/vibe-app-view.webp" alt="Vibe Music &amp; Podcast Launcher — apps"/>
+        <div class="meta"><span class="pill">Apps tab</span><h4>App grid with edit mode</h4><p>Your apps, drag &amp; drop, uninstall — without a separate home-screen layer to fight.</p></div>
       </div>
     </div>
 
     <div class="vibe-cta">
-      <h3>Want in early?</h3>
-      <p>Vibe Launcher is under active development. Rough edges are part of the ride; your feedback steers the roadmap. Get it on Google Play, or apply for the beta program to help shape the Android side of Aurora.</p>
+      <h3>Available now on Google Play</h3>
+      <p>Vibe Music &amp; Podcast Launcher is live and actively developed. Install it, set it as your default home, and let your music breathe again.</p>
       <div class="ctas">
-        <a class="btn bo" href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" target="_blank" rel="noopener">Google Play</a>
-        <a class="btn bse" href="https://forms.gle/KBymYocF7hieTFJZ7" target="_blank" rel="noopener">Apply for beta →</a>
+        <a class="btn bo" href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" target="_blank" rel="noopener">Get it on Google Play</a>
+        <a class="btn bse" href="https://github.com/galdo/aurora/issues" target="_blank" rel="noopener">Report feedback →</a>
       </div>
     </div>
   </section>
@@ -234,7 +237,7 @@
       <span class="ic">🐧</span><h4>Linux (Flatpak)</h4><p><code>flatpak install &lt;file&gt;.flatpak</code> or use your Flatpak manager.</p><span class="arrow">→</span>
     </a>
     <a class="dl-card" href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" target="_blank" rel="noopener">
-      <span class="ic">🤖</span><h4>Vibe Launcher (Android)</h4><p>Get the Android companion on Google Play. Replaces your home screen.</p><span class="arrow">→</span>
+      <span class="ic">🤖</span><h4>Vibe Music &amp; Podcast Launcher</h4><p>Available on Google Play. Replaces your Android home screen with music &amp; podcasts at the front.</p><span class="arrow">→</span>
     </a>
   </div>
 </section>
@@ -263,7 +266,6 @@
       <h5>Vibe Launcher</h5>
       <a href="#vibe">Overview</a>
       <a href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" target="_blank" rel="noopener">Google Play</a>
-      <a href="https://forms.gle/KBymYocF7hieTFJZ7" target="_blank" rel="noopener">Beta program</a>
       <a href="https://github.com/galdo/aurora/blob/main/pulse-launcher-compose/PRIVACY_POLICY.md" target="_blank" rel="noopener">Privacy policy</a>
     </div>
     <div>
