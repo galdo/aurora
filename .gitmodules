@@ -1,3 +1,6 @@
 [submodule "pulse-laucher"]
 	path = pulse-laucher
 	url = https://github.com/galdo/aurora-launcher.git
+[submodule "pulse-launcher-compose"]
+	path = pulse-launcher-compose
+	url = https://github.com/galdo/aurora-launcher.git
