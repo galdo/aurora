@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Aurora Pulse &amp; Vibe Launcher — Your Music, Your Way</title>
+<meta name="description" content="Aurora Pulse: local-first audiophile desktop player. Vibe Launcher: its Android companion. One ecosystem for listeners who own their music."/>
+<link rel="icon" type="image/png" href="../assets/icons/icon.png"/>
+<style>
+:root{color-scheme:dark;--bg:#0a0e14;--bs:#0f1520;--bc:#111a2a;--t:#e8eef8;--m:#8a9bb8;--a:#1DB954;--ad:rgba(29,185,84,.12);--ag:rgba(29,185,84,.25);--l:#1c2840;--r:16px;--f:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{font-family:var(--f);background:var(--bg);color:var(--t);line-height:1.7;overflow-x:hidden}a{color:var(--a)}
+.nav{position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(10,14,20,.88);backdrop-filter:blur(16px);border-bottom:1px solid var(--l)}.nav-i{max-width:1200px;margin:0 auto;padding:0 24px;display:flex;align-items:center;height:64px;gap:28px}.nav-b{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--t);font-weight:700;font-size:17px}.nav-b img{width:30px;height:30px;border-radius:8px}.nav-l{display:flex;align-items:center;gap:22px;flex:1}.nav-l a{color:var(--m);text-decoration:none;font-size:14px;font-weight:500;transition:color .2s}.nav-l a:hover{color:var(--a)}.nav-a{display:flex;align-items:center;gap:10px}.nb{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:600;text-decoration:none;transition:all .2s;border:1px solid transparent}.nb-g{color:var(--t);border-color:var(--l);background:rgba(255,255,255,.04)}.nb-g:hover{border-color:var(--a);background:var(--ad)}.nb-p{background:var(--a);color:#082316}.nb-p:hover{transform:translateY(-1px);box-shadow:0 4px 20px var(--ag)}
+.mt{display:none;background:none;border:none;color:var(--t);font-size:24px;cursor:pointer}@media(max-width:768px){.mt{display:block}.nav-l,.nav-a{display:none}.nav-i.open .nav-l,.nav-i.open .nav-a{display:flex;flex-direction:column;position:absolute;top:64px;left:0;right:0;background:rgba(10,14,20,.97);padding:24px;border-bottom:1px solid var(--l);gap:14px}}
+.hero{padding:140px 24px 60px;text-align:center;position:relative;overflow:hidden}.hero::before{content:'';position:absolute;top:-200px;left:50%;transform:translateX(-50%);width:900px;height:900px;background:radial-gradient(ellipse,var(--ag) 0%,transparent 55%);pointer-events:none;opacity:.35}.hc{max-width:900px;margin:0 auto;position:relative;z-index:1}.hbadge{display:inline-flex;align-items:center;gap:8px;background:var(--ad);border:1px solid rgba(29,185,84,.3);border-radius:999px;padding:6px 16px;font-size:13px;color:var(--a);font-weight:600;margin-bottom:24px}.hero h1{font-size:clamp(36px,6.5vw,60px);line-height:1.1;letter-spacing:-.03em;margin-bottom:20px;font-weight:800}.hero h1 .hl{background:linear-gradient(135deg,var(--a),#4ade80);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}.hlead{font-size:18px;color:var(--m);max-width:680px;margin:0 auto 36px}.hcta{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-bottom:56px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:14px 26px;border-radius:14px;font-size:15px;font-weight:700;text-decoration:none;transition:all .25s;border:1px solid transparent}.bp{background:var(--a);color:#082316}.bp:hover{transform:translateY(-2px);box-shadow:0 8px 32px var(--ag)}.bse{background:transparent;color:var(--t);border-color:var(--l)}.bse:hover{border-color:var(--a);background:var(--ad)}
+.shots{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;padding:0 24px;margin-bottom:20px}.shots img{height:380px;border-radius:16px;border:1px solid var(--l);box-shadow:0 16px 48px rgba(0,0,0,.4);transition:transform .3s}.shots img:hover{transform:scale(1.02) translateY(-4px)}
+.sec{max-width:1200px;margin:0 auto;padding:80px 24px}.sh{text-align:center;margin-bottom:48px}.sh h2{font-size:clamp(26px,4.5vw,40px);font-weight:800;letter-spacing:-.02em;margin-bottom:12px}.sh p{color:var(--m);font-size:16px;max-width:620px;margin:0 auto}
+.ew{background:linear-gradient(180deg,var(--bg) 0%,var(--bs) 100%);border-top:1px solid var(--l);border-bottom:1px solid var(--l)}.eg{display:grid;grid-template-columns:1fr 1fr;gap:32px}@media(max-width:900px){.eg{grid-template-columns:1fr}}.ec{background:var(--bc);border:1px solid var(--l);border-radius:var(--r);padding:32px;position:relative;overflow:hidden}.ec::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--a),#4ade80)}.ec h3{font-size:22px;margin-bottom:6px;font-weight:700}.ec .sub{color:var(--a);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px}.ec p{color:var(--m);font-size:14px;margin-bottom:14px}.ec ul{list-style:none;padding:0}.ec ul li{padding:7px 0;border-top:1px solid rgba(255,255,255,.04);font-size:14px;color:var(--t);display:flex;align-items:center;gap:10px}.ec ul li::before{content:'\2713';color:var(--a);font-weight:700;font-size:12px}
+.syn{background:var(--bc);border:1px solid var(--l);border-radius:var(--r);padding:48px;text-align:center;position:relative;overflow:hidden;margin-top:48px}.syn::after{content:'';position:absolute;bottom:-80px;right:-80px;width:260px;height:260px;background:radial-gradient(circle,var(--ag) 0%,transparent 60%);opacity:.3}.syn h3{font-size:26px;margin-bottom:14px;font-weight:700;position:relative;z-index:1}.syn>p{color:var(--m);font-size:15px;max-width:660px;margin:0 auto 28px;position:relative;z-index:1}.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:24px;text-align:left;position:relative;z-index:1}.sf{padding:18px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.06);border-radius:12px}.sf h4{font-size:14px;margin-bottom:5px;color:var(--t)}.sf p{font-size:13px;color:var(--m);margin:0}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}.fc{background:var(--bc);border:1px solid var(--l);border-radius:var(--r);padding:26px;transition:border-color .25s,transform .25s}.fc:hover{border-color:rgba(29,185,84,.4);transform:translateY(-2px)}.fc .ic{font-size:26px;margin-bottom:12px}.fc h3{font-size:17px;font-weight:700;margin-bottom:6px}.fc p{color:var(--m);font-size:13px;line-height:1.6}.fc .badge{display:inline-block;margin-top:10px;font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px;background:var(--ad);color:var(--a);border:1px solid rgba(29,185,84,.2)}
+.di{text-align:center;margin-top:48px}.di img{max-width:100%;border-radius:16px;border:1px solid var(--l);box-shadow:0 24px 64px rgba(0,0,0,.4)}
+.dg{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}.dc{background:var(--bc);border:1px solid var(--l);border-radius:var(--r);padding:24px;text-decoration:none;transition:border-color .2s,transform .2s;display:block}.dc:hover{border-color:rgba(29,185,84,.4);transform:translateY(-2px)}.dc h4{color:var(--t);font-size:16px;margin-bottom:6px}.dc p{color:var(--m);font-size:13px}
+.cg{display:grid;grid-template-columns:1fr 1fr;gap:32px}@media(max-width:768px){.cg{grid-template-columns:1fr}}.fb{background:var(--bc);border:1px solid var(--l);border-radius:var(--r);padding:32px}.fb h3{font-size:20px;margin-bottom:6px;font-weight:700}.fb .fd{color:var(--m);font-size:13px;margin-bottom:20px}.fi{margin-bottom:16px}.fi label{display:block;font-size:13px;font-weight:600;color:var(--m);margin-bottom:6px}.fi input,.fi textarea,.fi select{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--l);border-radius:10px;padding:10px 14px;color:var(--t);font-size:14px;font-family:var(--f);transition:border-color .2s}.fi input:focus,.fi textarea:focus,.fi select:focus{outline:none;border-color:var(--a)}.fi textarea{resize:vertical;min-height:100px}.fsub{background:var(--a);color:#082316;border:none;padding:12px 24px;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;transition:all .2s;width:100%}.fsub:hover{transform:translateY(-1px);box-shadow:0 4px 20px var(--ag)}.bn{margin-top:12px;font-size:12px;color:var(--m);text-align:center}.bn a{color:var(--a);text-decoration:none}
+.ft{border-top:1px solid var(--l);padding:48px 24px}.ft-i{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr;gap:32px}@media(max-width:768px){.ft-i{grid-template-columns:1fr}}.ft h4{font-size:14px;font-weight:700;margin-bottom:12px;color:var(--t)}.ft p,.ft a{font-size:13px;color:var(--m);text-decoration:none;line-height:2}.ft a:hover{color:var(--a)}
+.imp{max-width:1200px;margin:0 auto;padding:32px 24px;border-top:1px solid var(--l)}.imp h3{font-size:18px;margin-bottom:12px;font-weight:700}.imp p{font-size:13px;color:var(--m);margin-bottom:6px}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-i" id="navInner">
+    <a href="#" class="nav-b"><img src="../assets/icons/icon.png" alt=""/>Aurora Pulse</a>
+    <button class="mt" onclick="document.getElementById('navInner').classList.toggle('open')">&#9776;</button>
+    <div class="nav-l">
+      <a href="#features">Features</a>
+      <a href="#ecosystem">Ecosystem</a>
+      <a href="#docs">Documentation</a>
+      <a href="#contact">Contact &amp; Bugs</a>
+      <a href="#imprint">Imprint</a>
+    </div>
+    <div class="nav-a">
+      <a href="https://github.com/galdo/aurora/releases" class="nb nb-g" target="_blank">&#9733; GitHub v1.5.6</a>
+      <a href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" class="nb nb-p" target="_blank">&#9654; Play Store</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hc">
+    <span class="hbadge">Desktop + Mobile &bull; One Library &bull; Zero Lock-in</span>
+    <h1>Your music deserves<br><span class="hl">an intentional experience.</span></h1>
+    <p class="hlead">Aurora Pulse is a local-first audiophile desktop player. Vibe Launcher is its dedicated Android companion. Together they form one ecosystem for listeners who care about quality, ownership, and conscious enjoyment of music.</p>
+    <div class="hcta">
+      <a href="https://github.com/galdo/aurora/releases" class="btn bp">Download Aurora Pulse</a>
+      <a href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" class="btn bse">Get Vibe Launcher</a>
+      <a href="https://github.com/galdo/aurora" class="btn bse">View Source</a>
+    </div>
+  </div>
+</section>
+
+<!-- SCREENSHOTS - Vibe Launcher -->
+<div class="shots">
+  <img src="../assets/Screenshot_1777645857.png" alt="Library Bento Grid"/>
+  <img src="../assets/Screenshot_1777659464.png" alt="Now Playing"/>
+  <img src="../assets/Screenshot_1777645872.png" alt="Album Detail"/>
+  <img src="../assets/Screenshot_1777645932.png" alt="Queue"/>
+  <img src="../assets/Screenshot_1777645927.png" alt="App Drawer"/>
+</div>
+
+<!-- ECOSYSTEM -->
+<div class="ew" id="ecosystem">
+<div class="sec">
+  <div class="sh">
+    <h2>Two surfaces. One philosophy.</h2>
+    <p>Curate on the big screen. Listen on the go. Your library stays yours across both experiences.</p>
+  </div>
+  <div class="eg">
+    <div class="ec">
+      <h3>Aurora Pulse</h3>
+      <div class="sub">Desktop &mdash; macOS, Windows, Linux</div>
+      <p>Your mission control for music. A full-featured audiophile player built for long-lived local collections and serious listening sessions.</p>
+      <ul>
+        <li>Hi-Fi playback with transparent quality info</li>
+        <li>Multi-band EQ with AutoEQ profile import</li>
+        <li>DLNA remote output to network renderers</li>
+        <li>DAP sync over USB/ADB with mirror layout</li>
+        <li>CD import with FLAC archival quality</li>
+        <li>Podcast discovery, subscriptions &amp; sync</li>
+        <li>Library management with metadata editing</li>
+        <li>Smart playlists &amp; collection curation</li>
+      </ul>
+    </div>
+    <div class="ec">
+      <h3>Vibe Launcher</h3>
+      <div class="sub">Android &mdash; Phone &amp; DAP</div>
+      <p>Your music-first home screen. A launcher that replaces your Android home with a beautiful, audio-focused experience.</p>
+      <ul>
+        <li>Gapless playback &mdash; FLAC, ALAC, DSD, MP3, AAC</li>
+        <li>Bento-style album grid with hero artwork</li>
+        <li>10-band parametric EQ &amp; AutoEQ profiles</li>
+        <li>Built-in podcast client with offline support</li>
+        <li>DLNA/UPnP streaming to network devices</li>
+        <li>Full launcher with app drawer &amp; search</li>
+        <li>OLED-optimized dark UI with glassmorphism</li>
+        <li>Zero data collection &mdash; fully offline-capable</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- SYNERGY -->
+  <div class="syn">
+    <h3>Better Together</h3>
+    <p>Aurora Pulse and Vibe Launcher aren't two random apps with a shared logo. They're one ecosystem designed for a deliberate two-screen workflow.</p>
+    <div class="sg">
+      <div class="sf">
+        <h4>Library Sync</h4>
+        <p>Push your curated desktop library to your phone or DAP via USB/ADB. Same structure, same quality.</p>
+      </div>
+      <div class="sf">
+        <h4>DLNA Handoff</h4>
+        <p>Start playback on desktop, continue on your Android device &mdash; or cast from either to any DLNA renderer.</p>
+      </div>
+      <div class="sf">
+        <h4>Shared EQ Profiles</h4>
+        <p>Import the same AutoEQ headphone correction profiles on both platforms for consistent sound.</p>
+      </div>
+      <div class="sf">
+        <h4>Podcast Continuity</h4>
+        <p>Subscribe on desktop, sync episodes to your device. Pick up where you left off on either surface.</p>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- FEATURES -->
+<div class="sec" id="features">
+  <div class="sh">
+    <h2>Features that matter to audiophiles</h2>
+    <p>No bloat. No subscriptions. Just the tools you need for conscious music enjoyment.</p>
+  </div>
+  <div class="fgrid">
+    <div class="fc">
+      <div class="ic">&#127925;</div>
+      <h3>Hi-Fidelity Playback</h3>
+      <p>Gapless, bit-perfect capable playback with transparent format and quality information. FLAC, ALAC, DSD, MP3, AAC, OGG, WAV, AIFF.</p>
+      <span class="badge">Desktop + Mobile</span>
+    </div>
+    <div class="fc">
+      <div class="ic">&#127911;</div>
+      <h3>Parametric Equalizer</h3>
+      <p>Multi-band EQ with AutoEQ profile import for headphone correction. Headroom compensation and one-click reset.</p>
+      <span class="badge">Desktop + Mobile</span>
+    </div>
+    <div class="fc">
+      <div class="ic">&#128225;</div>
+      <h3>DLNA / UPnP Streaming</h3>
+      <p>Cast your music to any DLNA renderer on your network. Serialized command queue, tight state sync, and metadata delivery.</p>
+      <span class="badge">Desktop + Mobile</span>
+    </div>
+    <div class="fc">
+      <div class="ic">&#128247;</div>
+      <h3>DAP Sync</h3>
+      <p>Sync your library to portable players via USB or ADB. Progress, ETA, resume, cancel. Mirror your folder layout 1:1.</p>
+      <span class="badge">Desktop</span>
+    </div>
+    <div class="fc">
+      <div class="ic">&#127908;</div>
+      <h3>Podcast Integration</h3>
+      <p>Discovery, subscriptions, episode download, per-episode position memory. Fully integrated into the same playback environment.</p>
+      <span class="badge">Desktop + Mobile</span>
+    </div>
+    <div class="fc">
+      <div class="ic">&#128191;</div>
+      <h3>CD Import</h3>
+      <p>Rip CDs to FLAC with metadata-aware workflows. Cover handling, track numbering, and minimal post-processing needed.</p>
+      <span class="badge">Desktop</span>
+    </div>
+    <div class="fc">
+      <div class="ic">&#128218;</div>
+      <h3>Smart Library</h3>
+      <p>Albums, artists, tracks, playlists in one coherent navigation. Search-driven playback, metadata editing, collection curation.</p>
+      <span class="badge">Desktop + Mobile</span>
+    </div>
+    <div class="fc">
+      <div class="ic">&#127968;</div>
+      <h3>Music-First Launcher</h3>
+      <p>Replace your Android home screen with a music-focused experience. App drawer, drag-and-drop, auto-brightness scheduling.</p>
+      <span class="badge">Mobile</span>
+    </div>
+    <div class="fc">
+      <div class="ic">&#128274;</div>
+      <h3>Privacy First</h3>
+      <p>Zero data collection. No analytics, no ads, no accounts, no cloud. Your music and metadata stay on your devices.</p>
+      <span class="badge">Desktop + Mobile</span>
+    </div>
+  </div>
+
+  <div class="di">
+    <img src="images/screenshot-main-ui.png" alt="Aurora Pulse Desktop Interface"/>
+  </div>
+</div>
+
+<!-- DOCUMENTATION -->
+<div class="sec" id="docs">
+  <div class="sh">
+    <h2>Documentation &amp; Resources</h2>
+    <p>Everything you need to get started and get the most out of the ecosystem.</p>
+  </div>
+  <div class="dg">
+    <a href="https://github.com/galdo/aurora/releases" class="dc">
+      <h4>&#128230; Download &amp; Install</h4>
+      <p>Latest releases for macOS, Windows, and Linux. DMG, EXE, and Flatpak artifacts.</p>
+    </a>
+    <a href="https://github.com/galdo/aurora/blob/main/CHANGELOG.md" class="dc" target="_blank">
+      <h4>&#128196; Changelog</h4>
+      <p>Complete version history. See what's new in each release.</p>
+    </a>
+    <a href="https://github.com/galdo/aurora/blob/main/README.md" class="dc" target="_blank">
+      <h4>&#128214; README</h4>
+      <p>Project overview, architecture, feature details and platform support.</p>
+    </a>
+    <a href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" class="dc" target="_blank">
+      <h4>&#9654; Vibe Launcher on Play Store</h4>
+      <p>Download the Android companion app. Available worldwide.</p>
+    </a>
+    <a href="privacy-policy.html" class="dc">
+      <h4>&#128275; Privacy Policy</h4>
+      <p>Full GDPR-compliant privacy policy. TL;DR: We collect nothing.</p>
+    </a>
+    <a href="https://github.com/galdo/aurora/blob/main/flatpak/README.md" class="dc" target="_blank">
+      <h4>&#128039; Flatpak / Linux</h4>
+      <p>Installation guide and build instructions for Linux via Flatpak.</p>
+    </a>
+  </div>
+</div>
+
+<!-- CONTACT & BUG REPORTING -->
+<div class="sec" id="contact">
+  <div class="sh">
+    <h2>Contact &amp; Bug Reporting</h2>
+    <p>Found a bug? Have a feature idea? Get in touch or file directly on GitHub.</p>
+  </div>
+  <div class="cg">
+    <div class="fb">
+      <h3>&#128172; Contact</h3>
+      <p class="fd">General questions, feedback, or partnership inquiries.</p>
+      <form action="mailto:andreas.delgaldo@googlemail.com" method="post" enctype="text/plain">
+        <div class="fi"><label>Name</label><input type="text" name="name" placeholder="Your name" required/></div>
+        <div class="fi"><label>Email</label><input type="email" name="email" placeholder="your@email.com" required/></div>
+        <div class="fi"><label>Message</label><textarea name="message" placeholder="Your message..." required></textarea></div>
+        <button type="submit" class="fsub">Send Message</button>
+      </form>
+    </div>
+    <div class="fb">
+      <h3>&#128027; Report a Bug / Feature Request</h3>
+      <p class="fd">File issues directly on GitHub. Choose the right repository:</p>
+      <div class="fi">
+        <label>Aurora Pulse (Desktop)</label>
+        <a href="https://github.com/galdo/aurora/issues/new" target="_blank" class="btn bse" style="width:100%;justify-content:center;margin-top:4px">&#10010; New Issue on GitHub</a>
+      </div>
+      <div class="fi" style="margin-top:20px">
+        <label>Vibe Launcher (Android)</label>
+        <a href="https://github.com/galdo/aurora-launcher/issues/new" target="_blank" class="btn bse" style="width:100%;justify-content:center;margin-top:4px">&#10010; New Issue on GitHub</a>
+      </div>
+      <div class="bn" style="margin-top:20px">
+        <p>Note: The Vibe Launcher repository is private. If you cannot access it, please use the <a href="https://github.com/galdo/aurora/issues/new">Aurora Pulse issue tracker</a> and prefix your title with <strong>[Vibe Launcher]</strong>.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<footer class="ft">
+  <div class="ft-i">
+    <div>
+      <h4>Aurora Pulse &amp; Vibe Launcher</h4>
+      <p>A local-first audiophile ecosystem. Built by an audio nerd, for audio nerds.</p>
+      <p style="margin-top:8px">Desktop: macOS (Apple Silicon &amp; Intel), Windows, Linux</p>
+      <p>Mobile: Android 8+ (API 26), ~9 MB</p>
+      <p style="margin-top:8px"><em>&ldquo;Your music. Your rhythm. Your devices. Zero compromises.&rdquo;</em></p>
+    </div>
+    <div>
+      <h4>Links</h4>
+      <a href="https://github.com/galdo/aurora" target="_blank">GitHub Repository</a><br/>
+      <a href="https://github.com/galdo/aurora/releases" target="_blank">Releases &amp; Downloads</a><br/>
+      <a href="https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher" target="_blank">Google Play Store</a><br/>
+      <a href="https://github.com/galdo/aurora/blob/main/CHANGELOG.md" target="_blank">Changelog</a><br/>
+      <a href="https://www.buymeacoffee.com/better_craft" target="_blank">Buy Me a Coffee</a>
+    </div>
+    <div>
+      <h4>Legal</h4>
+      <a href="#imprint">Imprint</a><br/>
+      <a href="privacy-policy.html">Privacy Policy</a><br/>
+      <a href="https://github.com/galdo/aurora/blob/main/LICENSE" target="_blank">MIT License</a>
+    </div>
+  </div>
+</footer>
+
+<!-- IMPRINT -->
+<div class="imp" id="imprint">
+  <h3>Imprint (Impressum)</h3>
+  <p><strong>Responsible for content according to &sect; 5 TMG:</strong></p>
+  <p>Andreas Delgaldo</p>
+  <p>Germany, European Union</p>
+  <p style="margin-top:12px"><strong>Contact:</strong></p>
+  <p>Email: andreas.delgaldo@googlemail.com</p>
+  <p style="margin-top:12px"><strong>Disclaimer:</strong></p>
+  <p>Aurora Pulse and Vibe Launcher are independent projects. They are not affiliated with Apple, Google, or any DAP manufacturer mentioned on this page. All trademarks belong to their respective owners.</p>
+  <p style="margin-top:8px">The software is provided "as is" without warranty under the MIT License. Maintain backups before sync or import operations.</p>
+</div>
+
+<script>
+// Close mobile nav on link click
+document.querySelectorAll('.nav-l a').forEach(a => {
+  a.addEventListener('click', () => {
+    document.getElementById('navInner').classList.remove('open');
+  });
+});
+</script>
+</body>
+</html>
