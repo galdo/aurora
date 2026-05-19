@@ -57,12 +57,14 @@ export const MediaTrackEditModal: ModalComponent<{
       id: mediaTrackId,
     }, updateData);
 
-    // Sync metadata to file
-    if (updatedTrack) {
-      await MediaTrackService.syncTrackMetadata(updatedTrack.id);
-    }
-
+    // Close the modal first, then sync the metadata to the underlying file in
+    // the background. ID3/FLAC tag writing is heavy disk I/O and would
+    // otherwise block the UI thread (causing janky scrolling).
     onComplete({ updatedTrack });
+
+    if (updatedTrack) {
+      MediaTrackService.syncTrackMetadataInBackground(updatedTrack.id);
+    }
   }, [
     inputData,
     initialData,

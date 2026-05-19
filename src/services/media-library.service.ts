@@ -229,8 +229,6 @@ export class MediaLibraryService {
       sync_timestamp: mediaAlbumInputData.sync_timestamp,
       album_name_normalized: this.normalizeSearchValue(mediaAlbumInputData.album_name),
       album_cover_picture: processedAlbumCoverPicture || existingMediaAlbumData?.album_cover_picture,
-      album_genre: mediaAlbumInputData.album_genre,
-      album_year: mediaAlbumInputData.album_year,
       extra: {
         ...(existingMediaAlbumData?.extra || {}),
         ...(mediaAlbumInputData.extra || {}),
@@ -238,10 +236,17 @@ export class MediaLibraryService {
       },
     };
 
-    // Preserve manual edits: only set album_name/album_artist_id when inserting new album
+    // Preserve manual edits: when an album already exists in the DB, do NOT
+    // overwrite user-editable fields (name, artist, genre, year) from the
+    // file's metadata tags. The user may have explicitly cleared a tag (e.g.
+    // removed the genre) and we don't want a library re-scan to resurrect
+    // the old value from leftover ID3/Vorbis frames in the audio file.
+    // Only fall back to the file-provided values for *new* albums.
     if (!existingMediaAlbumData) {
       (baseUpdate as any).album_name = mediaAlbumInputData.album_name;
       (baseUpdate as any).album_artist_id = mediaAlbumInputData.album_artist_id;
+      (baseUpdate as any).album_genre = mediaAlbumInputData.album_genre;
+      (baseUpdate as any).album_year = mediaAlbumInputData.album_year;
     }
 
     const mediaTrackAlbumData = await MediaAlbumDatastore.upsertMediaAlbum(upsertFilter, baseUpdate as any);

@@ -152,7 +152,59 @@ export class MediaAlbumService {
     });
   }
 
+  // Track in-flight album metadata sync jobs to prevent duplicate work + allow callers to await if needed.
+  private static readonly albumMetadataSyncJobs = new Map<string, Promise<void>>();
+
+  // Global serial queue for album-metadata writes. Without this, editing N
+  // albums in a row spawns N parallel background syncs, all hammering the
+  // disk at once — which is exactly what makes the UI laggy after a few
+  // edits. We force them to run one after another, with explicit yields
+  // between tracks, so the renderer thread can keep producing frames.
+  private static albumMetadataSyncQueue: Promise<void> = Promise.resolve();
+
+  /**
+   * Schedules an album metadata sync to run on the global serial queue.
+   *
+   * IMPORTANT: This method performs heavy disk I/O and tag re-writing per
+   * track. We run track updates one-at-a-time, yielding to the event loop
+   * between each, so the UI thread can keep producing frames. Multiple
+   * pending album syncs are queued and processed sequentially — never in
+   * parallel — so editing several albums in a row doesn't degrade scroll
+   * smoothness over time.
+   *
+   * Callers that don't need to await completion should use `syncAlbumMetadataInBackground`.
+   */
   static async syncAlbumMetadata(mediaAlbumId: string): Promise<void> {
+    const existingJob = this.albumMetadataSyncJobs.get(mediaAlbumId);
+    if (existingJob) {
+      return existingJob;
+    }
+
+    const job = this.albumMetadataSyncQueue
+      .then(() => this.runAlbumMetadataSync(mediaAlbumId))
+      .finally(() => {
+        this.albumMetadataSyncJobs.delete(mediaAlbumId);
+      });
+
+    // Chain the next call onto the queue, swallowing errors so one failed
+    // album sync doesn't poison the queue for the next one.
+    this.albumMetadataSyncQueue = job.catch(() => undefined);
+    this.albumMetadataSyncJobs.set(mediaAlbumId, job);
+    return job;
+  }
+
+  /**
+   * Fire-and-forget variant of `syncAlbumMetadata` that schedules the heavy
+   * tag-writing to run in the background without blocking the caller. Errors
+   * are logged but not propagated, since the caller has already moved on.
+   */
+  static syncAlbumMetadataInBackground(mediaAlbumId: string): void {
+    this.syncAlbumMetadata(mediaAlbumId).catch((error) => {
+      console.error(`Background album metadata sync failed for ${mediaAlbumId}`, error);
+    });
+  }
+
+  private static async runAlbumMetadataSync(mediaAlbumId: string): Promise<void> {
     const mediaAlbum = await this.getMediaAlbum(mediaAlbumId);
     if (!mediaAlbum) {
       return;
@@ -162,65 +214,140 @@ export class MediaAlbumService {
       track_album_id: mediaAlbumId,
     });
 
-    await Promise.all(mediaTracksData.map(async (mediaTrackData) => {
-      const extra = mediaTrackData.extra as any;
-      if (!extra || !extra.file_path) {
-        return;
-      }
+    // Read the cover image into a Buffer ONCE per album sync. Without this,
+    // node-id3 would re-read and re-decode the same JPEG/PNG from disk for
+    // every track, multiplied by the number of tracks (60+ for some
+    // releases) — that's where the cumulative memory pressure and disk
+    // churn after a few edits was coming from.
+    const coverImageBuffer = await this.readAlbumCoverImageBuffer(mediaAlbum);
 
-      const filePath = extra.file_path;
-      const isMp3 = filePath.toLowerCase().endsWith('.mp3');
-      const isFlac = filePath.toLowerCase().endsWith('.flac');
+    // Process tracks sequentially with a yield between each so the event
+    // loop can keep rendering UI frames while the disk I/O is happening.
+    // eslint-disable-next-line no-restricted-syntax
+    for (const mediaTrackData of mediaTracksData) {
+      // eslint-disable-next-line no-await-in-loop
+      await this.applyAlbumTagsToTrack(mediaAlbum, mediaTrackData, coverImageBuffer);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    }
+  }
 
-      if (!isMp3 && !isFlac) {
-        return;
-      }
+  private static async readAlbumCoverImageBuffer(mediaAlbum: IMediaAlbum): Promise<Buffer | undefined> {
+    const albumCoverPicture = mediaAlbum.album_cover_picture;
+    if (!albumCoverPicture || !albumCoverPicture.image_data) {
+      return undefined;
+    }
+    const coverPath = String(albumCoverPicture.image_data).replace(/^file:\/\//, '');
+    if (!coverPath) {
+      return undefined;
+    }
+    try {
+      return await fs.promises.readFile(coverPath);
+    } catch (error) {
+      console.warn(`Could not read album cover image for tag sync: ${coverPath}`, error);
+      return undefined;
+    }
+  }
 
-      const tags: any = {
-        albumArtist: mediaAlbum.album_artist.artist_name,
-        album: mediaAlbum.album_name,
-        genre: mediaAlbum.album_genre,
-        year: mediaAlbum.album_year ? String(mediaAlbum.album_year) : undefined,
-      };
+  /**
+   * Writes the current album metadata (title, artist, genre, year, cover) to
+   * a single track's audio file and refreshes the persisted file stats.
+   *
+   * Errors are caught and logged so that one bad track doesn't abort the
+   * whole album sync.
+   */
+  private static async applyAlbumTagsToTrack(
+    mediaAlbum: IMediaAlbum,
+    mediaTrackData: any,
+    coverImage: Buffer | undefined,
+  ): Promise<void> {
+    const extra = (mediaTrackData?.extra || {}) as any;
+    if (!extra.file_path) {
+      return;
+    }
 
-      const coverImage = mediaAlbum.album_cover_picture
-        ? mediaAlbum.album_cover_picture.image_data?.replace(/^file:\/\//, '')
-        : undefined;
+    const filePath = String(extra.file_path);
+    const lowerCasePath = filePath.toLowerCase();
+    const isMp3 = lowerCasePath.endsWith('.mp3');
+    const isFlac = lowerCasePath.endsWith('.flac');
 
-      try {
-        if (isMp3) {
-          if (coverImage) {
-            tags.image = coverImage;
-          }
-          const result = NodeID3.update(tags, filePath);
-          if ((result as any) !== true) {
-            console.warn(`Failed to update tags for ${filePath}`, result);
-          }
-        } else if (isFlac) {
-          await IPCRenderer.sendAsyncMessage(IPCCommChannel.DeviceWriteFlacMetadata, {
-            filePath,
-            tags: {
-              ...tags,
-              title: mediaTrackData.track_name,
-            },
-            coverImage,
-          });
+    if (!isMp3 && !isFlac) {
+      return;
+    }
+
+    // We always send the *current* album metadata to the writers so that
+    // clearing a tag in the UI propagates as "remove this tag" instead of
+    // "leave the existing value alone". An empty string is the explicit
+    // "clear" signal for both the FLAC writer (metaflac) and the MP3 writer
+    // (we replace the empty TCON frame below).
+    const tags: any = {
+      albumArtist: String(mediaAlbum.album_artist.artist_name || '').trim(),
+      album: String(mediaAlbum.album_name || '').trim(),
+      genre: String(mediaAlbum.album_genre || '').trim(),
+      year: mediaAlbum.album_year ? String(mediaAlbum.album_year) : '',
+    };
+
+    try {
+      if (isMp3) {
+        if (coverImage) {
+          tags.image = coverImage;
         }
-
-        const fileStats = await fs.promises.stat(filePath);
-        await MediaTrackDatastore.updateMediaTrack({
-          id: mediaTrackData.id,
-        }, {
-          extra: {
-            ...extra,
-            file_mtime: fileStats.mtimeMs,
-            file_size: fileStats.size,
+        await this.writeMp3TagsAsync(tags, filePath);
+      } else if (isFlac) {
+        await IPCRenderer.sendAsyncMessage(IPCCommChannel.DeviceWriteFlacMetadata, {
+          filePath,
+          tags: {
+            ...tags,
+            title: mediaTrackData.track_name,
           },
+          coverImage,
         });
-      } catch (error) {
-        console.error(`Error updating tags for ${filePath}`, error);
       }
-    }));
+
+      const fileStats = await fs.promises.stat(filePath);
+      await MediaTrackDatastore.updateMediaTrack({
+        id: mediaTrackData.id,
+      }, {
+        extra: {
+          ...extra,
+          file_mtime: fileStats.mtimeMs,
+          file_size: fileStats.size,
+        },
+      });
+    } catch (error) {
+      console.error(`Error updating tags for ${filePath}`, error);
+    }
+  }
+
+  /**
+   * Wraps `NodeID3.update` in a Promise. Prefers the library's built-in
+   * Promise API (which delegates to async fs internally); falls back to the
+   * callback-based form when the runtime lacks `NodeID3.Promise`. Both paths
+   * are non-blocking — they never call the synchronous `NodeID3.update(tags,
+   * filepath)` overload that stalls the JS thread on disk I/O.
+   */
+  private static async writeMp3TagsAsync(tags: any, filePath: string): Promise<void> {
+    const nodeId3Promise = (NodeID3 as any).Promise;
+    if (nodeId3Promise && typeof nodeId3Promise.update === 'function') {
+      await nodeId3Promise.update(tags, filePath);
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      try {
+        NodeID3.update(tags, filePath, (err: NodeJS.ErrnoException | null) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      } catch (syncError) {
+        reject(syncError instanceof Error ? syncError : new Error(String(syncError)));
+      }
+    });
   }
 
   static async buildMediaAlbum(mediaAlbum: string | IMediaAlbumData, loadMediaAlbum = false): Promise<IMediaAlbum> {

@@ -973,24 +973,33 @@ export class DeviceModule implements IAppModule {
       if (this.commandExists('metaflac')) {
         const metaflacTagArgs: string[] = [];
 
-        if (tags.artist) {
-          metaflacTagArgs.push('--remove-tag=ARTIST', `--set-tag=ARTIST=${tags.artist}`);
-        }
-        if (tags.albumArtist) {
-          metaflacTagArgs.push('--remove-tag=ALBUMARTIST', `--set-tag=ALBUMARTIST=${tags.albumArtist}`);
-        }
-        if (tags.album) {
-          metaflacTagArgs.push('--remove-tag=ALBUM', `--set-tag=ALBUM=${tags.album}`);
-        }
-        if (tags.title) {
-          metaflacTagArgs.push('--remove-tag=TITLE', `--set-tag=TITLE=${tags.title}`);
-        }
-        if (tags.year) {
-          metaflacTagArgs.push('--remove-tag=DATE', `--set-tag=DATE=${tags.year}`);
-        }
-        if (tags.genre) {
-          metaflacTagArgs.push('--remove-tag=GENRE', `--set-tag=GENRE=${tags.genre}`);
-        }
+        // Helper: distinguish "tag not provided" (undefined → leave existing
+        // value alone) from "tag explicitly cleared" (empty string → remove
+        // the tag from the file). Without this distinction, clearing a tag
+        // in the UI (e.g. removing the genre) would leave the old value
+        // baked into the FLAC file, and the next library scan would re-read
+        // it and resurrect the deleted tag in the database.
+        const applyTag = (
+          metaflacName: string,
+          rawValue: string | undefined,
+        ) => {
+          if (rawValue === undefined || rawValue === null) {
+            return;
+          }
+          const trimmedValue = String(rawValue).trim();
+          if (trimmedValue.length === 0) {
+            metaflacTagArgs.push(`--remove-tag=${metaflacName}`);
+          } else {
+            metaflacTagArgs.push(`--remove-tag=${metaflacName}`, `--set-tag=${metaflacName}=${trimmedValue}`);
+          }
+        };
+
+        applyTag('ARTIST', tags.artist);
+        applyTag('ALBUMARTIST', tags.albumArtist);
+        applyTag('ALBUM', tags.album);
+        applyTag('TITLE', tags.title);
+        applyTag('DATE', tags.year);
+        applyTag('GENRE', tags.genre);
 
         if (metaflacTagArgs.length > 0) {
           const result = spawnSync('metaflac', [...metaflacTagArgs, filePath], { encoding: 'utf-8' });

@@ -255,6 +255,13 @@ export class MediaTrackService {
     } as any);
   }
 
+  /**
+   * Synchronizes track metadata to the underlying audio file (MP3/FLAC tags).
+   *
+   * Uses the async NodeID3 API so we don't block the renderer thread during
+   * the disk I/O. UI work (scrolling, animations) keeps running while the
+   * file is being re-written.
+   */
   static async syncTrackMetadata(mediaTrackId: string): Promise<void> {
     const mediaTrack = await this.getMediaTrack(mediaTrackId);
     if (!mediaTrack) {
@@ -306,9 +313,24 @@ export class MediaTrackService {
         if (coverImage) {
           tags.image = coverImage;
         }
-        const result = NodeID3.update(tags, filePath);
-        if ((result as any) !== true) {
-          console.warn(`Failed to update tags for ${filePath}`, result);
+        // Async NodeID3 to keep the UI thread free during disk I/O.
+        const nodeId3Promise = (NodeID3 as any).Promise;
+        if (nodeId3Promise && typeof nodeId3Promise.update === 'function') {
+          await nodeId3Promise.update(tags, filePath);
+        } else {
+          await new Promise<void>((resolve, reject) => {
+            try {
+              NodeID3.update(tags, filePath, (err: NodeJS.ErrnoException | null) => {
+                if (err) {
+                  reject(err);
+                } else {
+                  resolve();
+                }
+              });
+            } catch (syncError) {
+              reject(syncError instanceof Error ? syncError : new Error(String(syncError)));
+            }
+          });
         }
       } else if (isFlac) {
         await IPCRenderer.sendAsyncMessage(IPCCommChannel.DeviceWriteFlacMetadata, {
@@ -320,6 +342,16 @@ export class MediaTrackService {
     } catch (error) {
       console.error(`Error updating tags for ${filePath}`, error);
     }
+  }
+
+  /**
+   * Fire-and-forget variant of `syncTrackMetadata` that schedules the heavy
+   * tag-writing to run in the background without blocking the caller.
+   */
+  static syncTrackMetadataInBackground(mediaTrackId: string): void {
+    this.syncTrackMetadata(mediaTrackId).catch((error) => {
+      console.error(`Background track metadata sync failed for ${mediaTrackId}`, error);
+    });
   }
 
   static loadMediaAlbumTracks(mediaAlbumId: string): void {

@@ -82,12 +82,14 @@ export const MediaAlbumEditModal: ModalComponent<{
       id: mediaAlbumId,
     }, updateData);
 
-    // Sync metadata to files
-    if (updatedAlbum) {
-      await MediaAlbumService.syncAlbumMetadata(updatedAlbum.id);
-    }
-
+    // Close the modal immediately, then sync the metadata to the underlying
+    // audio files in the background. Writing ID3/FLAC tags is heavy disk I/O
+    // and would otherwise block the UI thread (causing janky scrolling).
     onComplete({ updatedAlbum });
+
+    if (updatedAlbum) {
+      MediaAlbumService.syncAlbumMetadataInBackground(updatedAlbum.id);
+    }
   }, [
     inputData,
     initialData,
