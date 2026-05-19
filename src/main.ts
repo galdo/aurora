@@ -611,6 +611,29 @@ class App implements IAppMain {
       || pickUpdater(updaterModule?.default?.autoUpdater);
   }
 
+  /**
+   * Normalises a pre-release version string into a SemVer-canonical form for
+   * `electron-updater`'s GitHub provider. The provider parses the running
+   * version with `semver.prerelease()` to derive a "channel" name. Tags like
+   * `1.5.6-beta3` (no dot between identifier and number) are parsed by
+   * `semver` as the single token `"beta3"` instead of `["beta", 3]`, which
+   * makes the channel comparison fail across pre-release bumps.
+   *
+   * We only touch the channel-detection input — the user-visible version
+   * (`app.getVersion()`) stays untouched.
+   *
+   * Examples:
+   *   1.5.6-beta3   → 1.5.6-beta.3
+   *   1.5.6-beta.3  → 1.5.6-beta.3 (no change)
+   *   1.5.6         → 1.5.6 (no change)
+   */
+  private normalizeUpdaterVersion(version: string): string | undefined {
+    if (!version) {
+      return undefined;
+    }
+    return version.replace(/-([a-z]+)(\d+)(?=$|[+.])/i, '-$1.$2');
+  }
+
   private async installExtensions(): Promise<void> {
     if (!this.debug || process.env.ENABLE_ELECTRON_EXTENSIONS !== 'true') {
       return;
@@ -658,6 +681,31 @@ class App implements IAppMain {
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.fullChangelog = true;
     autoUpdater.allowPrerelease = this.updateSettings.betaChannelEnabled;
+
+    // Workaround for an electron-updater quirk: it parses the running app
+    // version with `semver.prerelease()` and uses the resulting identifier
+    // as a channel name. Aurora Pulse historically tags pre-releases as
+    // `1.5.6-beta3` (no dot), which `semver.prerelease()` parses as the
+    // single token "beta3" — not as the channel "beta". As a result, the
+    // GitHub provider rejects every release whose channel doesn't match
+    // exactly (e.g. "beta3" vs "beta4"), reporting "no updates available"
+    // even though a newer pre-release is published.
+    //
+    // Fix: tell electron-updater explicitly that we're on the "beta"
+    // channel and pass it a SemVer-canonical version so the channel match
+    // and the version comparison both behave correctly. We deliberately
+    // do NOT change app.getVersion() — only the update-channel state.
+    if (this.updateSettings.betaChannelEnabled) {
+      try {
+        autoUpdater.channel = 'beta';
+        const normalizedVersion = this.normalizeUpdaterVersion(app.getVersion());
+        if (normalizedVersion && normalizedVersion !== app.getVersion()) {
+          autoUpdater.currentVersion = normalizedVersion;
+        }
+      } catch (error) {
+        debug('registerAutoUpdater - failed to apply prerelease channel workaround - %o', error);
+      }
+    }
 
     autoUpdater.on('checking-for-update', () => {
       this.setUpdateState({
@@ -1027,19 +1075,21 @@ class App implements IAppMain {
       canDownload: false,
       canInstall: false,
     });
-    const autoUpdater = this.getAutoUpdater();
-    if (!autoUpdater) {
-      this.setUpdateState({
-        status: 'error',
-        message: 'AutoUpdater konnte nicht initialisiert werden.',
-        canDownload: false,
-        canInstall: false,
-      });
-      return undefined;
-    }
     let timeoutRef: ReturnType<typeof setTimeout> | undefined;
     try {
-      const updateCheckPromise = autoUpdater.checkForUpdates();
+      // We deliberately bypass electron-updater's GitHub provider here. Its
+      // channel-detection logic uses semver.prerelease() against tags like
+      // `1.5.6-beta3` (no dot between identifier and number), which yields
+      // a custom channel string `"beta3"` instead of the conventional
+      // `"beta"`. The provider then refuses to bridge between `beta3` and
+      // `beta4` because it considers them different custom channels — the
+      // user sees "no updates available" even though a newer pre-release is
+      // sitting on GitHub. We can't fix the provider without patching its
+      // node_modules code, and we don't want to change our public version
+      // tagging convention. So we run our own GitHub-Releases lookup, pick
+      // the right release, fetch the matching `latest-<os>.yml` channel
+      // file, and feed it into the existing update-state machine.
+      const updateCheckPromise = this.runCustomUpdateCheck();
       const updateCheckTimeoutPromise = new Promise<never>((_resolveTimeout, reject) => {
         timeoutRef = setTimeout(() => {
           reject(new Error('Die Update-Prüfung hat zu lange gedauert. Bitte später erneut versuchen.'));
@@ -1061,6 +1111,378 @@ class App implements IAppMain {
         clearTimeout(timeoutRef);
       }
     }
+  }
+
+  /**
+   * Direct GitHub-Releases lookup that replaces electron-updater's broken
+   * channel handling for our `1.5.6-betaX` style tags.
+   *
+   * Algorithm:
+   *  1. Fetch /repos/galdo/aurora/releases?per_page=20 (covers any reasonable
+   *     beta/stable history).
+   *  2. Skip drafts. Skip pre-releases when betaChannelEnabled is false.
+   *  3. Sort the remaining tags via our Aurora-aware version comparator
+   *     (handles `1.5.6-beta3` correctly — newer beta number > older beta
+   *     number > stable on the same base).
+   *  4. The first entry is the "newest" candidate. If its version is greater
+   *     than the running version, we have an update.
+   *  5. Pull the matching `latest-mac.yml` / `latest.yml` from that release
+   *     to populate the same updateInfo shape electron-updater would return,
+   *     so the rest of the pipeline (`update-available` handler, download,
+   *     install) keeps working unchanged.
+   */
+  private async runCustomUpdateCheck(): Promise<any> {
+    const currentVersion = String(app.getVersion() || '').trim();
+    const releases = await this.fetchGitHubReleases();
+    const allowPrerelease = !!this.updateSettings.betaChannelEnabled;
+    const candidates = releases
+      .filter(release => !release.draft)
+      .filter(release => allowPrerelease || !release.prerelease)
+      .map(release => ({
+        ...release,
+        normalizedVersion: this.stripVersionPrefix(release.tag_name),
+      }))
+      .filter(release => !!release.normalizedVersion);
+    if (candidates.length === 0) {
+      this.latestUpdateInfo = undefined;
+      this.setUpdateState({
+        status: 'not_available',
+        message: '',
+        canDownload: false,
+        canInstall: false,
+      });
+      return undefined;
+    }
+    candidates.sort((a, b) => this.compareAuroraVersions(b.normalizedVersion, a.normalizedVersion));
+    const latestCandidate = candidates[0];
+    if (!latestCandidate) {
+      this.latestUpdateInfo = undefined;
+      this.setUpdateState({
+        status: 'not_available',
+        message: '',
+        canDownload: false,
+        canInstall: false,
+      });
+      return undefined;
+    }
+
+    const isUpgrade = this.compareAuroraVersions(latestCandidate.normalizedVersion, currentVersion) > 0;
+    if (!isUpgrade) {
+      this.latestUpdateInfo = undefined;
+      this.setUpdateState({
+        status: 'not_available',
+        availableVersion: undefined,
+        releaseDate: undefined,
+        releaseNotes: undefined,
+        downloadProgressPercent: undefined,
+        message: '',
+        canDownload: false,
+        canInstall: false,
+      });
+      return undefined;
+    }
+
+    const channelInfo = await this.fetchChannelInfoForRelease(latestCandidate);
+    const releaseNotesText = String(latestCandidate.body || channelInfo?.releaseNotes || '');
+    const updateInfo = {
+      version: channelInfo?.version || latestCandidate.normalizedVersion,
+      tag: latestCandidate.tag_name,
+      releaseName: latestCandidate.name || latestCandidate.tag_name,
+      releaseDate: channelInfo?.releaseDate || latestCandidate.published_at || latestCandidate.created_at || '',
+      releaseNotes: releaseNotesText,
+      files: Array.isArray(channelInfo?.files) ? channelInfo.files : [],
+      path: channelInfo?.path || '',
+      sha512: channelInfo?.sha512 || '',
+    };
+
+    if (!this.isUpdateInfoCompatible(updateInfo)) {
+      this.latestUpdateInfo = undefined;
+      this.setUpdateState({
+        status: 'error',
+        message: `Kein kompatibles Update für ${process.platform}/${process.arch} gefunden.`,
+        canDownload: false,
+        canInstall: false,
+      });
+      return undefined;
+    }
+
+    this.latestUpdateInfo = updateInfo;
+    this.setUpdateState({
+      status: 'available',
+      availableVersion: String(updateInfo.version || ''),
+      releaseDate: String(updateInfo.releaseDate || ''),
+      releaseNotes: this.resolveReleaseNotesFromUpdateInfo(updateInfo),
+      canDownload: this.updateSettings.downloadMode === 'manual',
+      canInstall: false,
+      message: '',
+    });
+
+    if (this.updateSettings.downloadMode === 'auto') {
+      // Mirror electron-updater's auto-download behaviour. Errors propagate
+      // to the existing error handler.
+      this.downloadAvailableUpdate().catch((error) => {
+        debug('runCustomUpdateCheck - auto-download failed - %o', error);
+      });
+    }
+
+    return updateInfo;
+  }
+
+  private stripVersionPrefix(tag: string): string {
+    return String(tag || '').trim().replace(/^v/i, '');
+  }
+
+  /**
+   * Comparator that understands Aurora's `1.5.6-betaX` tag format. Returns
+   *   > 0 if `a > b`, < 0 if `a < b`, 0 if equal.
+   *
+   * Stable releases (no `-suffix`) rank higher than pre-releases of the
+   * same base version (so `1.5.6` > `1.5.6-beta4`). Pre-releases with the
+   * same identifier are ordered by their numeric tail (so `1.5.6-beta4` >
+   * `1.5.6-beta3`). Different identifiers (`alpha` vs `beta` vs `rc`) are
+   * ordered alphabetically as a safe default.
+   */
+  private compareAuroraVersions(a: string, b: string): number {
+    if (a === b) return 0;
+    const parsedA = this.parseAuroraVersion(a);
+    const parsedB = this.parseAuroraVersion(b);
+    if (parsedA.major !== parsedB.major) return parsedA.major - parsedB.major;
+    if (parsedA.minor !== parsedB.minor) return parsedA.minor - parsedB.minor;
+    if (parsedA.patch !== parsedB.patch) return parsedA.patch - parsedB.patch;
+    // No prerelease beats prerelease.
+    if (!parsedA.prereleaseId && parsedB.prereleaseId) return 1;
+    if (parsedA.prereleaseId && !parsedB.prereleaseId) return -1;
+    if (!parsedA.prereleaseId && !parsedB.prereleaseId) return 0;
+    if (parsedA.prereleaseId !== parsedB.prereleaseId) {
+      return parsedA.prereleaseId! < parsedB.prereleaseId! ? -1 : 1;
+    }
+    return parsedA.prereleaseNumber - parsedB.prereleaseNumber;
+  }
+
+  private parseAuroraVersion(version: string): {
+    major: number;
+    minor: number;
+    patch: number;
+    prereleaseId: string | undefined;
+    prereleaseNumber: number;
+  } {
+    const normalized = String(version || '').trim();
+    // Matches `1.5.6` (stable) and `1.5.6-beta3` / `1.5.6-beta.3` /
+    // `1.5.6-rc2` (pre-release with optional dot before the number).
+    const match = normalized.match(/^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.?(\d+)?)?/i);
+    if (!match) {
+      return {
+        major: 0,
+        minor: 0,
+        patch: 0,
+        prereleaseId: undefined,
+        prereleaseNumber: 0,
+      };
+    }
+    return {
+      major: Number(match[1] || 0),
+      minor: Number(match[2] || 0),
+      patch: Number(match[3] || 0),
+      prereleaseId: match[4] ? String(match[4]).toLowerCase() : undefined,
+      prereleaseNumber: match[5] ? Number(match[5]) : 0,
+    };
+  }
+
+  /**
+   * Calls the GitHub Releases REST API. Falls back to an empty list on
+   * network errors so the existing error-state machine surfaces a helpful
+   * message rather than throwing through the UI.
+   */
+  private fetchGitHubReleases(): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      const apiUrl = 'https://api.github.com/repos/galdo/aurora/releases?per_page=20';
+      const request = https.get(apiUrl, {
+        headers: {
+          'User-Agent': `AuroraPulse/${app.getVersion()}`,
+          Accept: 'application/vnd.github+json',
+        },
+      }, (response) => {
+        if (response.statusCode !== 200) {
+          response.resume();
+          reject(new Error(`GitHub API antwortete mit HTTP ${response.statusCode} bei der Update-Prüfung.`));
+          return;
+        }
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          body += chunk;
+        });
+        response.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            resolve(Array.isArray(parsed) ? parsed : []);
+          } catch (parseError) {
+            reject(new Error(`Konnte GitHub-Antwort nicht parsen: ${(parseError as any)?.message || parseError}`));
+          }
+        });
+      });
+      request.on('error', reject);
+      request.setTimeout(20_000, () => {
+        request.destroy(new Error('GitHub API Timeout (20s).'));
+      });
+    });
+  }
+
+  /**
+   * Returns the parsed `latest-<os>.yml` payload for the given release. Falls
+   * back to a synthesised one based on the asset list if the YAML file is
+   * missing or unparseable, so the install flow still has something to work
+   * with for hand-rolled releases.
+   */
+  private async fetchChannelInfoForRelease(release: any): Promise<any> {
+    let channelFileName = 'latest-linux.yml';
+    if (process.platform === PlatformOS.Darwin) {
+      channelFileName = 'latest-mac.yml';
+    } else if (process.platform === PlatformOS.Windows) {
+      channelFileName = 'latest.yml';
+    }
+    const releaseAssets: any[] = Array.isArray(release?.assets) ? release.assets : [];
+    const channelAsset = releaseAssets.find(asset => String(asset?.name || '').toLowerCase() === channelFileName.toLowerCase());
+    const channelUrl = channelAsset?.browser_download_url
+      || `https://github.com/galdo/aurora/releases/download/${release.tag_name}/${channelFileName}`;
+    try {
+      const yamlText = await this.fetchUrlAsText(channelUrl);
+      return this.parseChannelYaml(yamlText);
+    } catch (error) {
+      debug('fetchChannelInfoForRelease - falling back to assets list - %o', error);
+      return this.synthesiseChannelInfoFromAssets(release);
+    }
+  }
+
+  private fetchUrlAsText(targetUrl: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const fetchWithRedirect = (currentUrl: string, redirectCount = 0) => {
+        if (redirectCount > 5) {
+          reject(new Error('Zu viele HTTP-Redirects beim Lesen der Channel-Datei.'));
+          return;
+        }
+        const request = https.get(currentUrl, {
+          headers: {
+            'User-Agent': `AuroraPulse/${app.getVersion()}`,
+            Accept: 'application/octet-stream, text/plain',
+          },
+        }, (response) => {
+          if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+            response.resume();
+            fetchWithRedirect(response.headers.location, redirectCount + 1);
+            return;
+          }
+          if (response.statusCode !== 200) {
+            response.resume();
+            reject(new Error(`HTTP ${response.statusCode} beim Lesen der Channel-Datei.`));
+            return;
+          }
+          let body = '';
+          response.setEncoding('utf8');
+          response.on('data', (chunk) => {
+            body += chunk;
+          });
+          response.on('end', () => resolve(body));
+        });
+        request.on('error', reject);
+        request.setTimeout(20_000, () => {
+          request.destroy(new Error('Channel-Datei Timeout (20s).'));
+        });
+      };
+      fetchWithRedirect(targetUrl);
+    });
+  }
+
+  /**
+   * Minimal hand-rolled YAML parser for the `latest-*.yml` shape produced by
+   * electron-builder. Bringing in a full YAML library just for these files
+   * isn't worth the size cost — the grammar electron-builder uses is a
+   * narrow, predictable subset.
+   */
+  private parseChannelYaml(yamlText: string): any {
+    if (!yamlText) {
+      return undefined;
+    }
+    const result: any = { files: [] };
+    const lines = yamlText.split(/\r?\n/);
+    let currentFile: any | undefined;
+    lines.forEach((line) => {
+      if (!line.trim()) {
+        return;
+      }
+      const topLevelMatch = line.match(/^([a-zA-Z0-9_]+):\s*(.*)$/);
+      const fileEntryMatch = line.match(/^\s+-\s+url:\s+(.+)$/);
+      const fileFieldMatch = line.match(/^\s+([a-zA-Z0-9_]+):\s+(.+)$/);
+      if (fileEntryMatch) {
+        currentFile = { url: this.unquoteYamlValue(fileEntryMatch[1]) };
+        result.files.push(currentFile);
+        return;
+      }
+      if (currentFile && fileFieldMatch) {
+        const fieldName = fileFieldMatch[1];
+        currentFile[fieldName] = this.coerceYamlValue(fileFieldMatch[2]);
+        return;
+      }
+      if (topLevelMatch) {
+        currentFile = undefined;
+        const fieldName = topLevelMatch[1];
+        const rawValue = topLevelMatch[2];
+        if (fieldName === 'files') {
+          result.files = [];
+          return;
+        }
+        if (rawValue === '' || rawValue === undefined) {
+          return;
+        }
+        result[fieldName] = this.coerceYamlValue(rawValue);
+      }
+    });
+    return result;
+  }
+
+  private unquoteYamlValue(rawValue: string): string {
+    const trimmed = String(rawValue || '').trim();
+    if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+      return trimmed.slice(1, -1);
+    }
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+      return trimmed.slice(1, -1);
+    }
+    return trimmed;
+  }
+
+  private coerceYamlValue(rawValue: string): string | number {
+    const unquoted = this.unquoteYamlValue(rawValue);
+    if (/^-?\d+$/.test(unquoted)) {
+      const numeric = Number(unquoted);
+      if (Number.isFinite(numeric) && String(numeric) === unquoted) {
+        return numeric;
+      }
+    }
+    return unquoted;
+  }
+
+  /**
+   * Worst-case fallback: if `latest-<os>.yml` is missing for whatever reason,
+   * we still want to surface an installable update. We synthesise the file
+   * list from the release's binary assets (DMG/ZIP/exe) so the rest of the
+   * pipeline has something to work with.
+   */
+  private synthesiseChannelInfoFromAssets(release: any): any {
+    const releaseAssets: any[] = Array.isArray(release?.assets) ? release.assets : [];
+    const installerExtensions = ['.dmg', '.zip', '.exe', '.appimage', '.flatpak', '.deb', '.rpm', '.tar.gz'];
+    const matchingAssets = releaseAssets.filter((asset) => {
+      const name = String(asset?.name || '').toLowerCase();
+      return installerExtensions.some(extension => name.endsWith(extension));
+    });
+    return {
+      version: this.stripVersionPrefix(release?.tag_name),
+      releaseDate: release?.published_at || release?.created_at || '',
+      files: matchingAssets.map(asset => ({
+        url: asset?.name || '',
+        size: Number(asset?.size || 0),
+      })),
+    };
   }
 
   // Path to the freshly downloaded .app bundle that is ready to replace the
