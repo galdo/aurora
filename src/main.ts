@@ -19,8 +19,9 @@ import 'regenerator-runtime/runtime';
 import path from 'path';
 import fs from 'fs';
 import http, { IncomingMessage, ServerResponse } from 'http';
+import https from 'https';
 import { randomBytes } from 'crypto';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import * as electronUpdater from 'electron-updater';
 import electronLog from 'electron-log/main';
 import electronDebug from 'electron-debug';
@@ -1062,6 +1063,11 @@ class App implements IAppMain {
     }
   }
 
+  // Path to the freshly downloaded .app bundle that is ready to replace the
+  // currently running one. Populated by the macOS custom updater path; used by
+  // installDownloadedUpdate() to perform the swap on relaunch.
+  private macUpdateDownloadedAppBundlePath?: string;
+
   private async downloadAvailableUpdate() {
     if (!app.isPackaged) {
       return;
@@ -1071,6 +1077,40 @@ class App implements IAppMain {
       canDownload: false,
       canInstall: false,
     });
+
+    // On macOS, electron-updater's Squirrel.Mac path requires a valid Apple
+    // code signature. Because we publish ad-hoc-signed builds, the built-in
+    // installer fails on quitAndInstall. We use a custom flow instead: pull
+    // the ZIP straight from GitHub Releases, extract it, strip the quarantine
+    // attribute, and swap the .app bundle on relaunch.
+    if (this.platform === PlatformOS.Darwin) {
+      try {
+        const downloadedAppPath = await this.downloadMacUpdateZip();
+        this.macUpdateDownloadedAppBundlePath = downloadedAppPath;
+        this.setUpdateState({
+          status: 'downloaded',
+          downloadProgressPercent: 100,
+          canDownload: false,
+          canInstall: true,
+        });
+        if (this.updateSettings.autoInstallOnDownload) {
+          setTimeout(() => {
+            this.installDownloadedUpdate();
+          }, 600);
+        }
+        return;
+      } catch (error) {
+        const errorMessage = String((error as any)?.message || error);
+        this.setUpdateState({
+          status: 'error',
+          message: `Update-Download fehlgeschlagen: ${errorMessage}`,
+          canDownload: true,
+          canInstall: false,
+        });
+        return;
+      }
+    }
+
     const autoUpdater = this.getAutoUpdater();
     if (!autoUpdater) {
       this.setUpdateState({
@@ -1105,6 +1145,28 @@ class App implements IAppMain {
       status: 'installing',
       canInstall: false,
     });
+
+    // macOS custom updater path: swap the .app bundle ourselves and relaunch.
+    // Skips electron-updater's Squirrel.Mac, which requires a valid Apple
+    // signature and therefore breaks on our ad-hoc-signed builds.
+    if (this.platform === PlatformOS.Darwin && this.macUpdateDownloadedAppBundlePath) {
+      try {
+        await this.applyMacUpdate(this.macUpdateDownloadedAppBundlePath);
+        // applyMacUpdate triggers app.relaunch() + app.quit() — execution
+        // does not return here in practice, but keep the explicit return.
+        return;
+      } catch (error) {
+        const errorMessage = String((error as any)?.message || error);
+        this.setUpdateState({
+          status: 'error',
+          message: `Update-Installation fehlgeschlagen: ${errorMessage}\n\nFalls das Problem bestehen bleibt, lade die neue Version manuell von https://github.com/galdo/aurora/releases herunter.`,
+          canDownload: false,
+          canInstall: true,
+        });
+        return;
+      }
+    }
+
     const autoUpdater = this.getAutoUpdater();
     if (!autoUpdater) {
       this.setUpdateState({
@@ -1116,6 +1178,298 @@ class App implements IAppMain {
       return;
     }
     autoUpdater.quitAndInstall(true, true);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Custom macOS updater
+  //
+  // Goal: keep auto-update working for ad-hoc-signed builds (no Apple Developer
+  // ID), where electron-updater's Squirrel.Mac path consistently fails with
+  // "code signature did not pass validation". We replicate the minimum needed:
+  //   1. Resolve the right `.zip` asset for the user's arch from the GitHub
+  //      release that update-info pointed us at.
+  //   2. Stream-download it into the userData/Updates folder (with progress
+  //      events identical to the upstream `download-progress` shape).
+  //   3. Extract via `ditto` (macOS-native, preserves bundle structure better
+  //      than `unzip`).
+  //   4. Strip `com.apple.quarantine` from the extracted bundle so Gatekeeper
+  //      does not silently quarantine it.
+  //   5. On install: hand the swap-and-relaunch off to a small detached shell
+  //      script that only runs *after* the current app has quit, so we can
+  //      safely overwrite our own bundle.
+  // ---------------------------------------------------------------------------
+
+  private getMacUpdateAssetName(version: string): string {
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    return `AuroraPulse-mac-${arch}-${version}.zip`;
+  }
+
+  private getMacUpdatesDir(): string {
+    return this.createDataDir('Updates');
+  }
+
+  private getRunningMacAppBundlePath(): string | undefined {
+    // app.getAppPath() inside a packaged macOS app is .../AuroraPulse.app/Contents/Resources/app.asar
+    const appPath = app.getAppPath();
+    const match = String(appPath || '').match(/^(.+\.app)\b/);
+    if (match?.[1]) {
+      return match[1];
+    }
+    // Fallback: walk up from process.execPath
+    const execPath = String(process.execPath || '');
+    const fallbackMatch = execPath.match(/^(.+\.app)\b/);
+    return fallbackMatch?.[1];
+  }
+
+  /**
+   * Downloads the macOS ZIP for the announced update version, extracts it
+   * into a clean folder under userData/Updates, strips quarantine, and
+   * returns the absolute path to the extracted .app bundle.
+   */
+  private async downloadMacUpdateZip(): Promise<string> {
+    const version = String(this.latestUpdateInfo?.version || '').trim();
+    if (!version) {
+      throw new Error('Keine Versionsinformation für das Update verfügbar.');
+    }
+
+    const assetName = this.getMacUpdateAssetName(version);
+    const downloadUrl = `https://github.com/galdo/aurora/releases/download/v${version}/${assetName}`;
+    const updatesDir = this.getMacUpdatesDir();
+
+    // Clean up any previously staged update so we don't fill up the disk.
+    try {
+      const previousEntries = fs.readdirSync(updatesDir);
+      previousEntries.forEach((entry) => {
+        const entryPath = path.join(updatesDir, entry);
+        try {
+          fs.rmSync(entryPath, { recursive: true, force: true });
+        } catch (_error) {
+          /* ignore individual cleanup errors */
+        }
+      });
+    } catch (_error) {
+      /* ignore — directory may not exist yet */
+    }
+
+    const zipFilePath = path.join(updatesDir, assetName);
+    const extractDir = path.join(updatesDir, 'extracted');
+    fs.mkdirSync(extractDir, { recursive: true });
+
+    await this.downloadFileWithProgress(downloadUrl, zipFilePath);
+    await this.runCommand('ditto', ['-x', '-k', zipFilePath, extractDir]);
+
+    // Locate the .app bundle inside the extracted tree.
+    const extractedAppBundlePath = this.findExtractedMacAppBundle(extractDir);
+    if (!extractedAppBundlePath) {
+      throw new Error('Konnte die entpackte AuroraPulse.app nicht finden.');
+    }
+
+    // Strip the macOS quarantine attribute so Gatekeeper doesn't block launch.
+    // We ignore the result — if xattr is missing the launch may still succeed
+    // for the user's existing security profile.
+    await this.runCommand('xattr', ['-dr', 'com.apple.quarantine', extractedAppBundlePath]).catch(() => undefined);
+
+    return extractedAppBundlePath;
+  }
+
+  private findExtractedMacAppBundle(searchRoot: string): string | undefined {
+    const stack: string[] = [searchRoot];
+    while (stack.length > 0) {
+      const currentPath = stack.pop()!;
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(currentPath, { withFileTypes: true });
+      } catch (_error) {
+        // Directory disappeared or is unreadable — skip it.
+        entries = [];
+      }
+      // eslint-disable-next-line no-restricted-syntax
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.endsWith('.app')) {
+          return path.join(currentPath, entry.name);
+        }
+        if (entry.isDirectory()) {
+          stack.push(path.join(currentPath, entry.name));
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private downloadFileWithProgress(downloadUrl: string, destinationFilePath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const fetchUrl = (currentUrl: string, redirectCount = 0) => {
+        if (redirectCount > 5) {
+          reject(new Error('Zu viele HTTP-Redirects beim Update-Download.'));
+          return;
+        }
+        const request = https.get(currentUrl, {
+          headers: {
+            'User-Agent': `AuroraPulse/${app.getVersion()}`,
+            Accept: 'application/octet-stream',
+          },
+        }, (response) => {
+          // Follow GitHub's S3 redirect chain.
+          if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+            response.resume();
+            fetchUrl(response.headers.location, redirectCount + 1);
+            return;
+          }
+          if (response.statusCode !== 200) {
+            response.resume();
+            reject(new Error(`HTTP ${response.statusCode} beim Update-Download.`));
+            return;
+          }
+
+          const totalBytes = Number(response.headers['content-length'] || 0);
+          let receivedBytes = 0;
+          let lastProgressEmitAt = 0;
+
+          const writeStream = fs.createWriteStream(destinationFilePath);
+          response.on('data', (chunk: Buffer) => {
+            receivedBytes += chunk.length;
+            const now = Date.now();
+            // Throttle progress events to ~5/s so we don't spam the renderer.
+            if (totalBytes > 0 && (now - lastProgressEmitAt) >= 200) {
+              lastProgressEmitAt = now;
+              const progressPercent = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+              this.setUpdateState({
+                status: 'downloading',
+                downloadProgressPercent: progressPercent,
+                canDownload: false,
+                canInstall: false,
+              });
+            }
+          });
+          response.pipe(writeStream);
+          writeStream.on('finish', () => {
+            // Wait for the underlying file handle to actually flush before
+            // declaring the download complete. `close` event fires after the
+            // FD is released, which is what we need for the next ditto step.
+            writeStream.end();
+          });
+          writeStream.on('close', () => {
+            resolve();
+          });
+          writeStream.on('error', (writeError) => {
+            try { fs.unlinkSync(destinationFilePath); } catch (_e) { /* ignore */ }
+            reject(writeError);
+          });
+        });
+        request.on('error', reject);
+        request.setTimeout(60_000, () => {
+          request.destroy(new Error('Update-Download Timeout (60s).'));
+        });
+      };
+      fetchUrl(downloadUrl);
+    });
+  }
+
+  /**
+   * Performs the actual swap of the running .app bundle with the freshly
+   * downloaded one. The swap *cannot* happen while the current process holds
+   * binaries inside the bundle, so we hand the work off to a detached shell
+   * script that waits a couple of seconds, replaces the bundle via `ditto`,
+   * and then opens the new app.
+   */
+  private async applyMacUpdate(extractedAppBundlePath: string): Promise<void> {
+    const runningAppBundlePath = this.getRunningMacAppBundlePath();
+    if (!runningAppBundlePath) {
+      throw new Error('Konnte den Pfad der aktuell laufenden App nicht ermitteln.');
+    }
+    if (!fs.existsSync(extractedAppBundlePath)) {
+      throw new Error(`Update-Bundle nicht gefunden: ${extractedAppBundlePath}`);
+    }
+
+    // Verify we actually have write access to the parent directory of the
+    // running bundle. If the user dragged AuroraPulse.app to /Applications
+    // we usually do, but if it's in /Applications and owned by root we don't.
+    try {
+      fs.accessSync(path.dirname(runningAppBundlePath), fs.constants.W_OK);
+    } catch (_error) {
+      throw new Error(
+        `Keine Schreibrechte für ${path.dirname(runningAppBundlePath)}. Bitte ziehe AuroraPulse.app manuell aus dem Update-Ordner (${path.dirname(extractedAppBundlePath)}) nach /Applications.`,
+      );
+    }
+
+    // Build a tiny shell script that:
+    //   1. Waits for the current process to exit (PID-based wait loop).
+    //   2. Removes the old .app bundle.
+    //   3. Copies the new bundle into place via `ditto` (preserves resource
+    //      forks, code-sign blobs, symlinks — `cp -R` does not).
+    //   4. Strips quarantine on the freshly copied bundle.
+    //   5. Re-launches the app via `open`.
+    //   6. Cleans itself up.
+    const installerScriptPath = path.join(this.getMacUpdatesDir(), 'apply-update.sh');
+    const logFilePath = this.getLogsPath('mac-updater.log');
+    const escapeForShell = (value: string) => {
+      // POSIX shell single-quote escape: close, escape, reopen.
+      const escapedValue = String(value).split("'").join("'\\''");
+      return `'${escapedValue}'`;
+    };
+    const installerScriptContent = `#!/bin/bash
+# Auto-generated by Aurora Pulse mac auto-updater. Safe to delete after run.
+set -u
+LOG=${escapeForShell(logFilePath)}
+echo "[mac-updater] $(date) start (parent pid=${process.pid})" >> "$LOG" 2>&1
+# Wait up to 30s for the parent process to actually exit.
+for i in $(seq 1 60); do
+  if ! kill -0 ${process.pid} 2>/dev/null; then
+    break
+  fi
+  sleep 0.5
+done
+RUNNING_APP=${escapeForShell(runningAppBundlePath)}
+NEW_APP=${escapeForShell(extractedAppBundlePath)}
+echo "[mac-updater] removing $RUNNING_APP" >> "$LOG" 2>&1
+rm -rf "$RUNNING_APP" >> "$LOG" 2>&1 || true
+echo "[mac-updater] installing $NEW_APP -> $RUNNING_APP" >> "$LOG" 2>&1
+/usr/bin/ditto "$NEW_APP" "$RUNNING_APP" >> "$LOG" 2>&1
+DITTO_STATUS=$?
+if [ "$DITTO_STATUS" -ne 0 ]; then
+  echo "[mac-updater] ditto failed with status $DITTO_STATUS" >> "$LOG" 2>&1
+  exit $DITTO_STATUS
+fi
+/usr/bin/xattr -dr com.apple.quarantine "$RUNNING_APP" >> "$LOG" 2>&1 || true
+echo "[mac-updater] launching $RUNNING_APP" >> "$LOG" 2>&1
+/usr/bin/open "$RUNNING_APP" >> "$LOG" 2>&1
+echo "[mac-updater] done" >> "$LOG" 2>&1
+exit 0
+`;
+    fs.writeFileSync(installerScriptPath, installerScriptContent, { mode: 0o755 });
+
+    // Spawn the script detached so it survives our own quit.
+    const installerChild = spawn('/bin/bash', [installerScriptPath], {
+      detached: true,
+      stdio: 'ignore',
+      cwd: path.dirname(installerScriptPath),
+    });
+    installerChild.unref();
+
+    // Persist what's-new payload now (we won't get another chance).
+    this.persistWhatsNewFromLatestUpdateInfo();
+
+    // Hand control to the installer. We do NOT call app.relaunch() — the
+    // installer script will `open` the new bundle once the swap is done.
+    this.isQuitting = true;
+    setTimeout(() => app.quit(), 250);
+  }
+
+  /**
+   * Thin wrapper around child_process.execFile that returns a Promise and
+   * rejects if the command exits with a non-zero status.
+   */
+  private runCommand(command: string, args: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      execFile(command, args, { maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+        if (error) {
+          const detail = String(stderr || stdout || '').trim();
+          reject(new Error(`${command} ${args.join(' ')} failed${detail ? `: ${detail}` : ''}`));
+          return;
+        }
+        resolve();
+      });
+    });
   }
 
   private async handleAutoUpdaterError(error: any) {
