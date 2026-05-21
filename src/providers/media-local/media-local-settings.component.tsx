@@ -238,21 +238,38 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
             interaction will then persist an explicit value.
             Cf. `MediaLocalLibraryService.onProviderRegistered` for the matching
             cold-start gate.
+            Rendered as a button-style ON/OFF pill (matching the
+            `theme-switch-item-toggle` pattern in `pages/settings`) so the
+            control feels native to the rest of the Settings view instead of
+            looking like a stray HTML checkbox.
           */}
-          <div style={{ marginTop: '16px' }}>
-            <Form.Check
-              type="switch"
-              id="media-local-auto-sync-on-startup"
-              checked={settings.library.auto_sync_on_startup !== false}
-              onChange={() => {
-                mediaLocalStore.dispatch({
-                  type: MediaLocalStateActionType.ToggleAutoSyncOnStartup,
-                });
-              }}
-              label={I18nService.getString('label_settings_auto_sync_on_startup')}
-            />
-            <div className={cx('settings-description')} style={{ marginTop: '4px' }}>
-              {I18nService.getString('label_settings_auto_sync_on_startup_details')}
+          <div className={cx('settings-toggle-row')} style={{ marginTop: '16px' }}>
+            <div className={cx('settings-toggle-row-content')}>
+              <div className={cx('settings-subheading')}>
+                {I18nService.getString('label_settings_auto_sync_on_startup')}
+              </div>
+              <div className={cx('settings-description')} style={{ marginTop: '4px' }}>
+                {I18nService.getString('label_settings_auto_sync_on_startup_details')}
+              </div>
+            </div>
+            <div className={cx('settings-toggle-switch')}>
+              <button
+                type="button"
+                id="media-local-auto-sync-on-startup"
+                aria-pressed={settings.library.auto_sync_on_startup !== false}
+                className={cx('settings-toggle-button', {
+                  active: settings.library.auto_sync_on_startup !== false,
+                })}
+                onClick={() => {
+                  mediaLocalStore.dispatch({
+                    type: MediaLocalStateActionType.ToggleAutoSyncOnStartup,
+                  });
+                }}
+              >
+                {settings.library.auto_sync_on_startup !== false
+                  ? I18nService.getString('label_toggle_on')
+                  : I18nService.getString('label_toggle_off')}
+              </button>
             </div>
           </div>
         </div>

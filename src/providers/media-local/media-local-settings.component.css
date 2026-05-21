@@ -54,3 +54,68 @@
   font-weight: 600;
   padding: 1px 7px;
 }
+
+/*
+ * Toggle pill ("ON / OFF" switch) used for boolean provider-level settings
+ * such as `auto_sync_on_startup`. Visually consistent with the toggle in
+ * `pages/settings/settings.component.css` (`.theme-switch-item-toggle`) so
+ * the user sees the same control style across the global Settings view and
+ * the per-provider settings panel.
+ */
+.settings-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: nowrap;
+}
+
+.settings-toggle-row-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-toggle-switch {
+  display: inline-flex;
+  gap: 0;
+  background-color: var(--selectable-bg-color);
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--selectable-outline-color);
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+.settings-toggle-button {
+  min-width: 86px;
+  width: 86px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-dark-color);
+  transition: all 0.2s ease;
+  user-select: none;
+  background: transparent;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.settings-toggle-button:hover {
+  color: var(--text-light-color);
+}
+
+.settings-toggle-button.active {
+  background-color: var(--button-primary-bg-color);
+  color: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.settings-toggle-button:focus {
+  outline: none;
+}
