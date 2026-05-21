@@ -24,6 +24,8 @@
   "label_artist_header": "Artist",
   "label_settings_header": "Settings",
   "label_settings_directories": "Selected Directories",
+  "label_settings_auto_sync_on_startup": "Automatically sync library on startup",
+  "label_settings_auto_sync_on_startup_details": "When disabled, the app loads only your already-indexed library at launch — startup is noticeably faster, especially for large libraries. You can still trigger a full scan any time via the Sync button in the main view.",
   "label_settings_group_compilations": "Group Compilations",
   "label_settings_group_compilations_details": "Treat folders as albums (useful for various artist compilations).",
   "label_settings_reset_header": "Danger Zone",

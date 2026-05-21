@@ -76,10 +76,49 @@ class MediaLocalLibraryService implements IMediaLibraryService {
 
   onProviderRegistered(): void {
     debug('onProviderRegistered - received');
-    debug('onProviderRegistered - starting sync');
-    this.syncMediaTracks()
-      .then(() => {
-        debug('onProviderRegistered - sync completed');
+
+    // Cold-start sync gate: prior to 1.5.6 the local provider unconditionally
+    // re-scanned all configured library directories on every app start. For
+    // bigger libraries that adds noticeable startup latency (and surfaces a
+    // "Sync erfolgreich" toast every launch), even though the actual file
+    // tree on disk usually hasn't changed.
+    //
+    // We now consult the user's `library.auto_sync_on_startup` flag:
+    //   • new profiles default to `false` → no automatic scan, library is
+    //     served straight from the local DB by the album/artist/playlist
+    //     pages (each page calls `loadMedia*Service.loadMedia*()` itself)
+    //   • legacy profiles where the flag has never been set fall back to
+    //     `true` so users who relied on auto-sync don't lose the behaviour
+    //     until they explicitly opt out in settings
+    //
+    // Manual sync paths are unchanged:
+    //   • the "Sync"-button in `app/browser/browser.component.tsx → handleSync`
+    //   • `MediaLocalLibraryService.syncMediaTracks()` from any caller
+    //   • `onProviderSettingsUpdated` still re-syncs when the user changes a
+    //     library-relevant setting (e.g. `group_compilations_by_folder`)
+    MediaProviderService
+      .getMediaProviderSettings(MediaLocalConstants.Provider)
+      .then((rawSettings) => {
+        const settings = rawSettings as IMediaLocalSettings | undefined;
+        // `undefined` ⇒ legacy profile ⇒ keep historical auto-sync behaviour.
+        // Explicit `false` ⇒ user opted out ⇒ skip the scan.
+        const shouldAutoSync = settings?.library?.auto_sync_on_startup !== false;
+        if (!shouldAutoSync) {
+          debug('onProviderRegistered - auto-sync disabled by user setting; library is served from DB');
+          return;
+        }
+        debug('onProviderRegistered - starting sync (auto-sync enabled)');
+        this.syncMediaTracks()
+          .then(() => {
+            debug('onProviderRegistered - sync completed');
+          });
+      })
+      .catch((error) => {
+        // If we can't read the settings (corrupt store, IPC race, ...) we
+        // intentionally do *not* fall back to auto-syncing — the same fix
+        // would be undone for the user who just complained about it. The
+        // manual sync button remains available.
+        console.warn('onProviderRegistered - failed to read provider settings, skipping auto-sync', error);
       });
   }
 

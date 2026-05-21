@@ -27,12 +27,56 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      - name: Resolve version
+      - name: Checkout (for package.json sync check)
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Resolve & validate version
         id: version
         shell: bash
         run: |
+          set -euo pipefail
           VERSION="${{ github.event.inputs.version }}"
           VERSION="${VERSION#v}"
+
+          # ------------------------------------------------------------------
+          # Aurora version-format guard.
+          #
+          # The repo standard is `vX.Y.Z` for stables and `vX.Y.Z-betaN`
+          # (no dot between identifier and number) for prereleases.
+          # `npm version` defaults to `X.Y.Z-beta.N` (with a dot) which:
+          #   1. breaks our naming convention for tags / asset filenames,
+          #   2. triggers the electron-updater channel bug we worked around
+          #      in `runCustomUpdateCheck()` — see commit message of
+          #      "fix(updater): custom GitHub Releases lookup ..." for
+          #      background.
+          # We refuse to publish anything that uses the dotted form so that
+          # bumping always requires the correct format end-to-end.
+          # ------------------------------------------------------------------
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            : # plain semver release, fine
+          elif [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)[0-9]+$ ]]; then
+            : # accepted prerelease form (no dot)
+          else
+            echo "::error::Invalid version format '$VERSION'. Expected 'X.Y.Z' or 'X.Y.Z-betaN' (no dot before the number, e.g. 1.5.6-beta5)."
+            exit 1
+          fi
+
+          # Ensure the package.json files match the requested release exactly.
+          # This catches the case where someone forgot to bump them (or where
+          # `npm version` left the dotted `beta.N` form behind).
+          ROOT_VERSION=$(node -p "require('./package.json').version")
+          SRC_VERSION=$(node -p "require('./src/package.json').version")
+          if [[ "$ROOT_VERSION" != "$VERSION" ]]; then
+            echo "::error::package.json version is '$ROOT_VERSION' but workflow was triggered with '$VERSION'. Bump package.json before tagging."
+            exit 1
+          fi
+          if [[ "$SRC_VERSION" != "$VERSION" ]]; then
+            echo "::error::src/package.json version is '$SRC_VERSION' but workflow was triggered with '$VERSION'. Bump src/package.json before tagging."
+            exit 1
+          fi
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           if [[ "$VERSION" == *-* ]]; then

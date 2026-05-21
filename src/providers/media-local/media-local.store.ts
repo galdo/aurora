@@ -20,6 +20,7 @@ export enum MediaLocalStateActionType {
   SetCdImportDirectory = 'mediaLocalSettings/setCdImportDirectory',
   SetCdImportNamingTemplate = 'mediaLocalSettings/setCdImportNamingTemplate',
   SetDiscogsToken = 'mediaLocalSettings/setDiscogsToken',
+  ToggleAutoSyncOnStartup = 'mediaLocalSettings/toggleAutoSyncOnStartup',
 }
 
 export type MediaSyncDirectoryStats = {
@@ -53,6 +54,12 @@ const mediaLocalInitialState: MediaLocalState = {
   settings: {
     library: {
       directories: [],
+      // New profiles default to *manual* sync — see docs in
+      // `IMediaLocalSettings.library.auto_sync_on_startup`. Existing profiles
+      // saved before this flag existed will be normalised in
+      // `MediaLocalLibraryService.onProviderRegistered` (undefined → true,
+      // i.e. legacy auto-sync stays on for them until the user opts out).
+      auto_sync_on_startup: false,
     },
     cd_import: {
       output_directory: '',
@@ -134,8 +141,8 @@ function mediaLocalStateReducer(state: MediaLocalState = mediaLocalInitialState,
         settings: {
           ...state.settings,
           library: {
+            ...state.settings.library,
             directories,
-            group_compilations_by_folder: state.settings.library.group_compilations_by_folder,
           },
         },
         dirty: directoriesAreUpdated,
@@ -158,11 +165,27 @@ function mediaLocalStateReducer(state: MediaLocalState = mediaLocalInitialState,
         settings: {
           ...state.settings,
           library: {
+            ...state.settings.library,
             directories,
-            group_compilations_by_folder: state.settings.library.group_compilations_by_folder,
           },
         },
         dirty: directoriesAreUpdated,
+      };
+    }
+    case MediaLocalStateActionType.ToggleAutoSyncOnStartup: {
+      // Treat undefined as legacy `true` (= old auto-sync behaviour) so the
+      // first toggle from a legacy profile flips it cleanly to `false`.
+      const previousValue = state.settings.library.auto_sync_on_startup !== false;
+      return {
+        ...state,
+        settings: {
+          ...state.settings,
+          library: {
+            ...state.settings.library,
+            auto_sync_on_startup: !previousValue,
+          },
+        },
+        dirty: true,
       };
     }
     case MediaLocalStateActionType.ToggleGroupCompilations: {

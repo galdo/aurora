@@ -229,6 +229,32 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
               {I18nService.getString('button_settings_sync_add_directory')}
             </Button>
           </div>
+
+          {/*
+            Auto-sync-on-startup toggle.
+            Reads from `settings.library.auto_sync_on_startup`. Treats `undefined`
+            as the legacy default (`true`) so users migrating from older builds
+            see the actual current behaviour reflected in the UI; the very first
+            interaction will then persist an explicit value.
+            Cf. `MediaLocalLibraryService.onProviderRegistered` for the matching
+            cold-start gate.
+          */}
+          <div style={{ marginTop: '16px' }}>
+            <Form.Check
+              type="switch"
+              id="media-local-auto-sync-on-startup"
+              checked={settings.library.auto_sync_on_startup !== false}
+              onChange={() => {
+                mediaLocalStore.dispatch({
+                  type: MediaLocalStateActionType.ToggleAutoSyncOnStartup,
+                });
+              }}
+              label={I18nService.getString('label_settings_auto_sync_on_startup')}
+            />
+            <div className={cx('settings-description')} style={{ marginTop: '4px' }}>
+              {I18nService.getString('label_settings_auto_sync_on_startup_details')}
+            </div>
+          </div>
         </div>
 
         <div style={{ marginTop: '20px', borderTop: '1px solid var(--stage-overlay-outline-color)', paddingTop: '20px' }}>
