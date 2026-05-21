@@ -224,6 +224,11 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           this.syncFilesProcessedQueueCount = 0;
           this.pendingAlbumSyncIds.clear();
           this.pendingArtistSyncIds.clear();
+          // Phase 1 perf optimization (#23): start the cover-dedup cache from a
+          // clean slate. Stale entries from a previous sync would still be
+          // valid (the resolved JPG paths on disk are persistent), but a fresh
+          // map keeps memory tight and makes the perf trace per-run reliable.
+          MediaLibraryService.resetProcessedPictureCache();
           mediaLocalStore.dispatch({ type: MediaLocalStateActionType.StartSync });
           await MediaLibraryService.startMediaTrackSync(MediaLocalConstants.Provider);
           const settings: IMediaLocalSettings = settingsOverride || await MediaProviderService.getMediaProviderSettings(MediaLocalConstants.Provider);

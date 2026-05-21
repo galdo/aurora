@@ -110,6 +110,38 @@ export interface IDapSyncProgressSnapshot {
 export class MediaLibraryService {
   static readonly mediaPictureScaleWidth = 500;
   static readonly mediaPictureScaleHeight = 500;
+
+  /**
+   * Renderer-side cache that maps a content-hash of an embedded cover buffer
+   * (short-hash over first 8 KB + length, see `computeCoverShortHash`) to the
+   * resolved cache path returned by the main-process Sharp pipeline.
+   *
+   * Why content-hash and not album-id?
+   *   • a *real* album / compilation embeds the SAME picture into every track
+   *     → hash is identical → first track triggers the IPC + Sharp roundtrip,
+   *     the remaining 12–20 tracks of that album hit the cache (~µs each).
+   *   • a "loose" library folder (single tracks dragged together, or
+   *     compilation-by-folder where every track has its own art) has DIFFERENT
+   *     picture buffers → different hashes → no false dedup; every track keeps
+   *     its individual cover, which the Album-View 4-cover mosaic and the
+   *     Track-List per-row covers depend on.
+   *
+   * The cache stores the in-flight Promise so concurrent callers (the
+   * sync queue runs ~10 tracks in parallel) for the same buffer share one
+   * IPC roundtrip instead of racing N parallel sharp jobs through.
+   *
+   * The cache is intentionally process-scoped (cleared on app reload) and
+   * memory-only — the resulting JPG file on disk is the actual persistent
+   * cache, owned by `SharpModule`.
+   */
+  private static readonly coverCachePathByContentHash = new Map<string, Promise<string | undefined>>();
+  /**
+   * Soft cap — purely defensive. With 3000 tracks in ~300 albums the typical
+   * upper bound of *unique* cover buffers seen in one sync is well under 1 k;
+   * 5 k leaves enormous headroom for libraries that go heavy on per-track art
+   * (loose collections, mixtapes) without growing without bound.
+   */
+  private static readonly coverCachePathMaxEntries = 5000;
   static readonly dapSyncSettingsStorageKey = 'aurora:dap-sync-settings';
   static readonly dapSyncDirectoryName = 'Music';
   static readonly dapSyncCheckpointStorageKey = 'aurora:dap-sync-checkpoint';
@@ -351,6 +383,61 @@ export class MediaLibraryService {
     });
   }
 
+  /**
+   * Cheap content fingerprint for cover-art deduplication during library sync.
+   *
+   * Hashes only the first 8 KB of the buffer plus its total length — this is
+   * easily enough to disambiguate any two real-world JPEG/PNG album covers
+   * (the first 8 KB always contain the JFIF/PNG header + DCT/IDAT prelude,
+   * which is bit-identical only when the buffers are bit-identical) while
+   * being ~50× faster than hashing a full ~500 KB buffer per track.
+   *
+   * Returns `undefined` for non-Buffer input so the caller can fall back to
+   * the unchanged code path (no hash → no cache → previous behaviour).
+   */
+  private static computeCoverShortHash(imageData: unknown): string | undefined {
+    // Renderer hands us a Node Buffer (`mediaPicture.image_data`); the data
+    // lives in renderer memory until we ship it to main via IPC. We avoid
+    // converting it for the hash to stay zero-copy.
+    if (!imageData || typeof imageData !== 'object') {
+      return undefined;
+    }
+    const bufferLike = imageData as { length?: number; slice?: (start: number, end: number) => unknown };
+    const totalLength = Number(bufferLike.length || 0);
+    if (totalLength <= 0 || typeof bufferLike.slice !== 'function') {
+      return undefined;
+    }
+    try {
+      const headSlice = bufferLike.slice(0, Math.min(8192, totalLength));
+      const hash = createHash('sha1');
+      hash.update(headSlice as any);
+      hash.update(`|len=${totalLength}|wh=${this.mediaPictureScaleWidth}x${this.mediaPictureScaleHeight}`);
+      return hash.digest('hex');
+    } catch (_error) {
+      return undefined;
+    }
+  }
+
+  /**
+   * Bounded eviction. The cache is meant to live for the duration of a sync
+   * run; even on multi-hour DAP sessions we never touch more than a few
+   * thousand unique cover buffers. The 5 k cap is here purely to keep memory
+   * bounded if some pathological library hits us with one cover per track.
+   */
+  private static evictCoverCacheIfFull(): void {
+    if (this.coverCachePathByContentHash.size < this.coverCachePathMaxEntries) {
+      return;
+    }
+    // Map preserves insertion order — drop the oldest 10% in one shot.
+    // Array.from + slice keeps the eslint config happy (no for-of over iterator)
+    // while preserving O(dropCount) eviction cost.
+    const dropCount = Math.max(1, Math.floor(this.coverCachePathMaxEntries * 0.1));
+    const oldestKeys = Array.from(this.coverCachePathByContentHash.keys()).slice(0, dropCount);
+    oldestKeys.forEach((oldestKey) => {
+      this.coverCachePathByContentHash.delete(oldestKey);
+    });
+  }
+
   static async processPicture(mediaPicture?: IMediaPicture): Promise<IMediaPicture | undefined> {
     // this accepts a MediaPicture and returns a serializable instance of MediaPicture which can be stored and
     // further processed system-wide after deserializing
@@ -359,8 +446,65 @@ export class MediaLibraryService {
     }
 
     if (mediaPicture.image_data_type === MediaTrackCoverPictureImageDataType.Buffer) {
-      let imageCachePath;
+      // Phase 1 perf optimization (#23): albums and compilations embed the
+      // SAME cover buffer into every one of their tracks. Pre-IPC we compute
+      // a cheap 8 KB-prefix hash of the buffer; identical hashes → identical
+      // bytes → we already know the resolved cache path and can skip the IPC
+      // roundtrip + sharp resize entirely.
+      //
+      // For *loose* libraries (single tracks dragged into one folder, or
+      // compilation-by-folder where every track legitimately ships its own
+      // cover art for the album-view 4-cover mosaic and the per-row track
+      // covers in the title list) the buffers differ → hashes differ → no
+      // false dedup, every track keeps its individual cover.
+      const coverShortHash = this.computeCoverShortHash(mediaPicture.image_data);
+      if (coverShortHash) {
+        const cachedPathPromise = this.coverCachePathByContentHash.get(coverShortHash);
+        if (cachedPathPromise) {
+          const cachedPath = await cachedPathPromise;
+          if (cachedPath) {
+            return {
+              image_data: cachedPath,
+              image_data_type: MediaTrackCoverPictureImageDataType.Path,
+            };
+          }
+          // Previous run for this hash failed — fall through to retry once,
+          // and overwrite the cache entry so a transient IPC hiccup doesn't
+          // stick around for the rest of the sync.
+        }
 
+        const ipcPromise = (async () => {
+          try {
+            return await IPCRenderer.sendAsyncMessage(IPCCommChannel.ImageScale, mediaPicture.image_data, {
+              width: this.mediaPictureScaleWidth,
+              height: this.mediaPictureScaleHeight,
+            });
+          } catch (error) {
+            console.error('encountered error while processing image - %s', error);
+            return undefined;
+          }
+        })();
+
+        this.evictCoverCacheIfFull();
+        this.coverCachePathByContentHash.set(coverShortHash, ipcPromise);
+
+        const imageCachePath = await ipcPromise;
+        if (!imageCachePath) {
+          // Don't poison the cache with a permanent miss — drop the failed
+          // entry so the next track for the same hash gets a clean retry.
+          this.coverCachePathByContentHash.delete(coverShortHash);
+          return undefined;
+        }
+
+        return {
+          image_data: imageCachePath,
+          image_data_type: MediaTrackCoverPictureImageDataType.Path,
+        };
+      }
+
+      // Hash computation failed (exotic buffer types, etc.) — preserve the
+      // exact previous behaviour so we don't silently drop covers.
+      let imageCachePath;
       try {
         imageCachePath = await IPCRenderer.sendAsyncMessage(IPCCommChannel.ImageScale, mediaPicture.image_data, {
           width: this.mediaPictureScaleWidth,
@@ -382,6 +526,18 @@ export class MediaLibraryService {
 
     // image data type does not need any processing, return as is
     return mediaPicture;
+  }
+
+  /**
+   * Drops the renderer-side cover-cache. Called at the start and end of a
+   * library sync run so the in-memory map doesn't outlive the run that
+   * populated it (the SharpModule disk cache is the persistent layer).
+   *
+   * Public so the local-library service can call it without reaching into
+   * private state. Safe to call on idle — no-op if the cache is empty.
+   */
+  static resetProcessedPictureCache(): void {
+    this.coverCachePathByContentHash.clear();
   }
 
   private static normalizeSearchValue(value: string): string {
