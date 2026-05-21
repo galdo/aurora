@@ -13,6 +13,19 @@ on:
 
 permissions:
   contents: write
+  # NOTE on the v1.5.6 tag-push incident:
+  # GitHub Actions' GITHUB_TOKEN cannot push refs whose history contains
+  # changes to files under `.github/workflows/` — that always requires the
+  # `workflows` scope, which is not exposed as a granular workflow
+  # permission and which `GITHUB_TOKEN` simply doesn't have.
+  # Workarounds (any of):
+  #   1. Tag the release commit locally and push the tag with a PAT that
+  #      has the `workflows` scope before triggering the workflow.
+  #   2. Use `softprops/action-gh-release@v1` which auto-creates the tag
+  #      via the Releases API (no `git push` of refs is needed). See the
+  #      `Create GitHub Release` step below — we now skip the manual
+  #      tag-push step on cache hit and rely on action-gh-release to
+  #      create the tag if missing.
 
 concurrency:
   group: release-all-${{ github.ref }}
