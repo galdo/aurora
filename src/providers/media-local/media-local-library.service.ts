@@ -43,6 +43,37 @@ import { MediaLocalStateActionType, mediaLocalStore } from './media-local.store'
 
 const debug = require('debug')('aurora:provider:media_local:media_library');
 
+/**
+ * Phase 3 perf optimization (#23): pre-fetched view of an existing media-track
+ * row that the fast-path probe in `addTrackFromFile` needs in order to decide
+ * "this file is unchanged, just bump sync_timestamp" without going to the DB.
+ *
+ * We DON'T cache the full IMediaTrack here — only the fields the probe reads
+ * (mtime, size, audio details presence, fingerprint, album-name match). The
+ * actual record is still updated through `MediaTrackService.updateMediaTrack`,
+ * so the persistent view of the track stays the source of truth.
+ */
+interface IFastPathTrackProbe {
+  /** Track id (used by `markTrackRelationsAsSeen` and as a write target). */
+  id: string;
+  /** Last-known mtime as recorded in the previous sync run. */
+  fileMtime: number;
+  /** Last-known file size. */
+  fileSize: number;
+  /** Resolved track_album_id — same purpose as in `IMediaTrack.track_album_id`. */
+  trackAlbumId: string;
+  /** Cached track_artist_ids — used by `markTrackRelationsAsSeen` for sync-mark dedup. */
+  trackArtistIds: string[];
+  /** `true` only if the row already has all five audio_* extras (sample rate, bit depth, …). */
+  hasAudioDetails: boolean;
+  /** Album-side fingerprint, used to detect a regroup-by-folder change. */
+  albumSourceFingerprint: string;
+  /** Album name as currently persisted — used by the grouping fallback in addTrackFromFile. */
+  albumName: string;
+  /** Album artist id — read by the relation-sync flusher. */
+  albumArtistId: string;
+}
+
 class MediaLocalLibraryService implements IMediaLibraryService {
   private readonly syncAddFileQueue = new PQueue({ concurrency: 10, autoStart: true, timeout: 5 * 60 * 1000 }); // timeout 5 minutes / track
   private readonly syncLock = new Semaphore(1);
@@ -56,6 +87,22 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   private pendingArtistSyncIds: Set<string> = new Set();
   private playlistCoversRefreshedThisSession = false;
   private playlistCoversRefreshPromise: Promise<void> | null = null;
+  /**
+   * Phase 3 perf optimization (#23): pre-built look-up of every existing
+   * provider track keyed by its `extra.file_path`. Populated once at sync
+   * start (single `findMediaTracks` IPC call) and consulted by the
+   * fast-path probe in `addTrackFromFile` instead of one IPC + NEDB query
+   * per scanned file.
+   *
+   * For a 3 000-track no-change re-scan the previous code paid 3 000
+   * round-trips just to figure out "nothing changed"; with this map
+   * that's one round-trip total + 3 000 µs-level Map lookups.
+   *
+   * Map is wiped at the start of every sync (see `syncMediaTracks`) so
+   * stale entries from a prior run never affect a fresh probe — even if
+   * the user manually edited a track between syncs.
+   */
+  private existingTrackProbeByPath: Map<string, IFastPathTrackProbe> = new Map();
   private syncProfilingStats = {
     directoryReadMs: 0,
     queueDrainMs: 0,
@@ -72,6 +119,12 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     trackUpsertMs: 0,
     fastPathProbeMs: 0,
     fastPathRegroupFallbacks: 0,
+    /** Phase 3 (#23): how many tracks we resolved entirely in-memory via `existingTrackProbeByPath`. */
+    fastPathInMemoryHits: 0,
+    /** Phase 3 (#23): time spent building the existing-track probe map at sync start. */
+    probeMapBuildMs: 0,
+    /** Phase 3 (#23): number of rows pre-loaded into the probe map. */
+    probeMapEntries: 0,
   };
 
   onProviderRegistered(): void {
@@ -151,7 +204,107 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       trackUpsertMs: 0,
       fastPathProbeMs: 0,
       fastPathRegroupFallbacks: 0,
+      fastPathInMemoryHits: 0,
+      probeMapBuildMs: 0,
+      probeMapEntries: 0,
     };
+  }
+
+  /**
+   * Phase 3 perf optimization (#23): single-pass loader for the
+   * `existingTrackProbeByPath` map.
+   *
+   * Replaces ~3 000 individual `findMediaTrack(...)` IPC round-trips that
+   * the per-track fast-path used to issue with a single `findMediaTracks()`
+   * for all existing provider tracks plus a single `findMediaAlbums()` for
+   * their albums. Joins them in renderer memory, then keys the resulting
+   * probes by `extra.file_path` so the file walker can do O(1) look-ups.
+   *
+   * Falls through silently on errors — a missing probe map just means the
+   * sync degrades to the pre-Phase-3 per-track DB path, no functional
+   * regression.
+   */
+  private async buildExistingTrackProbeMap(): Promise<void> {
+    const probeMapBuildStart = performance.now();
+    this.existingTrackProbeByPath.clear();
+
+    try {
+      // One IPC round-trip for tracks, one for albums. Total: 2 calls
+      // instead of N+1 (was: 1 findMediaTrack + 1 album lookup per file).
+      const existingTrackDataList = await MediaTrackDatastore.findMediaTracks({
+        provider: MediaLocalConstants.Provider,
+      });
+
+      const albumIdsToLoad = _.uniq(
+        existingTrackDataList
+          .map((trackData: any) => String(trackData?.track_album_id || '').trim())
+          .filter(Boolean),
+      );
+
+      const existingAlbumDataList = albumIdsToLoad.length > 0
+        ? await MediaAlbumDatastore.findMediaAlbums({
+          id: { $in: albumIdsToLoad },
+        } as any)
+        : [];
+      const albumDataById = new Map<string, any>();
+      existingAlbumDataList.forEach((albumData: any) => {
+        const albumId = String(albumData?.id || _.get(albumData, '_id') || '').trim();
+        if (!albumId) {
+          return;
+        }
+        albumDataById.set(albumId, albumData);
+      });
+
+      existingTrackDataList.forEach((trackData: any) => {
+        const filePath = String(trackData?.extra?.file_path || '').trim();
+        if (!filePath) {
+          return;
+        }
+        const trackExtra = (trackData?.extra || {}) as Record<string, any>;
+        const fileMtime = Number(trackExtra.file_mtime || 0);
+        const fileSize = Number(trackExtra.file_size || 0);
+        if (!Number.isFinite(fileMtime) || fileMtime <= 0 || !Number.isFinite(fileSize) || fileSize <= 0) {
+          // No mtime/size recorded → fast-path can't validate this row anyway,
+          // skip it so the walker takes the full-scan path for this track.
+          return;
+        }
+        const hasAudioDetails = [
+          trackExtra.audio_sample_rate_hz,
+          trackExtra.audio_bit_depth,
+          trackExtra.audio_bitrate_kbps,
+          trackExtra.audio_codec,
+          trackExtra.audio_file_type,
+        ].some(value => !!value);
+        const trackAlbumId = String(trackData?.track_album_id || '').trim();
+        const albumData = trackAlbumId ? albumDataById.get(trackAlbumId) : undefined;
+        const albumExtra = (albumData?.extra || {}) as Record<string, any>;
+
+        const trackArtistIds = Array.isArray(trackData?.track_artist_ids)
+          ? (trackData.track_artist_ids as any[]).map(id => String(id || '').trim()).filter(Boolean)
+          : [];
+
+        this.existingTrackProbeByPath.set(filePath, {
+          id: String(trackData?.id || _.get(trackData, '_id') || '').trim(),
+          fileMtime,
+          fileSize,
+          trackAlbumId,
+          trackArtistIds,
+          hasAudioDetails,
+          albumSourceFingerprint: String(albumExtra.source_fingerprint || '').trim(),
+          albumName: String(albumData?.album_name || '').trim(),
+          albumArtistId: String(albumData?.album_artist_id || '').trim(),
+        });
+      });
+
+      this.syncProfilingStats.probeMapEntries = this.existingTrackProbeByPath.size;
+    } catch (error) {
+      // The fast-path is an optimization — a failure to build the probe
+      // map degrades cleanly to the pre-Phase-3 per-track DB calls.
+      console.warn('buildExistingTrackProbeMap - failed, falling back to per-track DB lookups', error);
+      this.existingTrackProbeByPath.clear();
+    } finally {
+      this.syncProfilingStats.probeMapBuildMs = performance.now() - probeMapBuildStart;
+    }
   }
 
   private logSyncProfilingStats(syncDurationMs: number): void {
@@ -231,6 +384,24 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           MediaLibraryService.resetProcessedPictureCache();
           mediaLocalStore.dispatch({ type: MediaLocalStateActionType.StartSync });
           await MediaLibraryService.startMediaTrackSync(MediaLocalConstants.Provider);
+          // Phase 3 perf optimization (#23): pre-build the in-memory probe map
+          // so the per-file fast-path can do O(1) renderer-local look-ups
+          // instead of one IPC + NEDB round-trip per scanned file.
+          //
+          // We do this AFTER `startMediaTrackSync` (which sets the provider's
+          // `sync_started_at` marker) so a parallel UI edit between probe-map
+          // build and walk would still get caught by the regular fast-path
+          // fallback — `existingTrackProbeByPath` is a hint, never a source
+          // of truth.
+          //
+          // On `forceRescan` we skip the build entirely: every file will go
+          // through the full-scan path anyway, so the probe map is dead
+          // weight and would just bloat memory for no gain.
+          if (forceRescan) {
+            this.existingTrackProbeByPath.clear();
+          } else {
+            await this.buildExistingTrackProbeMap();
+          }
           const settings: IMediaLocalSettings = settingsOverride || await MediaProviderService.getMediaProviderSettings(MediaLocalConstants.Provider);
           await Promise.map(settings.library.directories, directory => this.addTracksFromDirectory(directory, {
             signal,
@@ -570,6 +741,78 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     // first check if we can simply mark it as seen; required both mtime and size for this to work
     if (!forceRescan && isNumber(file.stats?.mtime) && isNumber(file.stats?.size)) {
       const fastPathProbeStart = performance.now();
+      const fileMtime = Number(file.stats?.mtime);
+      const fileSize = Number(file.stats?.size);
+
+      // Phase 3 perf optimization (#23): in-memory fast-path. Use the
+      // pre-built `existingTrackProbeByPath` (1 IPC call at sync start)
+      // instead of one `updateMediaTrack(...)` per file (N IPC calls).
+      //
+      // This in-memory path only handles the "everything matches, no
+      // changes" case. If any of the gating predicates below trip
+      // (audio details missing, source fingerprint mismatch, grouping
+      // changed) we deliberately fall through to the original DB-based
+      // probe so the existing fallback paths stay intact and behaviour
+      // remains identical to pre-Phase-3 syncs.
+      const existingProbe = this.existingTrackProbeByPath.get(file.path);
+      if (existingProbe
+        && existingProbe.fileMtime === fileMtime
+        && existingProbe.fileSize === fileSize
+        && existingProbe.hasAudioDetails) {
+        const expectedGroupingFolder = this.getEffectiveGroupingFolder(file.path, !!settings.library.group_compilations_by_folder);
+        const expectedSourceFingerprint = CryptoService.sha256(expectedGroupingFolder);
+        const fingerprintMatches = existingProbe.albumSourceFingerprint === expectedSourceFingerprint;
+
+        let groupingMatches = true;
+        if (settings.library.group_compilations_by_folder) {
+          const parentDir = path.dirname(file.path);
+          let folderName = path.basename(parentDir);
+          if (folderName.match(/^(disc|cd)\s*\d+$/i)) {
+            const grandParentDir = path.dirname(parentDir);
+            folderName = path.basename(grandParentDir);
+          }
+          const yearMatch = folderName.match(/\s*\((\d{4})\)/);
+          if (yearMatch) {
+            folderName = folderName.replace(yearMatch[0], '');
+          }
+          groupingMatches = existingProbe.albumName === folderName;
+        }
+
+        if (fingerprintMatches && groupingMatches) {
+          // All preconditions met → bump sync_timestamp on the track row
+          // (single IPC write, the datastore's `wouldDocumentChange` will
+          // de-dupe to a no-op if `sync_timestamp` is identical) and
+          // queue the album/artist sync-mark flush. We also record the
+          // relations directly from the cached probe so the post-sync
+          // `flushPendingAlbumAndArtistSyncMarks` knows which entities
+          // belong to this track without another DB round-trip.
+          await MediaTrackService.updateMediaTrack({
+            id: existingProbe.id,
+          }, {
+            sync_timestamp: scanTimestamp,
+          });
+          if (existingProbe.trackAlbumId) {
+            this.pendingAlbumSyncIds.add(existingProbe.trackAlbumId);
+          }
+          if (existingProbe.albumArtistId) {
+            this.pendingArtistSyncIds.add(existingProbe.albumArtistId);
+          }
+          existingProbe.trackArtistIds.forEach(artistId => this.pendingArtistSyncIds.add(artistId));
+
+          this.syncProfilingStats.fastPathInMemoryHits += 1;
+          this.syncProfilingStats.filesFastSkipped += 1;
+          this.syncProfilingStats.fastPathProbeMs += performance.now() - fastPathProbeStart;
+          debug('addTrackFromFile - in-memory fast-path hit for %s (track %s), skipping DB probe', file.path, existingProbe.id);
+          return undefined;
+        }
+        // Fingerprint or grouping mismatch → record the regroup-fallback
+        // counter and fall through to the DB-based probe so the existing
+        // grouping logic gets a chance to do the heavy work.
+        if (!fingerprintMatches || !groupingMatches) {
+          this.syncProfilingStats.fastPathRegroupFallbacks += 1;
+        }
+      }
+
       const mediaTrack = await MediaTrackService.updateMediaTrack({
         provider: MediaLocalConstants.Provider,
         provider_id: mediaTrackId,
