@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.6] - 2026-05-21
+
+Stable release consolidating the 1.5.6-beta1 … 1.5.6-beta6 series.
+
+### Performance
+- **Library sync drastically faster** through a 5-phase optimization track:
+  - Phase 1: content-hash cover deduplication so identical artwork is processed only once
+  - Phase 2: DB hot-path memoization + new SQLite indexes for track/album/artist lookups
+  - Phase 3: smart re-scan via in-memory probe map (skips unchanged files instead of re-reading tags)
+  - Phase 4: Sharp worker-pool for parallel image resizing + short-hash cache key + bounded queue concurrency
+  - Phase 5: polling-loops eliminated, post-processing parallelized
+- **Startup performance**: Renderer phase ~50–80 % faster (Splash → UI in ~323 ms vs. 600–1500 ms before). Login-shell PATH resolution is now async and non-blocking (saves up to 4 s on slow shell init). Background services (`Equalizer`, `DLNA`, `BitPerfect`, `Update`) are deferred via `requestIdleCallback`.
+- **Auto-updater** initialization is delayed 5 s after the main window is shown so the first update check never blocks the critical path.
+
+### Added
+- **Library auto-sync on startup is now opt-in** with a clear toggle in Settings — users can choose to load only the indexed library on launch and trigger sync manually for noticeably faster cold starts.
+- **Sync state can be reset** from the DAP-Sync settings (e.g. after reformatting the SD card), forcing all files to be re-transferred on the next sync.
+- **DAP Sync ADB transport** with diagnostic error messages for missing adb, unauthorized device, multiple devices, timeouts, etc. Bundled adb binary is used as fallback.
+- **DAP Sync mirror-host-folder-layout** option: when active, files under `Music/` mirror the exact folder/file names of your local library; when off, Aurora builds Artist/Album/… paths from metadata.
+- **Audio-CD import** flow with Discogs metadata lookup, Discogs Dev-Key configuration, naming-template editor, FLAC export, and cached metadata reuse for already-recognized discs.
+- **Bit-Perfect output** with technical-diagnostics block (binary path, process ID, backend) and runtime status indicator.
+- **DLNA / UPnP Media Server**: Aurora now publishes the local library on the network via SSDP-discovery as a UPnP MediaServer (DMS). Diagnostic block exposes Description URL, Content URL, Stream URL and bound IP addresses.
+- **Album-cover-from-folder** modal: pick any image from an album's folder and embed it into all tracks of that album in one go.
+- **Cover-embed for FLAC** via new `scripts/embed-folder-covers-flac.sh`.
+- **Top-menu-bar sort store**: persistent sort selection across sessions and views (artists, albums, playlists).
+- **macOS Media Keys** section in Settings (macOS only) showing whether system Play/Pause/Next shortcuts are registered and whether Aurora has the Accessibility permission. Includes a deep-link button to "System Settings → Accessibility".
+- **Aurora Pulse Launcher (Android)** info section in Settings introduces the dedicated Android companion launcher (built for DAPs and music/podcast lovers): focused home screen with Now Playing, cover wall for albums/artists/playlists/podcasts, DAP-sync compatibility (including SD-card folders), built-in podcast player, customizable widgets/themes/wallpapers (portrait + landscape), focus mode, fully offline, no tracking.
+- **Updates panel**: auto-update toggle, beta-channel toggle, manual "Check / Download / Install" buttons; live status (`checking / available / downloading / downloaded / installing / error`) with download-progress percentage.
+- **What's New** card in the info column showing release notes inline with a "Mark read" button.
+- **DAP Sync progress UI**: status pill (`idle / planning / copying / cleaning / done / aborted / error`), progress bar with percentage, counters for Checked / Copied / Unchanged / Deleted, ETA, and resume hint after an interrupted sync.
+- **Settings localization**: 29 new translation keys (DAP progress meta, sync reset, DLNA UPnP description, logo alt text, full Pulse-Launcher feature list, community thanks block) across all 12 supported locales.
+- **GitHub Pages landing site** redesigned around the V-Music palette, with Aurora Green for the desktop identity, Buy-Me-A-Coffee CTA, official Google Play badge, GDPR privacy-policy page, and Google Analytics opt-in.
+- **Flathub manifest** + tar.gz build target for Linux distribution.
+
+### Changed
+- **Settings → Info column** completely rewritten: replaces the historical fork/AI-process narrative with a community-thanks block and an Aurora-Pulse-Launcher companion section tailored for DAP users. Logo and version still anchor the bottom of the column.
+- **Auto-sync toggle** in Settings is now a switch pill (was a checkbox), matching the rest of the settings UI.
+- **Update channel handling** uses a custom GitHub Releases lookup that bypasses the electron-updater channel bug, so stable installs reliably see new betas when the beta channel is enabled.
+- **macOS auto-update path** for ad-hoc-signed builds: Aurora now applies its own update flow when no developer identity is present, instead of silently failing.
+- **Service initialization** in the renderer is split into a critical path (`ThemeService`, `I18nService`) and deferred background services, each wrapped in its own try/catch so a single failing service can't block the rest.
+- **Sidebar / browser header** drag-region rules tightened so the burger menu is no longer eaten by the title-bar drag area on Windows/Linux, and window controls hide in fullscreen as per the design spec.
+
+### Fixed
+- **Player cover** now always shows the *track's own embedded artwork* and falls back to the album cover only if the track has none. Previously, mosaic/collage covers from playlist-as-hidden-album collections leaked into the player.
+- **DLNA position sync** with the Aurora Pulse Launcher (Vibe) was unreliable due to parallel SOAP snapshot calls — those are now serialized.
+- **Album edit modal** scrolls smoothly and no longer "snaps back" when clearing the genre field; the cleared value is now persisted correctly.
+- **Updater channel bug**: stable channel no longer skips beta releases when the user has opted into the beta channel.
+- **Hidden-album playlist covers** are regenerated correctly even when only one or two distinct track covers are available (previous logic could leave the playlist without any cover).
+
 ## [1.5.6-beta1] - 2026-05-16
 
 ### Performance
