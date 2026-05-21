@@ -361,8 +361,8 @@
   "settings_info_thanks_desc_1": "Aurora Pulse thrives on your feedback, bug reports and ideas. Every reply — via the issue tracker, email or Reddit — feeds straight back into our roadmap.",
   "settings_info_thanks_desc_2": "Many improvements in recent releases (library performance, DAP sync, podcast integration, equalizer profiles, UI polish) are based on concrete community input. Thank you for shaping the player together with us.",
   "settings_info_thanks_desc_3": "If you enjoy Aurora Pulse we love hearing more feedback, GitHub stars and your stories about how you experience your music.",
-  "settings_info_pulse_launcher_title": "Aurora Pulse Launcher — Android コンパニオン",
-  "settings_info_pulse_launcher_desc_1": "Aurora Pulse Launcher is a standalone Android launcher tailored for music and podcast lovers as well as DAPs (Digital Audio Players). Instead of a generic app grid, your music, podcasts and quick playback controls take center stage — combined with a focused, distraction-free home screen.",
+  "settings_info_pulse_launcher_title": "Vibe – Music & Podcast Launcher — Android コンパニオン",
+  "settings_info_pulse_launcher_desc_1": "Vibe – Music & Podcast Launcher is a standalone Android launcher tailored for music and podcast lovers as well as DAPs (Digital Audio Players). Instead of a generic app grid, your music, podcasts and quick playback controls take center stage — combined with a focused, distraction-free home screen.",
   "settings_info_pulse_launcher_desc_2": "A perfect companion to Aurora Pulse: sync your library to your Android device with DAP Sync and enjoy it on the go in a launcher built specifically for music.",
   "settings_info_pulse_launcher_features_title": "Launcher の機能",
   "settings_info_pulse_launcher_feature_home": "Music-first home screen with Now Playing, artwork, and volume / playback controls right from the lock screen",
@@ -385,5 +385,6 @@
   "button_settings_dap_reset_state": "リセット",
   "label_settings_dlna_upnp_suffix": "UPnP Media Server",
   "label_settings_dlna_upnp_description_suffix": "When enabled, it starts automatically and is published as a UPnP MediaServer (DMS) via SSDP discovery.",
-  "label_settings_app_logo_alt": "Aurora Pulse Logo"
+  "label_settings_app_logo_alt": "Aurora Pulse Logo",
+  "link_open_play_store": "Google Play ストアで開く"
 }

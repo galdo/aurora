@@ -31,6 +31,7 @@ import { mediaLocalStore, MediaLocalStateActionType } from '../../providers/medi
 import { DlnaState } from '../../services/dlna.service';
 import { BitPerfectState } from '../../services/bit-perfect.service';
 import { UpdateSettings, UpdateState, WhatsNewPayload } from '../../services/update.service';
+import { markdownToHtml } from '../../utils/markdown.utils';
 
 import styles from './settings.component.css';
 
@@ -298,7 +299,16 @@ export function SettingsPage() {
     I18nService.getString('settings_info_pulse_launcher_feature_offline'),
   ];
   const whatsNewTitle = I18nService.getString('label_settings_whats_new');
-  const whatsNewHtml = React.useMemo(() => sanitizeHtmlContent(String(whatsNewPayload?.releaseNotes || '')), [whatsNewPayload?.releaseNotes]);
+  // Release notes can arrive as markdown (most common, e.g. from GitHub Releases)
+  // or as already-rendered HTML. We always run them through our markdown
+  // converter — pure HTML passes through largely untouched — and then sanitize
+  // the result before injecting it via dangerouslySetInnerHTML.
+  const whatsNewHtml = React.useMemo(() => {
+    const raw = String(whatsNewPayload?.releaseNotes || '');
+    const looksLikeHtml = /<\s*(p|h[1-6]|ul|ol|li|strong|em|code|hr|br|a)\b/i.test(raw);
+    const html = looksLikeHtml ? raw : markdownToHtml(raw);
+    return sanitizeHtmlContent(html);
+  }, [whatsNewPayload?.releaseNotes]);
   const updateStateLabelMap: Record<UpdateState['status'], string> = {
     idle: I18nService.getString('label_settings_updates_status_idle'),
     checking: I18nService.getString('label_settings_updates_status_checking'),
@@ -1113,6 +1123,11 @@ export function SettingsPage() {
                     <li key={featureItem}>{featureItem}</li>
                   ))}
                 </ul>
+                {Links.VibeLauncherPlayStore && (
+                  <Link href={Links.VibeLauncherPlayStore} className={cx('settings-info-link')}>
+                    {I18nService.getString('link_open_play_store')}
+                  </Link>
+                )}
               </div>
             </div>
             <div className={cx('settings-info-item')}>

@@ -233,8 +233,8 @@
   "settings_info_thanks_desc_1": "Aurora Pulse lebt von eurem Feedback, euren Bug-Reports und euren Ideen. Jede Rückmeldung – ob im Issue-Tracker, per E-Mail oder über Reddit – fließt direkt in die Weiterentwicklung ein.",
   "settings_info_thanks_desc_2": "Viele Verbesserungen der letzten Releases (Bibliotheks-Performance, DAP-Sync, Podcast-Integration, Equalizer-Profile, UI-Feinschliff) basieren auf konkreten Hinweisen aus der Community. Danke, dass ihr den Player so engagiert mitgestaltet.",
   "settings_info_thanks_desc_3": "Wenn euch Aurora Pulse gefällt, freuen wir uns über weiteres Feedback, Sterne auf GitHub und eure Geschichten, wie ihr eure Musik erlebt.",
-  "settings_info_pulse_launcher_title": "Aurora Pulse Launcher – der Companion für Android",
-  "settings_info_pulse_launcher_desc_1": "Aurora Pulse Launcher ist ein eigenständiger Android-Launcher, optimiert für Musik- und Podcast-Fans sowie für DAPs (Digital Audio Player). Statt klassischer Apps stehen deine Musik, deine Podcasts und schneller Wiedergabezugriff im Mittelpunkt – kombiniert mit einem ablenkungsarmen, fokussierten Home-Screen.",
+  "settings_info_pulse_launcher_title": "Vibe – Music & Podcast Launcher – der Companion für Android",
+  "settings_info_pulse_launcher_desc_1": "Vibe – Music & Podcast Launcher ist ein eigenständiger Android-Launcher, optimiert für Musik- und Podcast-Fans sowie für DAPs (Digital Audio Player). Statt klassischer Apps stehen deine Musik, deine Podcasts und schneller Wiedergabezugriff im Mittelpunkt – kombiniert mit einem ablenkungsarmen, fokussierten Home-Screen.",
   "settings_info_pulse_launcher_desc_2": "Perfekt als Begleiter zu Aurora Pulse: synchronisiere deine Bibliothek per DAP-Sync auf dein Android-Gerät und erlebe sie unterwegs in einem Launcher, der speziell für Musik gemacht ist.",
   "settings_info_pulse_launcher_features_title": "Was der Launcher mitbringt",
   "settings_info_pulse_launcher_feature_home": "Musik-zentrierter Home-Screen mit „Now Playing“, Cover, Lautstärke- und Wiedergabesteuerung direkt vom Sperrbildschirm",
@@ -395,5 +395,6 @@
   "label_section_navigation": "Navigation",
   "label_section_sort": "Sortierung",
   "tooltip_sort_ascending": "Aufsteigend",
-  "tooltip_sort_descending": "Absteigend"
+  "tooltip_sort_descending": "Absteigend",
+  "link_open_play_store": "Im Google Play Store öffnen"
 }
