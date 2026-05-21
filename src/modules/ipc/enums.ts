@@ -19,6 +19,7 @@ export enum IPCCommChannel {
   FSSelectFile = 'fs:select_file',
   FSReadDirectoryStream = 'fs:read_directory_stream',
   FSReadFile = 'fs:read_file',
+  FSShowItemInFolder = 'fs:show_item_in_folder',
   // datastore (ds)
   DSCount = 'ds:count',
   DSRegisterDatastore = 'ds:register_datastore',
@@ -42,6 +43,8 @@ export enum IPCCommChannel {
   DeviceGetDiscogsRelease = 'device:get_discogs_release',
   DeviceImportAudioCd = 'device:import_audio_cd',
   DeviceWriteFlacMetadata = 'device:write_flac_metadata',
+  DeviceFindAlbumImages = 'device:find_album_images',
+  DeviceEmbedCoverInTracks = 'device:embed_cover_in_tracks',
 }
 
 export enum IPCRendererCommChannel {

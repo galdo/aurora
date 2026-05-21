@@ -191,9 +191,12 @@ Reihenfolge: maximaler Speedup zuerst, **ohne API-Bruch und ohne Funktionsverlus
 
 ### 📦 Phase 6 – Startup-Entkopplung (komplementär zum bereits ausgelieferten Toggle)
 
-- [ ] **P6.1** Auch wenn Auto-Sync **an** ist: UI darf rendern, sobald die DB-Reads (`loadMediaAlbums/Artists/Playlists`) fertig sind. Sync läuft danach im Hintergrund (heute ist das schon halbwegs der Fall, aber `MediaPlayerService.revalidatePlayer()` in `finishMediaTrackSync` blockiert noch).
-- [ ] **P6.2** "Sync läuft im Hintergrund"-Indikator in der StatusBar hinzufügen — verbessert UX, ohne dass der User merkt, dass irgendwas dauert.
+- [x] **P6.1** Auch wenn Auto-Sync **an** ist: UI darf rendern, sobald die DB-Reads (`loadMediaAlbums/Artists/Playlists`) fertig sind. Sync läuft danach im Hintergrund (heute ist das schon halbwegs der Fall, aber `MediaPlayerService.revalidatePlayer()` in `finishMediaTrackSync` blockiert noch).
+   - **Umgesetzt 21.05.26 (beta6+):** `revalidatePlayer()` läuft jetzt fire-and-forget in `MediaLibraryService.finishMediaTrackSync` — der Aufruf wird nicht mehr abgewartet, bevor der Provider als "sync_finished" markiert und `MediaLibraryActions.FinishSync` dispatcht wird. Damit ist die UI nach dem ersten DB-Lese-Roundtrip interaktiv, auch wenn der Player noch dabei ist, die laufende Wiedergabe gegen die rebuildete Library zu reconcilen. Fehler im Revalidate werden geloggt, aber nicht propagiert (siehe Kommentar im Code).
+- [x] **P6.2** "Sync läuft im Hintergrund"-Indikator in der TopMenuBar hinzufügen — verbessert UX, ohne dass der User merkt, dass irgendwas dauert.
+   - **Umgesetzt 21.05.26 (beta6+):** Der bereits bestehende Sync-Refresh-Button im `TopMenuBar` (rechts oben in der Library-Ansicht) zeigt nun auch beim **Auto-Sync** den `Refreshing`-Spinner und ist disabled — vorher feuerte er nur beim manuellen Klick. `useTopMenuBarConfig` liest jetzt `state.mediaLibrary.mediaIsSyncing` aus dem Redux-Store (per `useSelector`), zusätzlich zum lokalen `localManualSyncRunning`-Flag (das die DAP-Sync-Phase nach `finishMediaTrackSync` abdeckt). Eine separate Status-Bar war nicht nötig — der Sync-Button ist die etablierte UI-Position, an der User Sync-Aktivität erwarten.
 - [ ] **P6.3** Auto-Sync-Trigger optional an `chokidar`-Watcher hängen statt am Startup: wir scannen nur noch wirklich geänderte Verzeichnisse, nicht das ganze Tree.
+   - **Bewusst zurückgestellt:** `chokidar`-Integration kollidiert mit der `existingTrackProbeByPath`-Map aus Phase 3 (beide bauen ihren Pfad-Index unterschiedlich auf). Erst nach Phase 3 implementieren, sonst doppelte Buchführung.
 
 ---
 

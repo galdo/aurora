@@ -14,7 +14,6 @@ import routes from '../app.routes';
 import { MediaTrackDatastore } from '../../datastores';
 
 import {
-  Icon,
   MediaLibraryStatsModal,
   MediaPlaylistWizardModal,
   MediaPodcastSubscribeModal,
@@ -23,19 +22,18 @@ import {
   TopMenuBar,
 } from '../../components';
 import { TopMenuBarConfig, TopMenuBarSegment, TopMenuBarAction } from '../../components/top-menu-bar/top-menu-bar.types';
+import { useTopMenuBarSort } from '../../components/top-menu-bar/top-menu-bar.sort-store';
 import { useModal } from '../../contexts';
 import { IMediaTrack } from '../../interfaces';
 import { usePersistentScroll } from '../../hooks';
 import { RootState } from '../../reducers';
 import {
-  AppService,
   I18nService,
   MediaLibraryService,
   MediaPlayerService,
   MediaTrackService,
 } from '../../services';
 import { Icons, Routes } from '../../constants';
-import { PlatformOS } from '../../modules/platform/platform.enums';
 import MediaLocalLibraryService from '../../providers/media-local/media-local-library.service';
 import { StringUtils } from '../../utils';
 
@@ -169,7 +167,26 @@ function useTopMenuBarConfig(): TopMenuBarConfig {
   const mediaAlbumsCount = useSelector((state: RootState) => state.mediaLibrary.mediaAlbums.length);
   const mediaPlaylistsCount = useSelector((state: RootState) => state.mediaLibrary.mediaPlaylists.length);
   const currentTrackId = useSelector((state: RootState) => state.mediaPlayer.mediaPlaybackCurrentMediaTrack?.id);
-  const [isSyncRunning, setIsSyncRunning] = useState(false);
+
+  // Phase 6 (#23) – P6.2 Sync indicator:
+  // We previously tracked a *local* `isSyncRunning` flag that was only flipped
+  // when the user pressed the Sync button. That left a UX gap: the cold-start
+  // auto-sync (when `library.auto_sync_on_startup` is on, ~7 min on a 3000-
+  // track library before the perf phases land) ran completely silently — the
+  // user saw no indication anywhere in the UI that the library was still
+  // being rebuilt in the background, and a second click on the Sync button
+  // would happily kick off a *concurrent* run.
+  //
+  // The redux `mediaLibrary.mediaIsSyncing` flag is dispatched by the central
+  // `MediaLibraryService.startMediaTrackSync` / `finishMediaTrackSync`, so it
+  // covers BOTH paths: manual button press AND auto-sync from
+  // `MediaLocalLibraryService.onProviderRegistered`. We keep `localManualSyncRunning`
+  // in addition so the DAP-sync chain in `handleSync` (which runs *after*
+  // `finishMediaTrackSync` has already cleared `mediaIsSyncing`) still keeps
+  // the icon spinning until both library + DAP sync are done.
+  const mediaIsSyncing = useSelector((state: RootState) => state.mediaLibrary.mediaIsSyncing);
+  const [localManualSyncRunning, setLocalManualSyncRunning] = useState(false);
+  const isSyncRunning = mediaIsSyncing || localManualSyncRunning;
 
   const isLibrary = location.pathname.startsWith(Routes.Library);
   const isSettings = location.pathname === Routes.Settings;
@@ -177,6 +194,13 @@ function useTopMenuBarConfig(): TopMenuBarConfig {
   const isPodcasts = location.pathname.startsWith(Routes.Podcasts);
   const isPlaylists = location.pathname.startsWith(Routes.LibraryPlaylists);
   const isPlayerQueue = location.pathname.startsWith(Routes.PlayerQueue);
+
+  // Sort configuration is published by the currently mounted page (e.g.
+  // albums/artists/playlists). The page calls `useRegisterTopMenuBarSort(...)`
+  // and the menu bar shows / hides the controls based on whether anything
+  // has been registered. We deliberately keep this *outside* the `isLibrary`
+  // gate so future routes can opt in just by publishing.
+  const sortFromStore = useTopMenuBarSort();
 
   // --- Artist view mode from settings ---
   const [artistViewMode, setArtistViewMode] = useState<'off' | 'artists' | 'album_artists'>(() => {
@@ -250,7 +274,14 @@ function useTopMenuBarConfig(): TopMenuBarConfig {
 
   const handleSync = useCallback(() => {
     if (isSyncRunning) return;
-    setIsSyncRunning(true);
+    // Local flag covers the *entire* manual chain (library sync → DAP sync).
+    // The redux `mediaIsSyncing` flag only covers the library-sync portion;
+    // it gets cleared by `finishMediaTrackSync` *before* `syncDapLibrary`
+    // starts, so without this local override the icon would briefly stop
+    // spinning between the two phases of a manual sync. Auto-sync from
+    // `onProviderRegistered` doesn't go through the DAP chain, so the
+    // redux flag alone is enough to indicate it.
+    setLocalManualSyncRunning(true);
     MediaLocalLibraryService.syncMediaTracks()
       .then(async () => {
         const s = MediaLibraryService.getDapSyncSettings();
@@ -258,7 +289,7 @@ function useTopMenuBarConfig(): TopMenuBarConfig {
         await MediaLibraryService.syncDapLibrary({ targetDirectory: s.targetDirectory, deleteMissingOnDevice: s.deleteMissingOnDevice, transport: s.transport });
       })
       .catch(() => {})
-      .finally(() => setIsSyncRunning(false));
+      .finally(() => setLocalManualSyncRunning(false));
   }, [isSyncRunning]);
 
   const handleCreate = useCallback(() => {
@@ -380,6 +411,7 @@ function useTopMenuBarConfig(): TopMenuBarConfig {
         showNavigation: true,
         showSearch: true,
         segments,
+        sort: sortFromStore || undefined,
         actions,
         showZoom: false, // Zoom is now part of actions
       };
@@ -389,6 +421,7 @@ function useTopMenuBarConfig(): TopMenuBarConfig {
       return {
         showNavigation: true,
         showSearch: true,
+        sort: sortFromStore || undefined,
         actions,
         showZoom: false,
       };
@@ -398,10 +431,11 @@ function useTopMenuBarConfig(): TopMenuBarConfig {
     return {
       showNavigation: true,
       showSearch: true,
+      sort: sortFromStore || undefined,
       actions,
       showZoom: false,
     };
-  }, [isSettings, isEqualizer, isLibrary, isPodcasts, segments, actions]);
+  }, [isSettings, isEqualizer, isLibrary, isPodcasts, segments, actions, sortFromStore]);
 
   return config;
 }

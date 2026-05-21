@@ -483,7 +483,32 @@ export class MediaLibraryService {
     // important - this will only delete it from store, state still needs to be managed
     const mediaSyncStartTimestamp = mediaProviderData.sync_started_at;
     await this.deleteUnsyncMedia(mediaProviderIdentifier, mediaSyncStartTimestamp);
-    await MediaPlayerService.revalidatePlayer();
+
+    // Phase 6 (#23) – P6.1 UI-decoupling:
+    // `revalidatePlayer()` reconciles the now-playing queue and persisted
+    // playback state against the freshly-rebuilt library. It does *not*
+    // need to be awaited before we mark the sync as finished — its only
+    // observable side-effects are:
+    //   • dispatching MediaPlayerActions.* into the redux store, and
+    //   • restarting/pausing the current track if its underlying file
+    //     just got deleted.
+    // Both of those are safe to happen *after* `MediaLibraryActions.FinishSync`
+    // has already toggled `mediaIsSyncing → false` and after the album/artist/
+    // playlist views have re-rendered with the new data. By kicking it off
+    // fire-and-forget here we shave the synchronous tail of `finishMediaTrackSync`
+    // off the time-to-interactive of the very first cold-start auto-sync,
+    // which is exactly the gap users complained about (3–7 min on a 3000-track
+    // library, see docs/perf/library-sync-optimization-plan.md §1).
+    //
+    // Errors are swallowed deliberately: a player-revalidation failure must
+    // not bubble up and abort the sync-finished bookkeeping (provider mark,
+    // FinishSync dispatch). Logged for diagnostics only.
+    MediaPlayerService.revalidatePlayer().catch((revalidationError) => {
+      console.warn(
+        'MediaLibraryService.finishMediaTrackSync - revalidatePlayer failed (non-fatal) - %o',
+        revalidationError,
+      );
+    });
 
     // update provider
     const mediaSyncEndTimestamp = Date.now();

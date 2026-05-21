@@ -10,6 +10,7 @@ export * from './loader/loader-circle.component';
 export * from './loader/loader-circle-progress.component';
 export * from './media-albums/media-albums.component';
 export * from './media-album-edit-modal/media-album-edit-modal.component';
+export * from './media-album-cover-embed-modal/media-album-cover-embed-modal.component';
 export * from './media-artists/media-artists.component';
 export * from './media-collection-actions/media-collection-actions.component';
 export * from './media-collection-item/media-collection-item.component';

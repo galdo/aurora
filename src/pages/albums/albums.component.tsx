@@ -10,10 +10,8 @@ import {
   clampCollectionCoverSize,
 } from '../../utils/collection-cover-size.utils';
 
-import {
-  CollectionViewControls,
-  MediaAlbums,
-} from '../../components';
+import { MediaAlbums } from '../../components';
+import { useRegisterTopMenuBarSort } from '../../components/top-menu-bar/top-menu-bar.sort-store';
 import { MediaTrackDatastore } from '../../datastores';
 import { RootState } from '../../reducers';
 import { I18nService, MediaAlbumService } from '../../services';
@@ -207,26 +205,32 @@ export function AlbumsPage() {
     settings.sortDirection,
   ]);
 
+  // Publish sort controls into the global TopMenuBar. The config is memoized
+  // against the settings + handlers so we don't churn the store on every
+  // re-render (which would re-broadcast and potentially cause subscribers to
+  // recompute unnecessarily). The handlers themselves close over `settings`,
+  // so we have to allow them to be recreated when sort state changes.
+  const topMenuBarSortConfig = useMemo(() => ({
+    options: [
+      { value: 'artist', label: I18nService.getString('label_album_sort_artist') },
+      { value: 'album', label: I18nService.getString('label_album_sort_album') },
+      { value: 'year', label: I18nService.getString('label_album_sort_year') },
+      { value: 'genre', label: I18nService.getString('label_genre') },
+      { value: 'added', label: I18nService.getString('label_album_sort_added') },
+    ],
+    currentValue: settings.sortBy,
+    direction: settings.sortDirection,
+    onSortChange: (value: string) => updateSettings({ sortBy: value as SortOption }),
+    onDirectionToggle: () => updateSettings({
+      sortDirection: settings.sortDirection === 'asc' ? 'desc' : 'asc',
+    }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [settings.sortBy, settings.sortDirection]);
+
+  useRegisterTopMenuBarSort(topMenuBarSortConfig);
+
   return (
     <div className="container-fluid">
-      <CollectionViewControls
-        coverSize={settings.coverSize}
-        onCoverSizeChange={nextValue => updateSettings({ coverSize: nextValue })}
-        sortBy={settings.sortBy}
-        sortDirection={settings.sortDirection}
-        onSortByChange={value => updateSettings({ sortBy: value as SortOption })}
-        onSortDirectionToggle={() => updateSettings({
-          sortDirection: settings.sortDirection === 'asc' ? 'desc' : 'asc',
-        })}
-        sortToggleTooltip={I18nService.getString('tooltip_album_sort_toggle')}
-        sortOptions={[
-          { value: 'artist', label: I18nService.getString('label_album_sort_artist') },
-          { value: 'album', label: I18nService.getString('label_album_sort_album') },
-          { value: 'year', label: I18nService.getString('label_album_sort_year') },
-          { value: 'genre', label: I18nService.getString('label_genre') },
-          { value: 'added', label: I18nService.getString('label_album_sort_added') },
-        ]}
-      />
       <MediaAlbums mediaAlbums={sortedAlbums} coverSize={settings.coverSize} hideArtist={false}/>
     </div>
   );

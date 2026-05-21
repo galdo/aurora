@@ -1,0 +1,117 @@
+.cover-embed-modal-body {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.cover-embed-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-dark-color);
+  opacity: 0.7;
+}
+
+.cover-embed-loading {
+  padding: 32px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cover-embed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 4px;
+}
+
+.cover-embed-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 2px solid var(--selectable-outline-color);
+  border-radius: 10px;
+  background-color: var(--selectable-bg-color);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 120ms ease, transform 120ms ease;
+  padding: 0;
+  text-align: left;
+}
+
+.cover-embed-tile:hover {
+  border-color: var(--accent-color);
+  transform: translateY(-1px);
+}
+
+.cover-embed-tile-selected {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px var(--accent-color-translucent, rgba(46, 204, 113, 0.4));
+}
+
+.cover-embed-thumbnail-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background-color: rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.cover-embed-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover-embed-thumbnail-placeholder {
+  font-size: 11px;
+  color: var(--text-dark-color);
+  opacity: 0.6;
+  padding: 8px;
+  text-align: center;
+}
+
+.cover-embed-tile-meta {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.cover-embed-tile-name {
+  font-weight: 600;
+  color: var(--text-light-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cover-embed-tile-detail {
+  color: var(--text-dark-color);
+  font-size: 11px;
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cover-embed-status {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background-color: rgba(0, 0, 0, 0.04);
+  font-size: 13px;
+  color: var(--text-light-color);
+}
+
+.cover-embed-status-error {
+  background-color: rgba(220, 53, 69, 0.10);
+  color: var(--danger-color, #c0392b);
+}
+
+.cover-embed-status-success {
+  background-color: rgba(46, 204, 113, 0.10);
+}

@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { dialog } from 'electron';
+import { dialog, shell } from 'electron';
 import { Entry, walkStream } from '@nodelib/fs.walk';
 import path from 'path';
 import { isEmpty } from 'lodash';
@@ -34,6 +34,7 @@ export class FileSystemModule implements IAppModule {
     IPCMain.addSyncMessageHandler(IPCCommChannel.FSReadFile, this.readFile, this);
     IPCMain.addSyncMessageHandler(IPCCommChannel.FSSelectDirectory, this.selectDirectory, this);
     IPCMain.addSyncMessageHandler(IPCCommChannel.FSSelectFile, this.selectFile, this);
+    IPCMain.addSyncMessageHandler(IPCCommChannel.FSShowItemInFolder, this.showItemInFolder, this);
   }
 
   private readAsset(assetPath: string[], options?: FSReadAssetOptions) {
@@ -168,6 +169,54 @@ export class FileSystemModule implements IAppModule {
     });
 
     return selection?.[0];
+  }
+
+  /**
+   * Reveals the given file or folder in the operating system's file manager
+   * (Finder on macOS, Explorer on Windows, default file manager on Linux).
+   *
+   * If `targetPath` points to a file, the file will be highlighted within its
+   * containing folder. If it points to a directory, the directory itself will
+   * be opened. Symlinks/missing paths are handled gracefully.
+   *
+   * @param targetPath absolute filesystem path to a file or directory
+   * @returns true if the OS was instructed to reveal the path, false otherwise
+   */
+  private showItemInFolder(targetPath: string): boolean {
+    if (!targetPath || typeof targetPath !== 'string') {
+      debug('showItemInFolder - invalid path provided');
+      return false;
+    }
+
+    try {
+      const resolvedPath = path.resolve(targetPath);
+
+      if (!fs.existsSync(resolvedPath)) {
+        debug('showItemInFolder - path does not exist - %s', resolvedPath);
+        return false;
+      }
+
+      const stats = fs.statSync(resolvedPath);
+      if (stats.isDirectory()) {
+        // for directories, open the directory itself in the file manager
+        // (showItemInFolder would otherwise highlight the directory in its parent)
+        // openPath returns an empty string on success, error message on failure
+        shell.openPath(resolvedPath).then((errorMessage) => {
+          if (errorMessage) {
+            debug('showItemInFolder - openPath error - %s', errorMessage);
+          }
+        });
+      } else {
+        // for files, highlight the file inside its parent folder
+        shell.showItemInFolder(resolvedPath);
+      }
+
+      return true;
+    } catch (err) {
+      debug('showItemInFolder - encountered error - %o', err);
+      console.error('FileSystemModule.showItemInFolder error:', err);
+      return false;
+    }
   }
 
   private isDirectoryAccessible(directory: string): boolean {
