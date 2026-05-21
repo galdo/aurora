@@ -39,44 +39,24 @@ jobs:
           set -euo pipefail
           VERSION="${{ github.event.inputs.version }}"
           VERSION="${VERSION#v}"
-
-          # ------------------------------------------------------------------
-          # Aurora version-format guard.
-          #
-          # The repo standard is `vX.Y.Z` for stables and `vX.Y.Z-betaN`
-          # (no dot between identifier and number) for prereleases.
-          # `npm version` defaults to `X.Y.Z-beta.N` (with a dot) which:
-          #   1. breaks our naming convention for tags / asset filenames,
-          #   2. triggers the electron-updater channel bug we worked around
-          #      in `runCustomUpdateCheck()` — see commit message of
-          #      "fix(updater): custom GitHub Releases lookup ..." for
-          #      background.
-          # We refuse to publish anything that uses the dotted form so that
-          # bumping always requires the correct format end-to-end.
-          # ------------------------------------------------------------------
           if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            : # plain semver release, fine
+            : # plain semver release
           elif [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)[0-9]+$ ]]; then
             : # accepted prerelease form (no dot)
           else
-            echo "::error::Invalid version format '$VERSION'. Expected 'X.Y.Z' or 'X.Y.Z-betaN' (no dot before the number, e.g. 1.5.6-beta5)."
+            echo "::error::Invalid version format '$VERSION'. Expected 'X.Y.Z' or 'X.Y.Z-betaN' (no dot before the number)."
             exit 1
           fi
-
-          # Ensure the package.json files match the requested release exactly.
-          # This catches the case where someone forgot to bump them (or where
-          # `npm version` left the dotted `beta.N` form behind).
           ROOT_VERSION=$(node -p "require('./package.json').version")
           SRC_VERSION=$(node -p "require('./src/package.json').version")
           if [[ "$ROOT_VERSION" != "$VERSION" ]]; then
-            echo "::error::package.json version is '$ROOT_VERSION' but workflow was triggered with '$VERSION'. Bump package.json before tagging."
+            echo "::error::package.json version is '$ROOT_VERSION' but workflow was triggered with '$VERSION'."
             exit 1
           fi
           if [[ "$SRC_VERSION" != "$VERSION" ]]; then
-            echo "::error::src/package.json version is '$SRC_VERSION' but workflow was triggered with '$VERSION'. Bump src/package.json before tagging."
+            echo "::error::src/package.json version is '$SRC_VERSION' but workflow was triggered with '$VERSION'."
             exit 1
           fi
-
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           if [[ "$VERSION" == *-* ]]; then
@@ -85,12 +65,16 @@ jobs:
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
 
+  # All build jobs depend ONLY on `meta` so they run fully in parallel.
+  # macOS arm64 + x64 also run in parallel inside the matrix.
+  # Wall-clock ≈ Max(macOS, Windows, Linux) instead of Sum().
+
   build_macos:
     name: Build macOS (${{ matrix.arch }})
     needs: meta
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 2
       matrix:
         include:
           - runner: macos-latest
@@ -100,33 +84,42 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           submodules: false
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
           cache: 'yarn'
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
+      - name: Cache node_modules + electron + mpv
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            src/node_modules
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/.electron-gyp
+            assets/bin/mpv
+          key: ${{ runner.os }}-${{ matrix.arch }}-deps-${{ hashFiles('yarn.lock', 'src/yarn.lock', 'package.json', 'src/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-deps-
+
       - name: Remove npm lockfiles
         shell: bash
-        run: |
-          rm -f package-lock.json src/package-lock.json
+        run: rm -f package-lock.json src/package-lock.json
 
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
-          # Yarn may still fetch git+ssh from lockfile; git insteadOf is not always applied → keep lockfile on git+https.
           if grep -q 'git+ssh://git@github.com' yarn.lock; then
-            echo '::error::yarn.lock uses git+ssh for github.com — replace resolved URL with git+https:// (see @electron/node-gyp).'
+            echo '::error::yarn.lock uses git+ssh for github.com — replace resolved URL with git+https://'
             grep -n 'git+ssh://' yarn.lock || true
             exit 1
           fi
@@ -136,26 +129,22 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: |
-          yarn install --non-interactive --silent
+        run: yarn install --non-interactive --silent
 
       - name: Sync app version
         shell: bash
-        run: |
-          npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Build macOS app
         shell: bash
         env:
           ARCH: ${{ matrix.arch }}
-          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           npm run "prepare:sharp:mac:${ARCH}"
           npm run "prepare:mpv:mac:${ARCH}"
           npm run package -- --mac --${ARCH} --c.mac.identity=null
 
-      - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
           path: |
@@ -168,39 +157,45 @@ jobs:
 
   build_windows:
     name: Build Windows
-    needs:
-      - meta
-      - build_macos
+    needs: meta
     runs-on: windows-latest
     timeout-minutes: 75
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           submodules: false
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
           cache: 'yarn'
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
+      - name: Cache node_modules + electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            src/node_modules
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+            ~/.electron-gyp
+          key: ${{ runner.os }}-deps-${{ hashFiles('yarn.lock', 'src/yarn.lock', 'package.json', 'src/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-
+
       - name: Remove npm lockfiles
         shell: bash
-        run: |
-          rm -f package-lock.json src/package-lock.json
+        run: rm -f package-lock.json src/package-lock.json
 
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
-          # Yarn may still fetch git+ssh from lockfile; git insteadOf is not always applied → keep lockfile on git+https.
           if grep -q 'git+ssh://git@github.com' yarn.lock; then
-            echo '::error::yarn.lock uses git+ssh for github.com — replace resolved URL with git+https:// (see @electron/node-gyp).'
+            echo '::error::yarn.lock uses git+ssh for github.com'
             grep -n 'git+ssh://' yarn.lock || true
             exit 1
           fi
@@ -210,21 +205,17 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: |
-          yarn install --non-interactive --silent
+        run: yarn install --non-interactive --silent
 
       - name: Sync app version
         shell: bash
-        run: |
-          npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Package Windows app
         shell: bash
-        run: |
-          yarn package:win
+        run: yarn package:win
 
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: |
@@ -236,25 +227,20 @@ jobs:
 
   build_linux_flatpak:
     name: Build Linux Flatpak
-    needs:
-      - meta
-      - build_windows
+    needs: meta
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           submodules: false
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
           cache: 'yarn'
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -264,10 +250,19 @@ jobs:
           sudo apt-get install -y flatpak flatpak-builder
 
       - name: Configure flathub remote
-        run: |
-          sudo flatpak --system remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+        run: sudo flatpak --system remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Cache flatpak system runtimes
+        id: flatpak-cache
+        uses: actions/cache@v4
+        with:
+          path: /var/lib/flatpak
+          key: flatpak-runtimes-23.08-v1
+          restore-keys: |
+            flatpak-runtimes-23.08-
 
       - name: Preinstall flatpak runtime dependencies
+        if: steps.flatpak-cache.outputs.cache-hit != 'true'
         run: |
           sudo flatpak --system install -y flathub org.freedesktop.Platform//23.08
           sudo flatpak --system install -y flathub org.freedesktop.Sdk//23.08
@@ -276,19 +271,30 @@ jobs:
       - name: Verify flatpak runtime availability
         run: |
           flatpak remotes --system
-          flatpak list --system | grep -E 'org.freedesktop.Platform|org.freedesktop.Sdk|org.electronjs.Electron2.BaseApp'
+          flatpak list --system | grep -E 'org.freedesktop.Platform|org.freedesktop.Sdk|org.electronjs.Electron2.BaseApp' || (echo "::error::Required flatpak runtimes missing"; exit 1)
+
+      - name: Cache node_modules + electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            src/node_modules
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/.electron-gyp
+          key: ${{ runner.os }}-deps-${{ hashFiles('yarn.lock', 'src/yarn.lock', 'package.json', 'src/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-
 
       - name: Remove npm lockfiles
         shell: bash
-        run: |
-          rm -f package-lock.json src/package-lock.json
+        run: rm -f package-lock.json src/package-lock.json
 
       - name: Force GitHub HTTPS for git dependencies
         shell: bash
         run: |
-          # Yarn may still fetch git+ssh from lockfile; git insteadOf is not always applied → keep lockfile on git+https.
           if grep -q 'git+ssh://git@github.com' yarn.lock; then
-            echo '::error::yarn.lock uses git+ssh for github.com — replace resolved URL with git+https:// (see @electron/node-gyp).'
+            echo '::error::yarn.lock uses git+ssh for github.com'
             grep -n 'git+ssh://' yarn.lock || true
             exit 1
           fi
@@ -298,21 +304,17 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: |
-          yarn install --non-interactive --silent
+        run: yarn install --non-interactive --silent
 
       - name: Sync app version
         shell: bash
-        run: |
-          npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
+        run: npm version "${{ needs.meta.outputs.version }}" --no-git-tag-version --allow-same-version
 
       - name: Build Linux Flatpak
         shell: bash
-        run: |
-          yarn package:linux:flatpak:x64
+        run: yarn package:linux:flatpak:x64
 
-      - name: Upload Linux Flatpak artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-flatpak
           path: release/*.flatpak
@@ -329,8 +331,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           submodules: false
 
