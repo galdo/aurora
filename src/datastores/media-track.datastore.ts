@@ -23,6 +23,29 @@ class MediaTrackDatastore {
         field: 'track_name',
       }, {
         field: 'track_name_normalized',
+      },
+      // Phase 2 perf optimization (#23): index hot lookup paths used during
+      // sync. Without these, NEDB scans every track for every probe — at
+      // 3 000 tracks that's an O(n²) blow-up on cold + re-scan paths.
+      //
+      //   • `track_album_id` — joined on every album-level operation
+      //     (resolveMediaAlbumTracks, processCompilationAlbumCovers,
+      //      consolidateCompilationAlbums, getMediaAlbumTracks).
+      //   • `extra.file_path` — used by the new bulk pre-fetch in the
+      //     library-sync (Phase 3) and by per-track recovery paths.
+      //   • `extra.file_source` — used by the compilation consolidation pass
+      //     (`tracksByDir = _.groupBy(tracks, t => t.extra?.file_source)`).
+      //
+      // NOTE on existing DBs: NEDB lazily builds missing indexes on the
+      // FIRST load after upgrade. That single boot pays the one-time O(n)
+      // index build, every subsequent operation is O(log n). No migration
+      // step needed in the renderer code.
+      {
+        field: 'track_album_id',
+      }, {
+        field: 'extra.file_path',
+      }, {
+        field: 'extra.file_source',
       }],
     });
   }
