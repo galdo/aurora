@@ -112,11 +112,17 @@ export function MediaPlayerInfo({ onShowAlbum }: { onShowAlbum: (albumId: string
   } else if (mediaPlaybackState === 'media/playback/paused') {
     playbackStateLabel = 'Paused';
   }
+  // Player should always show the track's own embedded cover when available.
+  // Only fall back to the album cover if the track has no embedded cover.
+  // This avoids showing playlist/collection mosaic covers that get attached to
+  // hidden-album playlists via `track_album.album_cover_picture`.
+  const playerCoverPicture = currentMediaTrack?.track_cover_picture
+    || currentMediaTrack?.track_album?.album_cover_picture;
   return (
     <Row className={cx('media-player-info-container')}>
       <Col className={cx('col-12', 'media-player-info-column')}>
         <MediaCoverPicture
-          mediaPicture={currentMediaTrack?.track_album?.album_cover_picture}
+          mediaPicture={playerCoverPicture}
           mediaPictureAltText={currentMediaTrack?.track_album?.album_name || 'No track selected'}
           mediaCoverPlaceholderIcon={Icons.TrackPlaceholder}
           className={cx('media-player-track-cover-image')}

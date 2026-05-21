@@ -23,6 +23,17 @@ class MediaAlbumDatastore {
         field: 'album_name',
       }, {
         field: 'album_name_normalized',
+      },
+      // Phase 2 perf optimization (#23): `extra.source_fingerprint` is the
+      // dominant lookup key during sync — every track that ends up in a
+      // pre-existing album triggers a `findMediaAlbum` over this nested
+      // path (see `media-library.service.ts → checkAndInsertMediaAlbum`,
+      // `resolveMediaAlbumTracks`, `consolidateCompilationAlbums`).
+      // Without an index that's an O(albums) scan per track ≈ O(n²) on
+      // a 3 000-track / 300-album library. NEDB lazily builds the index
+      // on first load after upgrade, no migration needed.
+      {
+        field: 'extra.source_fingerprint',
       }],
     });
   }

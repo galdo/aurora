@@ -62,6 +62,8 @@ export function MediaAlbums(props: {
           MediaCollectionContextMenuItem.AddToQueue,
           MediaCollectionContextMenuItem.AddToPlaylist,
           MediaCollectionContextMenuItem.Separator,
+          MediaCollectionContextMenuItem.OpenInFileManager,
+          MediaCollectionContextMenuItem.EmbedCoverFromFolder,
           MediaCollectionContextMenuItem.ToggleHidden,
         ]}
       />

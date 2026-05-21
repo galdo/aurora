@@ -110,6 +110,72 @@ export interface IDapSyncProgressSnapshot {
 export class MediaLibraryService {
   static readonly mediaPictureScaleWidth = 500;
   static readonly mediaPictureScaleHeight = 500;
+
+  /**
+   * Renderer-side cache that maps a content-hash of an embedded cover buffer
+   * (short-hash over first 8 KB + length, see `computeCoverShortHash`) to the
+   * resolved cache path returned by the main-process Sharp pipeline.
+   *
+   * Why content-hash and not album-id?
+   *   • a *real* album / compilation embeds the SAME picture into every track
+   *     → hash is identical → first track triggers the IPC + Sharp roundtrip,
+   *     the remaining 12–20 tracks of that album hit the cache (~µs each).
+   *   • a "loose" library folder (single tracks dragged together, or
+   *     compilation-by-folder where every track has its own art) has DIFFERENT
+   *     picture buffers → different hashes → no false dedup; every track keeps
+   *     its individual cover, which the Album-View 4-cover mosaic and the
+   *     Track-List per-row covers depend on.
+   *
+   * The cache stores the in-flight Promise so concurrent callers (the
+   * sync queue runs ~10 tracks in parallel) for the same buffer share one
+   * IPC roundtrip instead of racing N parallel sharp jobs through.
+   *
+   * The cache is intentionally process-scoped (cleared on app reload) and
+   * memory-only — the resulting JPG file on disk is the actual persistent
+   * cache, owned by `SharpModule`.
+   */
+  private static readonly coverCachePathByContentHash = new Map<string, Promise<string | undefined>>();
+  /**
+   * Soft cap — purely defensive. With 3000 tracks in ~300 albums the typical
+   * upper bound of *unique* cover buffers seen in one sync is well under 1 k;
+   * 5 k leaves enormous headroom for libraries that go heavy on per-track art
+   * (loose collections, mixtapes) without growing without bound.
+   */
+  private static readonly coverCachePathMaxEntries = 5000;
+
+  /**
+   * Phase 2 perf optimization (#23): sync-run resolve caches for albums &
+   * artists, keyed on `provider:provider_id` (i.e. the upsert match key the
+   * datastore already deduplicates on). Hit → we skip the round-trip to
+   * `findMediaAlbum` / `upsertMediaAlbum` and reuse the entity built earlier
+   * in this same sync.
+   *
+   * Why a Promise-valued map?
+   *   The local-library scanner runs ~10 PQueue workers in parallel. Two
+   *   tracks of the same album entering the queue back-to-back used to
+   *   trigger TWO independent upsert sequences — both `findOne` and
+   *   `upsertOne` race through IPC and NEDB's writeQueue. With a Promise
+   *   in the map, the second worker just `await`s the first one's result.
+   *
+   * Why per-sync, not global?
+   *   • Avoids serving stale data after the user edits an album/artist in
+   *     the UI between syncs.
+   *   • Keeps memory bounded — wiped at the start of every sync.
+   *   • The cache only deduplicates *within* one scan pass; manual edits
+   *     done during a scan still go through `MediaAlbumService.updateMediaAlbum`
+   *     which bypasses this cache (writes only, no read-side memoization).
+   */
+  private static readonly albumByKeyResolveCache = new Map<string, Promise<IMediaAlbum>>();
+  private static readonly artistByKeyResolveCache = new Map<string, Promise<IMediaArtist>>();
+
+  /**
+   * Per-album memoization for the `added_at` resolution loop in
+   * `checkAndInsertMediaAlbum` — the previous code re-queried
+   * `MediaTrackDatastore.findMediaTracks({track_album_id})` *for every*
+   * track of an existing album. Once we've resolved `added_at` for an
+   * album in this sync, subsequent tracks of the same album reuse it.
+   */
+  private static readonly albumAddedAtResolveCache = new Map<string, number | undefined>();
   static readonly dapSyncSettingsStorageKey = 'aurora:dap-sync-settings';
   static readonly dapSyncDirectoryName = 'Music';
   static readonly dapSyncCheckpointStorageKey = 'aurora:dap-sync-checkpoint';
@@ -153,20 +219,57 @@ export class MediaLibraryService {
       throw new Error('Provider id is required for checkAndInsertMediaArtist');
     }
 
-    const mediaArtistData = await MediaArtistDatastore.upsertMediaArtist({
-      provider: mediaArtistInputData.provider,
-      provider_id: mediaArtistInputData.provider_id,
-    }, {
-      provider: mediaArtistInputData.provider,
-      provider_id: mediaArtistInputData.provider_id,
-      sync_timestamp: mediaArtistInputData.sync_timestamp,
-      artist_name: mediaArtistInputData.artist_name,
-      artist_name_normalized: this.normalizeSearchValue(mediaArtistInputData.artist_name),
-      artist_feature_picture: await this.processPicture(mediaArtistInputData.artist_feature_picture),
-      extra: mediaArtistInputData.extra,
-    });
+    // Phase 2 perf optimization (#23): a typical 3 000-track library has only
+    // 200–800 distinct artists, but the previous code went through
+    // `MediaArtistDatastore.upsertMediaArtist` for EVERY occurrence — i.e.
+    // an artist that appears on 50 tracks paid 50 IPC roundtrips + 50 NEDB
+    // findOne+update sequences just to read back the same row.
+    //
+    // We memoize per `provider:provider_id` for the duration of one sync.
+    // Identical inputs reuse the in-flight Promise, so concurrent PQueue
+    // workers that hit the same artist back-to-back share one upsert.
+    //
+    // Cache miss → we run the original upsert path and store the resulting
+    // Promise. We only key on (provider, provider_id) — the same identity
+    // the datastore upsert filter uses, so a cache hit guarantees the same
+    // row would be returned. The `sync_timestamp` of a hit is intentionally
+    // not refreshed inside the same sync run; it gets refreshed on the
+    // next sync because the cache is wiped at sync start. This keeps the
+    // datastore writes minimal and matches the pre-existing
+    // `wouldDocumentChange` skip already present in DatastoreModule.
+    const artistCacheKey = `${mediaArtistInputData.provider}:${mediaArtistInputData.provider_id}`;
+    const cachedArtist = this.artistByKeyResolveCache.get(artistCacheKey);
+    if (cachedArtist) {
+      return cachedArtist;
+    }
 
-    return MediaArtistService.buildMediaArtist(mediaArtistData, true);
+    const artistResolution = (async () => {
+      const mediaArtistData = await MediaArtistDatastore.upsertMediaArtist({
+        provider: mediaArtistInputData.provider,
+        provider_id: mediaArtistInputData.provider_id,
+      }, {
+        provider: mediaArtistInputData.provider,
+        provider_id: mediaArtistInputData.provider_id,
+        sync_timestamp: mediaArtistInputData.sync_timestamp,
+        artist_name: mediaArtistInputData.artist_name,
+        artist_name_normalized: this.normalizeSearchValue(mediaArtistInputData.artist_name),
+        artist_feature_picture: await this.processPicture(mediaArtistInputData.artist_feature_picture),
+        extra: mediaArtistInputData.extra,
+      });
+
+      return MediaArtistService.buildMediaArtist(mediaArtistData, true);
+    })();
+
+    this.artistByKeyResolveCache.set(artistCacheKey, artistResolution);
+
+    try {
+      return await artistResolution;
+    } catch (error) {
+      // Don't poison the cache with a permanent failure — let the next
+      // track for the same artist retry cleanly.
+      this.artistByKeyResolveCache.delete(artistCacheKey);
+      throw error;
+    }
   }
 
   static async checkAndInsertMediaAlbum(mediaAlbumInputData: DataStoreInputData<IMediaAlbumData>): Promise<IMediaAlbum> {
@@ -174,83 +277,130 @@ export class MediaLibraryService {
       throw new Error('Provider id is required for checkAndInsertMediaAlbum');
     }
 
-    let existingMediaAlbumData = await MediaAlbumDatastore.findMediaAlbum({
-      provider: mediaAlbumInputData.provider,
-      provider_id: mediaAlbumInputData.provider_id,
-    });
-
-    // If album exists identified by source fingerprint, reuse it and preserve user edits
-    const sourceFingerprint = (mediaAlbumInputData.extra as any)?.source_fingerprint;
-    let effectiveProviderId = mediaAlbumInputData.provider_id;
-    if (!existingMediaAlbumData && sourceFingerprint) {
-      const foundBySource = await MediaAlbumDatastore.findMediaAlbum({
-        provider: mediaAlbumInputData.provider,
-        // @ts-ignore - nested field filter allowed at runtime
-        'extra.source_fingerprint': sourceFingerprint,
-      } as any);
-      if (foundBySource) {
-        existingMediaAlbumData = foundBySource;
-        effectiveProviderId = foundBySource.provider_id;
-      }
+    // Phase 2 perf optimization (#23): a 3 000-track / 300-album library
+    // makes this function ~3 000 calls — but most of those calls are tracks
+    // 2..N of the SAME album, where the per-call inputs are byte-identical.
+    // We memoize the result Promise per upsert key + cover hash, so the
+    // first track of an album does the full upsert path and the remaining
+    // 11–19 tracks return the cached `IMediaAlbum` instantly.
+    //
+    // The cache key includes the cover-buffer short-hash, so an album that
+    // legitimately changes its cover mid-sync (very rare; would basically
+    // mean the user replaced files between disk-walk batches) still ends
+    // up running through `processPicture` once for the new buffer. Every-
+    // thing else (album-name normalize, source-fingerprint resolve,
+    // added_at resolve, upsertMediaAlbum) is what we save.
+    const albumCoverShortHash = mediaAlbumInputData.album_cover_picture?.image_data_type === MediaTrackCoverPictureImageDataType.Buffer
+      ? this.computeCoverShortHash(mediaAlbumInputData.album_cover_picture.image_data) || ''
+      : (mediaAlbumInputData.album_cover_picture?.image_data || '');
+    const albumCacheKey = `${mediaAlbumInputData.provider}:${mediaAlbumInputData.provider_id}|cov=${albumCoverShortHash}|fp=${(mediaAlbumInputData.extra as any)?.source_fingerprint || ''}`;
+    const cachedAlbum = this.albumByKeyResolveCache.get(albumCacheKey);
+    if (cachedAlbum) {
+      return cachedAlbum;
     }
-    const processedAlbumCoverPicture = await this.processPicture(mediaAlbumInputData.album_cover_picture);
 
-    const upsertFilter: any = {
-      provider: mediaAlbumInputData.provider,
-      provider_id: effectiveProviderId,
-    };
-
-    const existingAddedAt = Number((existingMediaAlbumData?.extra as any)?.added_at);
-    let resolvedAddedAt = Number.isFinite(existingAddedAt) && existingAddedAt > 0
-      ? existingAddedAt
-      : undefined;
-    if (!resolvedAddedAt && existingMediaAlbumData?.id) {
-      const albumTracks = await MediaTrackDatastore.findMediaTracks({
-        track_album_id: existingMediaAlbumData.id,
+    const albumResolution = (async () => {
+      let existingMediaAlbumData = await MediaAlbumDatastore.findMediaAlbum({
+        provider: mediaAlbumInputData.provider,
+        provider_id: mediaAlbumInputData.provider_id,
       });
-      const albumTrackFileMtimes = albumTracks
-        .map(track => Number((track.extra as any)?.file_mtime))
-        .filter(fileMtime => Number.isFinite(fileMtime) && fileMtime > 0);
-      if (albumTrackFileMtimes.length > 0) {
-        resolvedAddedAt = Math.min(...albumTrackFileMtimes);
-      } else {
-        const albumTrackSyncTimestamps = albumTracks
-          .map(track => Number(track.sync_timestamp))
-          .filter(syncTimestamp => Number.isFinite(syncTimestamp) && syncTimestamp > 0);
-        if (albumTrackSyncTimestamps.length > 0) {
-          resolvedAddedAt = Math.min(...albumTrackSyncTimestamps);
+
+      // If album exists identified by source fingerprint, reuse it and preserve user edits
+      const sourceFingerprint = (mediaAlbumInputData.extra as any)?.source_fingerprint;
+      let effectiveProviderId = mediaAlbumInputData.provider_id;
+      if (!existingMediaAlbumData && sourceFingerprint) {
+        const foundBySource = await MediaAlbumDatastore.findMediaAlbum({
+          provider: mediaAlbumInputData.provider,
+          // @ts-ignore - nested field filter allowed at runtime
+          'extra.source_fingerprint': sourceFingerprint,
+        } as any);
+        if (foundBySource) {
+          existingMediaAlbumData = foundBySource;
+          effectiveProviderId = foundBySource.provider_id;
         }
       }
+      const processedAlbumCoverPicture = await this.processPicture(mediaAlbumInputData.album_cover_picture);
+
+      const upsertFilter: any = {
+        provider: mediaAlbumInputData.provider,
+        provider_id: effectiveProviderId,
+      };
+
+      const existingAddedAt = Number((existingMediaAlbumData?.extra as any)?.added_at);
+      let resolvedAddedAt = Number.isFinite(existingAddedAt) && existingAddedAt > 0
+        ? existingAddedAt
+        : undefined;
+      if (!resolvedAddedAt && existingMediaAlbumData?.id) {
+        // Phase 2 perf optimization (#23): the previous code re-queried
+        // `MediaTrackDatastore.findMediaTracks({track_album_id})` for
+        // EVERY track of every album that didn't yet have `added_at` set —
+        // that's an extra IPC + NEDB scan per track. Now we resolve it
+        // once per album per sync run and reuse the cached value (incl.
+        // `undefined` if the album genuinely has no tracks yet).
+        const memoizedAddedAt = this.albumAddedAtResolveCache.get(existingMediaAlbumData.id);
+        if (this.albumAddedAtResolveCache.has(existingMediaAlbumData.id)) {
+          resolvedAddedAt = memoizedAddedAt;
+        } else {
+          const albumTracks = await MediaTrackDatastore.findMediaTracks({
+            track_album_id: existingMediaAlbumData.id,
+          });
+          const albumTrackFileMtimes = albumTracks
+            .map(track => Number((track.extra as any)?.file_mtime))
+            .filter(fileMtime => Number.isFinite(fileMtime) && fileMtime > 0);
+          if (albumTrackFileMtimes.length > 0) {
+            resolvedAddedAt = Math.min(...albumTrackFileMtimes);
+          } else {
+            const albumTrackSyncTimestamps = albumTracks
+              .map(track => Number(track.sync_timestamp))
+              .filter(syncTimestamp => Number.isFinite(syncTimestamp) && syncTimestamp > 0);
+            if (albumTrackSyncTimestamps.length > 0) {
+              resolvedAddedAt = Math.min(...albumTrackSyncTimestamps);
+            }
+          }
+          this.albumAddedAtResolveCache.set(existingMediaAlbumData.id, resolvedAddedAt);
+        }
+      }
+
+      const baseUpdate: Partial<IMediaAlbumData> = {
+        provider: mediaAlbumInputData.provider,
+        provider_id: effectiveProviderId,
+        sync_timestamp: mediaAlbumInputData.sync_timestamp,
+        album_name_normalized: this.normalizeSearchValue(mediaAlbumInputData.album_name),
+        album_cover_picture: processedAlbumCoverPicture || existingMediaAlbumData?.album_cover_picture,
+        extra: {
+          ...(existingMediaAlbumData?.extra || {}),
+          ...(mediaAlbumInputData.extra || {}),
+          added_at: resolvedAddedAt || mediaAlbumInputData.sync_timestamp,
+        },
+      };
+
+      // Preserve manual edits: when an album already exists in the DB, do NOT
+      // overwrite user-editable fields (name, artist, genre, year) from the
+      // file's metadata tags. The user may have explicitly cleared a tag (e.g.
+      // removed the genre) and we don't want a library re-scan to resurrect
+      // the old value from leftover ID3/Vorbis frames in the audio file.
+      // Only fall back to the file-provided values for *new* albums.
+      if (!existingMediaAlbumData) {
+        (baseUpdate as any).album_name = mediaAlbumInputData.album_name;
+        (baseUpdate as any).album_artist_id = mediaAlbumInputData.album_artist_id;
+        (baseUpdate as any).album_genre = mediaAlbumInputData.album_genre;
+        (baseUpdate as any).album_year = mediaAlbumInputData.album_year;
+      }
+
+      const mediaTrackAlbumData = await MediaAlbumDatastore.upsertMediaAlbum(upsertFilter, baseUpdate as any);
+      return MediaAlbumService.buildMediaAlbum(mediaTrackAlbumData, true);
+    })();
+
+    this.albumByKeyResolveCache.set(albumCacheKey, albumResolution);
+
+    try {
+      return await albumResolution;
+    } catch (error) {
+      // Don't poison the cache with a permanent failure — let the next
+      // track for the same album retry cleanly.
+      this.albumByKeyResolveCache.delete(albumCacheKey);
+      throw error;
     }
-
-    const baseUpdate: Partial<IMediaAlbumData> = {
-      provider: mediaAlbumInputData.provider,
-      provider_id: effectiveProviderId,
-      sync_timestamp: mediaAlbumInputData.sync_timestamp,
-      album_name_normalized: this.normalizeSearchValue(mediaAlbumInputData.album_name),
-      album_cover_picture: processedAlbumCoverPicture || existingMediaAlbumData?.album_cover_picture,
-      extra: {
-        ...(existingMediaAlbumData?.extra || {}),
-        ...(mediaAlbumInputData.extra || {}),
-        added_at: resolvedAddedAt || mediaAlbumInputData.sync_timestamp,
-      },
-    };
-
-    // Preserve manual edits: when an album already exists in the DB, do NOT
-    // overwrite user-editable fields (name, artist, genre, year) from the
-    // file's metadata tags. The user may have explicitly cleared a tag (e.g.
-    // removed the genre) and we don't want a library re-scan to resurrect
-    // the old value from leftover ID3/Vorbis frames in the audio file.
-    // Only fall back to the file-provided values for *new* albums.
-    if (!existingMediaAlbumData) {
-      (baseUpdate as any).album_name = mediaAlbumInputData.album_name;
-      (baseUpdate as any).album_artist_id = mediaAlbumInputData.album_artist_id;
-      (baseUpdate as any).album_genre = mediaAlbumInputData.album_genre;
-      (baseUpdate as any).album_year = mediaAlbumInputData.album_year;
-    }
-
-    const mediaTrackAlbumData = await MediaAlbumDatastore.upsertMediaAlbum(upsertFilter, baseUpdate as any);
-    return MediaAlbumService.buildMediaAlbum(mediaTrackAlbumData, true);
   }
 
   static async checkAndInsertMediaTrack(mediaTrackInputData: DataStoreInputData<IMediaTrackData>): Promise<IMediaTrack> {
@@ -333,7 +483,32 @@ export class MediaLibraryService {
     // important - this will only delete it from store, state still needs to be managed
     const mediaSyncStartTimestamp = mediaProviderData.sync_started_at;
     await this.deleteUnsyncMedia(mediaProviderIdentifier, mediaSyncStartTimestamp);
-    await MediaPlayerService.revalidatePlayer();
+
+    // Phase 6 (#23) – P6.1 UI-decoupling:
+    // `revalidatePlayer()` reconciles the now-playing queue and persisted
+    // playback state against the freshly-rebuilt library. It does *not*
+    // need to be awaited before we mark the sync as finished — its only
+    // observable side-effects are:
+    //   • dispatching MediaPlayerActions.* into the redux store, and
+    //   • restarting/pausing the current track if its underlying file
+    //     just got deleted.
+    // Both of those are safe to happen *after* `MediaLibraryActions.FinishSync`
+    // has already toggled `mediaIsSyncing → false` and after the album/artist/
+    // playlist views have re-rendered with the new data. By kicking it off
+    // fire-and-forget here we shave the synchronous tail of `finishMediaTrackSync`
+    // off the time-to-interactive of the very first cold-start auto-sync,
+    // which is exactly the gap users complained about (3–7 min on a 3000-track
+    // library, see docs/perf/library-sync-optimization-plan.md §1).
+    //
+    // Errors are swallowed deliberately: a player-revalidation failure must
+    // not bubble up and abort the sync-finished bookkeeping (provider mark,
+    // FinishSync dispatch). Logged for diagnostics only.
+    MediaPlayerService.revalidatePlayer().catch((revalidationError) => {
+      console.warn(
+        'MediaLibraryService.finishMediaTrackSync - revalidatePlayer failed (non-fatal) - %o',
+        revalidationError,
+      );
+    });
 
     // update provider
     const mediaSyncEndTimestamp = Date.now();
@@ -351,6 +526,61 @@ export class MediaLibraryService {
     });
   }
 
+  /**
+   * Cheap content fingerprint for cover-art deduplication during library sync.
+   *
+   * Hashes only the first 8 KB of the buffer plus its total length — this is
+   * easily enough to disambiguate any two real-world JPEG/PNG album covers
+   * (the first 8 KB always contain the JFIF/PNG header + DCT/IDAT prelude,
+   * which is bit-identical only when the buffers are bit-identical) while
+   * being ~50× faster than hashing a full ~500 KB buffer per track.
+   *
+   * Returns `undefined` for non-Buffer input so the caller can fall back to
+   * the unchanged code path (no hash → no cache → previous behaviour).
+   */
+  private static computeCoverShortHash(imageData: unknown): string | undefined {
+    // Renderer hands us a Node Buffer (`mediaPicture.image_data`); the data
+    // lives in renderer memory until we ship it to main via IPC. We avoid
+    // converting it for the hash to stay zero-copy.
+    if (!imageData || typeof imageData !== 'object') {
+      return undefined;
+    }
+    const bufferLike = imageData as { length?: number; slice?: (start: number, end: number) => unknown };
+    const totalLength = Number(bufferLike.length || 0);
+    if (totalLength <= 0 || typeof bufferLike.slice !== 'function') {
+      return undefined;
+    }
+    try {
+      const headSlice = bufferLike.slice(0, Math.min(8192, totalLength));
+      const hash = createHash('sha1');
+      hash.update(headSlice as any);
+      hash.update(`|len=${totalLength}|wh=${this.mediaPictureScaleWidth}x${this.mediaPictureScaleHeight}`);
+      return hash.digest('hex');
+    } catch (_error) {
+      return undefined;
+    }
+  }
+
+  /**
+   * Bounded eviction. The cache is meant to live for the duration of a sync
+   * run; even on multi-hour DAP sessions we never touch more than a few
+   * thousand unique cover buffers. The 5 k cap is here purely to keep memory
+   * bounded if some pathological library hits us with one cover per track.
+   */
+  private static evictCoverCacheIfFull(): void {
+    if (this.coverCachePathByContentHash.size < this.coverCachePathMaxEntries) {
+      return;
+    }
+    // Map preserves insertion order — drop the oldest 10% in one shot.
+    // Array.from + slice keeps the eslint config happy (no for-of over iterator)
+    // while preserving O(dropCount) eviction cost.
+    const dropCount = Math.max(1, Math.floor(this.coverCachePathMaxEntries * 0.1));
+    const oldestKeys = Array.from(this.coverCachePathByContentHash.keys()).slice(0, dropCount);
+    oldestKeys.forEach((oldestKey) => {
+      this.coverCachePathByContentHash.delete(oldestKey);
+    });
+  }
+
   static async processPicture(mediaPicture?: IMediaPicture): Promise<IMediaPicture | undefined> {
     // this accepts a MediaPicture and returns a serializable instance of MediaPicture which can be stored and
     // further processed system-wide after deserializing
@@ -359,8 +589,65 @@ export class MediaLibraryService {
     }
 
     if (mediaPicture.image_data_type === MediaTrackCoverPictureImageDataType.Buffer) {
-      let imageCachePath;
+      // Phase 1 perf optimization (#23): albums and compilations embed the
+      // SAME cover buffer into every one of their tracks. Pre-IPC we compute
+      // a cheap 8 KB-prefix hash of the buffer; identical hashes → identical
+      // bytes → we already know the resolved cache path and can skip the IPC
+      // roundtrip + sharp resize entirely.
+      //
+      // For *loose* libraries (single tracks dragged into one folder, or
+      // compilation-by-folder where every track legitimately ships its own
+      // cover art for the album-view 4-cover mosaic and the per-row track
+      // covers in the title list) the buffers differ → hashes differ → no
+      // false dedup, every track keeps its individual cover.
+      const coverShortHash = this.computeCoverShortHash(mediaPicture.image_data);
+      if (coverShortHash) {
+        const cachedPathPromise = this.coverCachePathByContentHash.get(coverShortHash);
+        if (cachedPathPromise) {
+          const cachedPath = await cachedPathPromise;
+          if (cachedPath) {
+            return {
+              image_data: cachedPath,
+              image_data_type: MediaTrackCoverPictureImageDataType.Path,
+            };
+          }
+          // Previous run for this hash failed — fall through to retry once,
+          // and overwrite the cache entry so a transient IPC hiccup doesn't
+          // stick around for the rest of the sync.
+        }
 
+        const ipcPromise = (async () => {
+          try {
+            return await IPCRenderer.sendAsyncMessage(IPCCommChannel.ImageScale, mediaPicture.image_data, {
+              width: this.mediaPictureScaleWidth,
+              height: this.mediaPictureScaleHeight,
+            });
+          } catch (error) {
+            console.error('encountered error while processing image - %s', error);
+            return undefined;
+          }
+        })();
+
+        this.evictCoverCacheIfFull();
+        this.coverCachePathByContentHash.set(coverShortHash, ipcPromise);
+
+        const imageCachePath = await ipcPromise;
+        if (!imageCachePath) {
+          // Don't poison the cache with a permanent miss — drop the failed
+          // entry so the next track for the same hash gets a clean retry.
+          this.coverCachePathByContentHash.delete(coverShortHash);
+          return undefined;
+        }
+
+        return {
+          image_data: imageCachePath,
+          image_data_type: MediaTrackCoverPictureImageDataType.Path,
+        };
+      }
+
+      // Hash computation failed (exotic buffer types, etc.) — preserve the
+      // exact previous behaviour so we don't silently drop covers.
+      let imageCachePath;
       try {
         imageCachePath = await IPCRenderer.sendAsyncMessage(IPCCommChannel.ImageScale, mediaPicture.image_data, {
           width: this.mediaPictureScaleWidth,
@@ -382,6 +669,28 @@ export class MediaLibraryService {
 
     // image data type does not need any processing, return as is
     return mediaPicture;
+  }
+
+  /**
+   * Drops the renderer-side sync caches. Called at the start of a library
+   * sync run so none of these in-memory maps outlive the run that populated
+   * them (their on-disk equivalents — Sharp JPG cache, NEDB datastore — are
+   * the persistent layer and stay untouched).
+   *
+   * Public so the local-library service can call it without reaching into
+   * private state. Safe to call on idle — no-op if the caches are empty.
+   *
+   * Clears in one go:
+   *   • cover-content-hash cache (Phase 1)
+   *   • album resolve cache (Phase 2)
+   *   • artist resolve cache (Phase 2)
+   *   • per-album `added_at` memoization (Phase 2)
+   */
+  static resetProcessedPictureCache(): void {
+    this.coverCachePathByContentHash.clear();
+    this.albumByKeyResolveCache.clear();
+    this.artistByKeyResolveCache.clear();
+    this.albumAddedAtResolveCache.clear();
   }
 
   private static normalizeSearchValue(value: string): string {

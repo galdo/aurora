@@ -1,3 +1,4 @@
+import path from 'path';
 import React, { useCallback, useEffect } from 'react';
 
 import {
@@ -8,7 +9,7 @@ import {
   ItemParams,
 } from 'react-contexify';
 
-import { useContextMenu } from '../../contexts';
+import { useContextMenu, useModal } from '../../contexts';
 import { useMediaCollectionPin, useScrollLock } from '../../hooks';
 import { IMediaCollectionItem } from '../../interfaces';
 import {
@@ -19,8 +20,10 @@ import {
   MediaPlaylistService,
 } from '../../services';
 import { MediaCollectionItemType } from '../../enums';
+import { IPCRenderer, IPCCommChannel } from '../../modules/ipc';
 
 import { MediaPlaylistContextMenu } from '../media-playlist-context-menu/media-playlist-context-menu.component';
+import { MediaAlbumCoverEmbedModal } from '../media-album-cover-embed-modal/media-album-cover-embed-modal.component';
 
 export enum MediaCollectionContextMenuItem {
   AddToQueue,
@@ -29,12 +32,16 @@ export enum MediaCollectionContextMenuItem {
   ManagePlaylist,
   Pin,
   ToggleHidden,
+  OpenInFileManager,
+  EmbedCoverFromFolder,
 }
 
 export enum MediaCollectionContextMenuItemAction {
   AddToQueue = 'media/collection/action/addToQueue',
   Pin = 'media/collection/action/pin',
   ToggleHidden = 'media/collection/action/toggleHidden',
+  OpenInFileManager = 'media/collection/action/openInFileManager',
+  EmbedCoverFromFolder = 'media/collection/action/embedCoverFromFolder',
 }
 
 export interface MediaCollectionContextMenuItemProps {
@@ -47,6 +54,7 @@ export function MediaCollectionContextMenu(props: {
 }) {
   const { id, menuItems } = props;
   const { menuProps, hideAll } = useContextMenu<MediaCollectionContextMenuItemProps>();
+  const { showModal } = useModal();
   const { mediaItem } = menuProps || {};
   const { triggerScrollLock } = useScrollLock({
     scrollableSelector: '.app-scrollable',
@@ -110,12 +118,69 @@ export function MediaCollectionContextMenu(props: {
         }
         break;
       }
+      case MediaCollectionContextMenuItemAction.OpenInFileManager: {
+        if (!mediaItem) {
+          throw new Error('MediaCollectionContextMenu encountered error while performing action OpenInFileManager - No media item was provided');
+        }
+
+        try {
+          // determine a representative filesystem path for this collection by
+          // inspecting any of its tracks - tracks store their on-disk location
+          // in `extra.file_path`. The album's folder is simply the parent
+          // directory of any of its tracks.
+          const mediaTracks = await MediaCollectionService.getMediaCollectionTracks(mediaItem);
+          const trackWithPath = mediaTracks.find((mediaTrack) => {
+            const filePath = (mediaTrack.extra as any)?.file_path;
+            return typeof filePath === 'string' && filePath.length > 0;
+          });
+
+          const filePath = trackWithPath ? String((trackWithPath.extra as any)?.file_path || '') : '';
+          if (!filePath) {
+            console.warn('MediaCollectionContextMenu - OpenInFileManager - no track file path available for collection');
+            break;
+          }
+
+          // resolve the album folder (parent directory of the track)
+          const albumFolderPath = path.dirname(filePath);
+          IPCRenderer.sendSyncMessage(IPCCommChannel.FSShowItemInFolder, albumFolderPath);
+        } catch (err) {
+          console.error('MediaCollectionContextMenu - OpenInFileManager error:', err);
+        }
+        break;
+      }
+      case MediaCollectionContextMenuItemAction.EmbedCoverFromFolder: {
+        if (!mediaItem || mediaItem.type !== MediaCollectionItemType.Album) {
+          break;
+        }
+        // The modal needs the full IMediaAlbum (with album_artist relation
+        // hydrated). We re-resolve via the service rather than relying on
+        // the (potentially stale) cached version inside the menu props.
+        try {
+          const album = await MediaAlbumService.getMediaAlbum(mediaItem.id);
+          if (!album) {
+            console.warn('MediaCollectionContextMenu - EmbedCoverFromFolder - album not found:', mediaItem.id);
+            break;
+          }
+          showModal(MediaAlbumCoverEmbedModal, { mediaAlbum: album }, {
+            // Refresh the album list once the user closes the modal so the
+            // newly-attached cover (which we already wrote into the album
+            // record) is reflected in every album-tile that shows it.
+            onComplete: () => {
+              MediaAlbumService.loadMediaAlbums();
+            },
+          });
+        } catch (err) {
+          console.error('MediaCollectionContextMenu - EmbedCoverFromFolder error:', err);
+        }
+        break;
+      }
       default:
       // unsupported action, do nothing
     }
   }, [
     hideAll,
     mediaItem,
+    showModal,
     togglePinned,
   ]);
 
@@ -203,6 +268,38 @@ export function MediaCollectionContextMenu(props: {
             }
 
             return null;
+          case MediaCollectionContextMenuItem.OpenInFileManager:
+            // only show for albums - playlists / audio cd entries don't have
+            // a single owning folder on disk that can be sensibly revealed
+            if (mediaItem?.type !== MediaCollectionItemType.Album) {
+              return null;
+            }
+
+            return (
+              <Item
+                key={rowKey}
+                id={MediaCollectionContextMenuItemAction.OpenInFileManager}
+                onClick={handleMenuItemClick}
+              >
+                {I18nService.getString('label_submenu_media_collection_open_in_file_manager')}
+              </Item>
+            );
+          case MediaCollectionContextMenuItem.EmbedCoverFromFolder:
+            // only meaningful for albums — playlists span multiple folders
+            // and don't have a single source directory we could scan
+            if (mediaItem?.type !== MediaCollectionItemType.Album) {
+              return null;
+            }
+
+            return (
+              <Item
+                key={rowKey}
+                id={MediaCollectionContextMenuItemAction.EmbedCoverFromFolder}
+                onClick={handleMenuItemClick}
+              >
+                {I18nService.getString('label_submenu_media_collection_embed_cover_from_folder')}
+              </Item>
+            );
           default:
             return null;
         }

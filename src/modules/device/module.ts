@@ -40,6 +40,8 @@ export class DeviceModule implements IAppModule {
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceGetDiscogsRelease, this.getDiscogsRelease, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceImportAudioCd, this.importAudioCd, this);
     IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceWriteFlacMetadata, this.writeFlacMetadata, this);
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceFindAlbumImages, this.findAlbumImages, this);
+    IPCMain.addAsyncMessageHandler(IPCCommChannel.DeviceEmbedCoverInTracks, this.embedCoverInTracks, this);
   }
 
   private writeCdMatchingCli(label: string, payload: unknown) {
@@ -1034,6 +1036,309 @@ export class DeviceModule implements IAppModule {
         await fs.promises.unlink(metaflacPicturePath).catch(() => undefined);
       }
     }
+  }
+
+  /**
+   * Recursively scans an album directory (and its sub-directories — limited
+   * to one level deep, which covers `Album/CD 01/` style multi-disc layouts)
+   * for image files that could serve as an album cover.
+   *
+   * Returns an inline-streamable list with each image's absolute path,
+   * basic file size, and a base64 data-URL preview so the renderer can show
+   * thumbnails without a second round-trip to the main process.
+   *
+   * Images larger than the inline preview budget are still listed with
+   * their metadata, but the data URL is omitted — the renderer can fall
+   * back to a placeholder. We do this to avoid copying multi-megabyte
+   * scan-quality images over IPC where a 200×200 thumbnail would do.
+   */
+  private async findAlbumImages(input: {
+    albumDirectory: string;
+    maxDepth?: number;
+    inlinePreviewMaxBytes?: number;
+  }): Promise<Array<{
+      path: string;
+      name: string;
+      relativePath: string;
+      sizeBytes: number;
+      mime: string;
+      dataUrl?: string;
+    }>> {
+    const albumDirectory = String(input?.albumDirectory || '').trim();
+    if (!albumDirectory || !fs.existsSync(albumDirectory)) {
+      return [];
+    }
+
+    // Depth 1 = album root + immediate subdirectories (e.g. CD 01/CD 02).
+    // Going deeper risks pulling in unrelated bonus material directories
+    // and rapidly inflates the IPC payload — 99 % of album layouts in the
+    // wild are 1 or 2 levels.
+    const maxDepth = Math.max(0, Math.min(3, input?.maxDepth ?? 1));
+    const inlinePreviewMaxBytes = Math.max(0, input?.inlinePreviewMaxBytes ?? (2 * 1024 * 1024));
+
+    const imageExtensions = new Set([
+      '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp',
+    ]);
+
+    const results: Array<{
+      path: string;
+      name: string;
+      relativePath: string;
+      sizeBytes: number;
+      mime: string;
+      dataUrl?: string;
+    }> = [];
+
+    const walk = async (currentDir: string, currentDepth: number) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
+      } catch (err) {
+        debug('findAlbumImages - cannot read directory %s: %o', currentDir, err);
+        return;
+      }
+
+      for (const entry of entries) {
+        const entryName = entry.name;
+        // skip macOS resource forks, hidden folders, common cache dirs
+        if (entryName.startsWith('.') || entryName.startsWith('._')) continue;
+
+        const fullPath = path.join(currentDir, entryName);
+
+        if (entry.isDirectory()) {
+          if (currentDepth < maxDepth) {
+            // eslint-disable-next-line no-await-in-loop
+            await walk(fullPath, currentDepth + 1);
+          }
+          continue;
+        }
+
+        if (!entry.isFile()) continue;
+
+        const lowerExt = path.extname(entryName).toLowerCase();
+        if (!imageExtensions.has(lowerExt)) continue;
+
+        let stats: fs.Stats;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          stats = await fs.promises.stat(fullPath);
+        } catch {
+          continue;
+        }
+
+        if (stats.size <= 0) continue;
+
+        const mime = this.guessImageMime(lowerExt);
+        const relativePath = path.relative(albumDirectory, fullPath);
+
+        let dataUrl: string | undefined;
+        if (stats.size <= inlinePreviewMaxBytes) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const buffer = await fs.promises.readFile(fullPath);
+            dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
+          } catch (err) {
+            debug('findAlbumImages - failed to read %s for preview: %o', fullPath, err);
+          }
+        }
+
+        results.push({
+          path: fullPath,
+          name: entryName,
+          relativePath: relativePath || entryName,
+          sizeBytes: stats.size,
+          mime,
+          dataUrl,
+        });
+      }
+    };
+
+    await walk(albumDirectory, 0);
+
+    // Stable ranking heuristic so the most likely-to-be-cover image floats
+    // to the top of the picker:
+    //   1. Files at album root before files in sub-folders
+    //   2. Files whose basename matches a known cover keyword
+    //   3. Larger files (better quality scans usually)
+    const coverKeywords = ['cover', 'folder', 'front', 'albumart', 'album', 'artwork'];
+    const scoreImage = (img: { name: string; relativePath: string; sizeBytes: number; }): number => {
+      const base = path.parse(img.name).name.toLowerCase();
+      const isAtRoot = !img.relativePath.includes(path.sep);
+      let score = isAtRoot ? 1000 : 0;
+      const matchIndex = coverKeywords.findIndex(kw => base === kw || base.startsWith(`${kw}.`) || base.startsWith(`${kw}_`) || base.startsWith(`${kw}-`));
+      if (matchIndex >= 0) {
+        score += 500 - (matchIndex * 10);
+      } else if (coverKeywords.some(kw => base.includes(kw))) {
+        score += 100;
+      }
+      // size in KB capped at 2000 → ranges roughly 0..2000
+      score += Math.min(2000, Math.round(img.sizeBytes / 1024));
+      return score;
+    };
+    results.sort((a, b) => scoreImage(b) - scoreImage(a));
+
+    return results;
+  }
+
+  private guessImageMime(lowerExt: string): string {
+    switch (lowerExt) {
+      case '.jpg':
+      case '.jpeg': return 'image/jpeg';
+      case '.png':  return 'image/png';
+      case '.webp': return 'image/webp';
+      case '.gif':  return 'image/gif';
+      case '.bmp':  return 'image/bmp';
+      default:      return 'application/octet-stream';
+    }
+  }
+
+  /**
+   * Embeds a cover image into the cover-art metadata block of every track
+   * in the supplied list. Supports FLAC and MP3 directly via metaflac and
+   * ffmpeg; m4a/wav/dsf/dff are best-effort handled via ffmpeg, which
+   * understands ID3v2 / iTunes-style atoms in those containers when
+   * available. Files of unsupported formats are reported in
+   * `unsupportedTrackPaths` instead of failing the whole batch.
+   *
+   * The image is scaled to a sensible max size before embedding (sharp via
+   * ImageModule) — many users have 5 MB+ scan-quality images sitting next
+   * to their tracks, and embedding the original would bloat the audio
+   * file unnecessarily.
+   */
+  private async embedCoverInTracks(input: {
+    coverImagePath: string;
+    trackPaths: string[];
+    targetWidth?: number;
+    targetHeight?: number;
+  }): Promise<{
+      processed: number;
+      embedded: number;
+      skippedUnsupported: number;
+      errors: Array<{ trackPath: string; message: string }>;
+      unsupportedTrackPaths: string[];
+    }> {
+    const coverImagePath = String(input?.coverImagePath || '').trim();
+    if (!coverImagePath || !fs.existsSync(coverImagePath)) {
+      throw new Error(`Cover image not found: ${coverImagePath}`);
+    }
+
+    const trackPaths = Array.isArray(input?.trackPaths)
+      ? input.trackPaths.filter(p => typeof p === 'string' && p.length > 0)
+      : [];
+    if (trackPaths.length === 0) {
+      return {
+        processed: 0,
+        embedded: 0,
+        skippedUnsupported: 0,
+        errors: [],
+        unsupportedTrackPaths: [],
+      };
+    }
+
+    // Pre-process the cover once for the whole batch — sharp will pick a
+    // sensible default of 600×600 if not specified, which is the sweet
+    // spot most music players (Aurora included) display covers at.
+    let scaledCoverPath: string;
+    try {
+      scaledCoverPath = await this.app.getModule(ImageModule).getSharpModule().scaleImage(coverImagePath, {
+        width: input?.targetWidth ?? 600,
+        height: input?.targetHeight ?? 600,
+      });
+    } catch (err) {
+      throw new Error(`Failed to scale cover image: ${(err as Error).message || err}`);
+    }
+
+    const ext = (path.extname(scaledCoverPath) || '.jpg').toLowerCase();
+    const coverMime = ext === '.png' ? 'image/png' : 'image/jpeg';
+
+    const hasMetaflac = this.commandExists('metaflac');
+    const hasFfmpeg = this.commandExists('ffmpeg');
+
+    const result = {
+      processed: 0,
+      embedded: 0,
+      skippedUnsupported: 0,
+      errors: [] as Array<{ trackPath: string; message: string }>,
+      unsupportedTrackPaths: [] as string[],
+    };
+
+    for (const trackPath of trackPaths) {
+      result.processed += 1;
+      try {
+        if (!fs.existsSync(trackPath)) {
+          result.errors.push({ trackPath, message: 'File not found' });
+          continue;
+        }
+
+        const lowerExt = path.extname(trackPath).toLowerCase();
+
+        if (lowerExt === '.flac') {
+          if (!hasMetaflac) {
+            result.errors.push({ trackPath, message: 'metaflac not installed (brew install flac)' });
+            continue;
+          }
+          // Replace any existing PICTURE blocks atomically.
+          const removeResult = spawnSync('metaflac', ['--remove', '--block-type=PICTURE', trackPath], { encoding: 'utf-8' });
+          if (removeResult.status !== 0 && !/No such metadata block/i.test(removeResult.stderr || '')) {
+            // metaflac considers "no PICTURE block to remove" a non-zero exit on some versions; that's OK.
+            // Anything else, abort for this file.
+            // (continue past benign error)
+            debug('metaflac --remove PICTURE non-zero (likely no existing block): %s', removeResult.stderr);
+          }
+          const pictureSpec = `--import-picture-from=3:${coverMime}:Cover (front)::${scaledCoverPath}`;
+          const importResult = spawnSync('metaflac', [pictureSpec, trackPath], { encoding: 'utf-8' });
+          if (importResult.status !== 0) {
+            throw new Error(importResult.stderr || 'metaflac --import-picture-from failed');
+          }
+          result.embedded += 1;
+        } else if (lowerExt === '.mp3' || lowerExt === '.m4a' || lowerExt === '.wav') {
+          if (!hasFfmpeg) {
+            result.errors.push({ trackPath, message: `ffmpeg required for ${lowerExt} files but not installed` });
+            continue;
+          }
+          // Use ffmpeg to attach the cover. We rewrite to a temp file and then
+          // move it back over the original — ffmpeg cannot edit in place.
+          const tempOutput = `${trackPath}.cover-tmp${lowerExt}`;
+          // ffmpeg will refuse to overwrite an existing tmp file, clean up
+          // a stale leftover from a previous interrupted run.
+          try { fs.unlinkSync(tempOutput); } catch { /* ignore */ }
+
+          const ffmpegArgs = [
+            '-y',
+            '-i', trackPath,
+            '-i', scaledCoverPath,
+            '-map', '0', // all streams from track
+            '-map', '1', // image
+            '-c', 'copy', // do not re-encode audio
+            '-disposition:v:1', 'attached_pic',
+            '-metadata:s:v', 'title=Album cover',
+            '-metadata:s:v', 'comment=Cover (front)',
+            '-id3v2_version', '3',
+            tempOutput,
+          ];
+          const ffmpegResult = spawnSync('ffmpeg', ffmpegArgs, { encoding: 'utf-8' });
+          if (ffmpegResult.status !== 0) {
+            try { fs.unlinkSync(tempOutput); } catch { /* ignore */ }
+            throw new Error((ffmpegResult.stderr || 'ffmpeg failed').slice(0, 400));
+          }
+          // Atomic-ish swap: rename keeps inode/permissions on the same FS.
+          await fs.promises.rename(tempOutput, trackPath);
+          result.embedded += 1;
+        } else {
+          // dsf/dff and other formats do not have a standardized embedded
+          // cover container that we can reliably write. Report and skip.
+          result.skippedUnsupported += 1;
+          result.unsupportedTrackPaths.push(trackPath);
+        }
+      } catch (err) {
+        result.errors.push({
+          trackPath,
+          message: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        });
+      }
+    }
+
+    return result;
   }
 
   private requestDiscogsJson(endpoint: string, token: string): Promise<any> {

@@ -238,26 +238,28 @@ export function MediaLocalSettingsComponent({ cx }: MediaLocalSettingsProps) {
             interaction will then persist an explicit value.
             Cf. `MediaLocalLibraryService.onProviderRegistered` for the matching
             cold-start gate.
-            Rendered as a button-style ON/OFF pill (matching the
-            `theme-switch-item-toggle` pattern in `pages/settings`) so the
-            control feels native to the rest of the Settings view instead of
-            looking like a stray HTML checkbox.
+            Rendered with the shared `theme-switch` / `theme-switch-item-toggle`
+            pattern from `pages/settings` so the pill matches every other ON/OFF
+            switch in the app (group-compilations, DAP-auto-sync, bit-perfect,
+            DLNA, auto-update, beta-channel, ...). Using `settings-row` as the
+            container keeps the alignment (label left / pill right) consistent
+            with those other toggles.
           */}
-          <div className={cx('settings-toggle-row')} style={{ marginTop: '16px' }}>
-            <div className={cx('settings-toggle-row-content')}>
+          <div className={cx('settings-row')} style={{ marginTop: '16px' }}>
+            <div>
               <div className={cx('settings-subheading')}>
                 {I18nService.getString('label_settings_auto_sync_on_startup')}
               </div>
-              <div className={cx('settings-description')} style={{ marginTop: '4px' }}>
+              <div className={cx('settings-description')}>
                 {I18nService.getString('label_settings_auto_sync_on_startup_details')}
               </div>
             </div>
-            <div className={cx('settings-toggle-switch')}>
+            <div className={cx('theme-switch')}>
               <button
                 type="button"
                 id="media-local-auto-sync-on-startup"
                 aria-pressed={settings.library.auto_sync_on_startup !== false}
-                className={cx('settings-toggle-button', {
+                className={cx('theme-switch-item', 'theme-switch-item-toggle', {
                   active: settings.library.auto_sync_on_startup !== false,
                 })}
                 onClick={() => {

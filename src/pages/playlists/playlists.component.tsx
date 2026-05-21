@@ -11,9 +11,10 @@ import MediaLocalLibraryService from '../../providers/media-local/media-local-li
 import { StringUtils } from '../../utils';
 import { useModal } from '../../contexts';
 
+import { useRegisterTopMenuBarSort } from '../../components/top-menu-bar/top-menu-bar.sort-store';
+
 import {
   Button,
-  CollectionViewControls,
   MediaPlaylists,
   MediaLikedTracksCollectionItem,
   MediaMostPlayedCollectionItem,
@@ -24,7 +25,6 @@ import {
   COLLECTION_COVER_SIZE_EVENT,
   clampCollectionCoverSize,
   getCollectionCoverSize,
-  setCollectionCoverSize,
 } from '../../utils/collection-cover-size.utils';
 
 import styles from './playlists.component.css';
@@ -127,21 +127,31 @@ export function PlaylistsPage() {
     }));
   };
 
+  const topMenuBarSortConfig = useMemo(() => ({
+    options: [
+      {
+        value: 'album',
+        // Reuse the existing playlist-name string when available, otherwise
+        // fall back to the previously hard-coded German label so the
+        // dropdown never ends up showing a key like
+        // "label_album_sort_playlist".
+        label: I18nService.getString('label_playlist_sort_name')
+          || I18nService.getString('label_playlist_name')
+          || 'Playlist Titel',
+      },
+      { value: 'added', label: I18nService.getString('label_album_sort_added') },
+    ],
+    currentValue: sortBy,
+    direction: sortDirection,
+    onSortChange: (value: string) => updateSort(value as SortOption, sortDirection),
+    onDirectionToggle: () => updateSort(sortBy, sortDirection === 'asc' ? 'desc' : 'asc'),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [sortBy, sortDirection]);
+
+  useRegisterTopMenuBarSort(topMenuBarSortConfig);
+
   return (
     <div className="container-fluid">
-      <CollectionViewControls
-        coverSize={coverSize}
-        onCoverSizeChange={value => setCoverSize(setCollectionCoverSize(value))}
-        sortBy={sortBy}
-        sortDirection={sortDirection}
-        onSortByChange={value => updateSort(value as SortOption, sortDirection)}
-        onSortDirectionToggle={() => updateSort(sortBy, sortDirection === 'asc' ? 'desc' : 'asc')}
-        sortToggleTooltip={I18nService.getString('tooltip_album_sort_toggle')}
-        sortOptions={[
-          { value: 'album', label: 'Playlist Titel' },
-          { value: 'added', label: I18nService.getString('label_album_sort_added') },
-        ]}
-      />
       <div className={cx('playlist-liked-tracks')}>
         <MediaLikedTracksCollectionItem className={cx('playlist-liked-tracks-collection-item')}/>
         <MediaMostPlayedCollectionItem className={cx('playlist-liked-tracks-collection-item')}/>

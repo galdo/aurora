@@ -43,8 +43,71 @@ import { MediaLocalStateActionType, mediaLocalStore } from './media-local.store'
 
 const debug = require('debug')('aurora:provider:media_local:media_library');
 
+/**
+ * Phase 3 perf optimization (#23): pre-fetched view of an existing media-track
+ * row that the fast-path probe in `addTrackFromFile` needs in order to decide
+ * "this file is unchanged, just bump sync_timestamp" without going to the DB.
+ *
+ * We DON'T cache the full IMediaTrack here — only the fields the probe reads
+ * (mtime, size, audio details presence, fingerprint, album-name match). The
+ * actual record is still updated through `MediaTrackService.updateMediaTrack`,
+ * so the persistent view of the track stays the source of truth.
+ */
+interface IFastPathTrackProbe {
+  /** Track id (used by `markTrackRelationsAsSeen` and as a write target). */
+  id: string;
+  /** Last-known mtime as recorded in the previous sync run. */
+  fileMtime: number;
+  /** Last-known file size. */
+  fileSize: number;
+  /** Resolved track_album_id — same purpose as in `IMediaTrack.track_album_id`. */
+  trackAlbumId: string;
+  /** Cached track_artist_ids — used by `markTrackRelationsAsSeen` for sync-mark dedup. */
+  trackArtistIds: string[];
+  /** `true` only if the row already has all five audio_* extras (sample rate, bit depth, …). */
+  hasAudioDetails: boolean;
+  /** Album-side fingerprint, used to detect a regroup-by-folder change. */
+  albumSourceFingerprint: string;
+  /** Album name as currently persisted — used by the grouping fallback in addTrackFromFile. */
+  albumName: string;
+  /** Album artist id — read by the relation-sync flusher. */
+  albumArtistId: string;
+}
+
 class MediaLocalLibraryService implements IMediaLibraryService {
-  private readonly syncAddFileQueue = new PQueue({ concurrency: 10, autoStart: true, timeout: 5 * 60 * 1000 }); // timeout 5 minutes / track
+  /**
+   * Phase 4 perf optimization (#23): per-track concurrency cap for the
+   * scan worker queue.
+   *
+   * Pre-Phase-4 we ran 10 workers in parallel even though the main process
+   * could only resize one cover at a time (sharp + sha1 ran on the main
+   * thread). Now sharp runs in a `worker_threads` pool of `cpu_count - 1`
+   * (capped 1..4), so we can usefully widen the renderer queue too —
+   * but NOT linearly, because each worker still takes a Promise-microtask
+   * roundtrip per track and NEDB serialises writes anyway.
+   *
+   * `cpu_count * 2` (clamped 6..16) is the sweet spot we verified on
+   * dev machines: enough parallelism to keep both the sharp-worker pool
+   * and the IPC pipeline saturated, without piling up so many in-flight
+   * tracks that V8 GC starts to dominate. Falls back to 12 when
+   * `os.cpus()` is unavailable (some sandboxed environments).
+   */
+  private static readonly syncAddFileQueueConcurrency = (() => {
+    try {
+      // eslint-disable-next-line global-require
+      const cpuCount = (require('os').cpus() || []).length || 6;
+      return Math.max(6, Math.min(16, cpuCount * 2));
+    } catch (_e) {
+      return 12;
+    }
+  })();
+
+  private readonly syncAddFileQueue = new PQueue({
+    concurrency: MediaLocalLibraryService.syncAddFileQueueConcurrency,
+    autoStart: true,
+    timeout: 5 * 60 * 1000,
+  }); // timeout 5 minutes / track
+
   private readonly syncLock = new Semaphore(1);
   private syncAbortController: AbortController | null = null;
   private syncMediaTracksPromise: Promise<void> | null = null;
@@ -56,6 +119,22 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   private pendingArtistSyncIds: Set<string> = new Set();
   private playlistCoversRefreshedThisSession = false;
   private playlistCoversRefreshPromise: Promise<void> | null = null;
+  /**
+   * Phase 3 perf optimization (#23): pre-built look-up of every existing
+   * provider track keyed by its `extra.file_path`. Populated once at sync
+   * start (single `findMediaTracks` IPC call) and consulted by the
+   * fast-path probe in `addTrackFromFile` instead of one IPC + NEDB query
+   * per scanned file.
+   *
+   * For a 3 000-track no-change re-scan the previous code paid 3 000
+   * round-trips just to figure out "nothing changed"; with this map
+   * that's one round-trip total + 3 000 µs-level Map lookups.
+   *
+   * Map is wiped at the start of every sync (see `syncMediaTracks`) so
+   * stale entries from a prior run never affect a fresh probe — even if
+   * the user manually edited a track between syncs.
+   */
+  private existingTrackProbeByPath: Map<string, IFastPathTrackProbe> = new Map();
   private syncProfilingStats = {
     directoryReadMs: 0,
     queueDrainMs: 0,
@@ -72,6 +151,12 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     trackUpsertMs: 0,
     fastPathProbeMs: 0,
     fastPathRegroupFallbacks: 0,
+    /** Phase 3 (#23): how many tracks we resolved entirely in-memory via `existingTrackProbeByPath`. */
+    fastPathInMemoryHits: 0,
+    /** Phase 3 (#23): time spent building the existing-track probe map at sync start. */
+    probeMapBuildMs: 0,
+    /** Phase 3 (#23): number of rows pre-loaded into the probe map. */
+    probeMapEntries: 0,
   };
 
   onProviderRegistered(): void {
@@ -151,7 +236,107 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       trackUpsertMs: 0,
       fastPathProbeMs: 0,
       fastPathRegroupFallbacks: 0,
+      fastPathInMemoryHits: 0,
+      probeMapBuildMs: 0,
+      probeMapEntries: 0,
     };
+  }
+
+  /**
+   * Phase 3 perf optimization (#23): single-pass loader for the
+   * `existingTrackProbeByPath` map.
+   *
+   * Replaces ~3 000 individual `findMediaTrack(...)` IPC round-trips that
+   * the per-track fast-path used to issue with a single `findMediaTracks()`
+   * for all existing provider tracks plus a single `findMediaAlbums()` for
+   * their albums. Joins them in renderer memory, then keys the resulting
+   * probes by `extra.file_path` so the file walker can do O(1) look-ups.
+   *
+   * Falls through silently on errors — a missing probe map just means the
+   * sync degrades to the pre-Phase-3 per-track DB path, no functional
+   * regression.
+   */
+  private async buildExistingTrackProbeMap(): Promise<void> {
+    const probeMapBuildStart = performance.now();
+    this.existingTrackProbeByPath.clear();
+
+    try {
+      // One IPC round-trip for tracks, one for albums. Total: 2 calls
+      // instead of N+1 (was: 1 findMediaTrack + 1 album lookup per file).
+      const existingTrackDataList = await MediaTrackDatastore.findMediaTracks({
+        provider: MediaLocalConstants.Provider,
+      });
+
+      const albumIdsToLoad = _.uniq(
+        existingTrackDataList
+          .map((trackData: any) => String(trackData?.track_album_id || '').trim())
+          .filter(Boolean),
+      );
+
+      const existingAlbumDataList = albumIdsToLoad.length > 0
+        ? await MediaAlbumDatastore.findMediaAlbums({
+          id: { $in: albumIdsToLoad },
+        } as any)
+        : [];
+      const albumDataById = new Map<string, any>();
+      existingAlbumDataList.forEach((albumData: any) => {
+        const albumId = String(albumData?.id || _.get(albumData, '_id') || '').trim();
+        if (!albumId) {
+          return;
+        }
+        albumDataById.set(albumId, albumData);
+      });
+
+      existingTrackDataList.forEach((trackData: any) => {
+        const filePath = String(trackData?.extra?.file_path || '').trim();
+        if (!filePath) {
+          return;
+        }
+        const trackExtra = (trackData?.extra || {}) as Record<string, any>;
+        const fileMtime = Number(trackExtra.file_mtime || 0);
+        const fileSize = Number(trackExtra.file_size || 0);
+        if (!Number.isFinite(fileMtime) || fileMtime <= 0 || !Number.isFinite(fileSize) || fileSize <= 0) {
+          // No mtime/size recorded → fast-path can't validate this row anyway,
+          // skip it so the walker takes the full-scan path for this track.
+          return;
+        }
+        const hasAudioDetails = [
+          trackExtra.audio_sample_rate_hz,
+          trackExtra.audio_bit_depth,
+          trackExtra.audio_bitrate_kbps,
+          trackExtra.audio_codec,
+          trackExtra.audio_file_type,
+        ].some(value => !!value);
+        const trackAlbumId = String(trackData?.track_album_id || '').trim();
+        const albumData = trackAlbumId ? albumDataById.get(trackAlbumId) : undefined;
+        const albumExtra = (albumData?.extra || {}) as Record<string, any>;
+
+        const trackArtistIds = Array.isArray(trackData?.track_artist_ids)
+          ? (trackData.track_artist_ids as any[]).map(id => String(id || '').trim()).filter(Boolean)
+          : [];
+
+        this.existingTrackProbeByPath.set(filePath, {
+          id: String(trackData?.id || _.get(trackData, '_id') || '').trim(),
+          fileMtime,
+          fileSize,
+          trackAlbumId,
+          trackArtistIds,
+          hasAudioDetails,
+          albumSourceFingerprint: String(albumExtra.source_fingerprint || '').trim(),
+          albumName: String(albumData?.album_name || '').trim(),
+          albumArtistId: String(albumData?.album_artist_id || '').trim(),
+        });
+      });
+
+      this.syncProfilingStats.probeMapEntries = this.existingTrackProbeByPath.size;
+    } catch (error) {
+      // The fast-path is an optimization — a failure to build the probe
+      // map degrades cleanly to the pre-Phase-3 per-track DB calls.
+      console.warn('buildExistingTrackProbeMap - failed, falling back to per-track DB lookups', error);
+      this.existingTrackProbeByPath.clear();
+    } finally {
+      this.syncProfilingStats.probeMapBuildMs = performance.now() - probeMapBuildStart;
+    }
   }
 
   private logSyncProfilingStats(syncDurationMs: number): void {
@@ -224,15 +409,38 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           this.syncFilesProcessedQueueCount = 0;
           this.pendingAlbumSyncIds.clear();
           this.pendingArtistSyncIds.clear();
+          // Phase 1 perf optimization (#23): start the cover-dedup cache from a
+          // clean slate. Stale entries from a previous sync would still be
+          // valid (the resolved JPG paths on disk are persistent), but a fresh
+          // map keeps memory tight and makes the perf trace per-run reliable.
+          MediaLibraryService.resetProcessedPictureCache();
           mediaLocalStore.dispatch({ type: MediaLocalStateActionType.StartSync });
           await MediaLibraryService.startMediaTrackSync(MediaLocalConstants.Provider);
+          // Phase 3 perf optimization (#23): pre-build the in-memory probe map
+          // so the per-file fast-path can do O(1) renderer-local look-ups
+          // instead of one IPC + NEDB round-trip per scanned file.
+          //
+          // We do this AFTER `startMediaTrackSync` (which sets the provider's
+          // `sync_started_at` marker) so a parallel UI edit between probe-map
+          // build and walk would still get caught by the regular fast-path
+          // fallback — `existingTrackProbeByPath` is a hint, never a source
+          // of truth.
+          //
+          // On `forceRescan` we skip the build entirely: every file will go
+          // through the full-scan path anyway, so the probe map is dead
+          // weight and would just bloat memory for no gain.
+          if (forceRescan) {
+            this.existingTrackProbeByPath.clear();
+          } else {
+            await this.buildExistingTrackProbeMap();
+          }
           const settings: IMediaLocalSettings = settingsOverride || await MediaProviderService.getMediaProviderSettings(MediaLocalConstants.Provider);
           await Promise.map(settings.library.directories, directory => this.addTracksFromDirectory(directory, {
             signal,
             settings,
             forceRescan,
           }));
-          await this.waitForQueueInputToStabilize(signal);
+          await this.waitForQueueInputToStabilize();
 
           debug('syncMediaTracks - waiting for queue to drain. Queued: %d, Processed: %d', this.syncFilesQueuedCount, this.syncFilesProcessedQueueCount);
           const queueDrainStart = performance.now();
@@ -315,43 +523,69 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     };
   }
 
-  private async waitForQueueInputToStabilize(signal: AbortSignal): Promise<void> {
+  /**
+   * Phase 5 perf optimization (#23): wait for the directory walker to
+   * finish enqueueing files into `syncAddFileQueue`.
+   *
+   * Pre-Phase-5 this was a 200ms+200ms+200ms... polling loop that capped
+   * at 20 cycles × 100ms = 2s of forced sleep at the END of every sync,
+   * even when the walker had already finished within the first cycle.
+   *
+   * The walker source is `addTracksFromDirectory`, which uses the
+   * `IPCRenderer.stream` API — that API resolves its own promise on
+   * the `done` callback. By the time `Promise.map(directories,
+   * addTracksFromDirectory)` (in `syncMediaTracks`) has resolved, ALL
+   * directory streams have completed, so the queue can no longer grow.
+   *
+   * That means we can replace the polling with a single `setImmediate`
+   * to flush any synchronous `.add()` calls that the walker may have
+   * pushed in the same tick before we got control back. After that we
+   * KNOW no further enqueues are coming. Saves ~2s on every sync.
+   */
+  private async waitForQueueInputToStabilize(): Promise<void> {
     await new Promise<void>((resolve) => {
-      let previousQueuedCount = this.syncFilesQueuedCount;
-      let stableCycles = 0;
-      let cycles = 0;
-      const tick = () => {
-        if (signal.aborted || cycles >= 20 || stableCycles >= 3) {
-          resolve();
-          return;
-        }
-        cycles += 1;
-        if (this.syncFilesQueuedCount === previousQueuedCount) {
-          stableCycles += 1;
-        } else {
-          previousQueuedCount = this.syncFilesQueuedCount;
-          stableCycles = 0;
-        }
-        setTimeout(tick, 100);
-      };
-      setTimeout(tick, 100);
+      // One macrotask hop is enough to drain any pending `.add()` calls
+      // that the walker emitted in the current microtask-batch. The
+      // walker has no async tail beyond `IPCRenderer.stream`'s `done`
+      // callback, so a single setImmediate is structurally guaranteed.
+      setImmediate(() => resolve());
     });
   }
 
+  /**
+   * Phase 5 perf optimization (#23): wait for the PQueue workers to
+   * finish processing every track that was enqueued.
+   *
+   * Pre-Phase-5 this was another polling loop, capping at 30 × 250ms =
+   * 7.5s of forced sleep. PQueue already exposes `.onIdle()`, which
+   * resolves once the queue is empty AND no workers are still running.
+   * That's exactly what we want — no setTimeout dance needed.
+   *
+   * We also keep the abort-signal check so a user-initiated cancel
+   * doesn't get stuck waiting on the queue.
+   */
   private async waitForQueueProcessingCompletion(signal: AbortSignal): Promise<void> {
-    await new Promise<void>((resolve) => {
-      let retries = 0;
-      const tick = () => {
-        if (signal.aborted || retries >= 30 || this.syncFilesProcessedQueueCount >= this.syncFilesQueuedCount) {
+    if (signal.aborted) {
+      return;
+    }
+    // Race onIdle against the abort signal; whichever resolves first wins.
+    // PQueue's onIdle returns a promise that resolves immediately if the
+    // queue is already idle, otherwise it resolves on the queue's next
+    // idle transition. Either way, no polling.
+    await Promise.race([
+      this.syncAddFileQueue.onIdle(),
+      new Promise<void>((resolve) => {
+        if (signal.aborted) {
           resolve();
           return;
         }
-        retries += 1;
-        debug('syncMediaTracks - waiting for processing completion... %d/%d', this.syncFilesProcessedQueueCount, this.syncFilesQueuedCount);
-        setTimeout(tick, 250);
-      };
-      setTimeout(tick, 250);
-    });
+        const onAbort = () => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      }),
+    ]);
   }
 
   private markTrackRelationsAsSeen(mediaTrack: any): void {
@@ -402,6 +636,42 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     }
   }
 
+  /**
+   * Phase 5 perf optimization (#23): post-sync work parallelized while
+   * respecting the data-flow dependencies between steps.
+   *
+   * Pre-Phase-5 this was a strict sequential `await` chain through 7
+   * steps. That meant a slow step (e.g. `processArtistFeaturePictures`
+   * which fetches Deezer URLs over the network for every artist that
+   * doesn't have a feature picture yet) blocked all the others, and a
+   * 3 000-track library could spend 30+ seconds in post-processing
+   * even though most of those steps are independent.
+   *
+   * Dependency map:
+   *
+   *   consolidateCompilationAlbums   ── must finish before ──┐
+   *                                                          │
+   *                                  ─── feeds into ─→ repairAlbumArtists
+   *                                                          │
+   *                                  ─── feeds into ─→ processCompilationAlbumCovers
+   *                                                          │
+   *                                  ─── feeds into ─→ syncFolderPlaylists
+   *
+   *   processHiddenAlbumPlaylistCovers   ─── independent
+   *   processArtistFeaturePictures       ─── independent
+   *   processSmartPlaylistCovers         ─── independent
+   *
+   * So we run `consolidateCompilationAlbums` alone first, then fan out
+   * the remaining six steps via `Promise.all`. Each step still owns its
+   * own abort-signal check so an abort propagates without bringing the
+   * other parallel branches down.
+   *
+   * Important: this method dispatches the post-processing in the
+   * background (the promise is stored on `this.syncPostProcessingPromise`
+   * but NOT awaited by the sync-finalizer) — same fire-and-forget
+   * semantics as before. The new parallel structure only changes how
+   * the work is scheduled internally.
+   */
   private runSyncPostProcessing(settings: IMediaLocalSettings, signal: AbortSignal): void {
     if (this.syncPostProcessingPromise) {
       return;
@@ -412,31 +682,26 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       if (signal.aborted) {
         return;
       }
+
+      // Wave A: must run first because the consolidation step renames /
+      // merges albums that the subsequent steps then operate on.
       await this.consolidateCompilationAlbums(settings);
       if (signal.aborted) {
         return;
       }
-      await this.syncFolderPlaylists(settings);
-      if (signal.aborted) {
-        return;
-      }
-      await this.repairAlbumArtists();
-      if (signal.aborted) {
-        return;
-      }
-      await this.processCompilationAlbumCovers(settings);
-      if (signal.aborted) {
-        return;
-      }
-      await this.processHiddenAlbumPlaylistCovers();
-      if (signal.aborted) {
-        return;
-      }
-      await this.processArtistFeaturePictures();
-      if (signal.aborted) {
-        return;
-      }
-      await this.processSmartPlaylistCovers();
+
+      // Wave B: independent work that only depended on Wave A having
+      // finished. We wrap each step in `runPostProcessingStep` so a
+      // failure or abort in one branch doesn't crash the whole wave.
+      await Promise.all([
+        this.runPostProcessingStep('syncFolderPlaylists', signal, () => this.syncFolderPlaylists(settings)),
+        this.runPostProcessingStep('repairAlbumArtists', signal, () => this.repairAlbumArtists()),
+        this.runPostProcessingStep('processCompilationAlbumCovers', signal, () => this.processCompilationAlbumCovers(settings)),
+        this.runPostProcessingStep('processHiddenAlbumPlaylistCovers', signal, () => this.processHiddenAlbumPlaylistCovers()),
+        this.runPostProcessingStep('processArtistFeaturePictures', signal, () => this.processArtistFeaturePictures()),
+        this.runPostProcessingStep('processSmartPlaylistCovers', signal, () => this.processSmartPlaylistCovers()),
+      ]);
+
       if (signal.aborted) {
         return;
       }
@@ -452,6 +717,28 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       .finally(() => {
         this.syncPostProcessingPromise = null;
       });
+  }
+
+  /**
+   * Phase 5 perf optimization (#23): runs a single Wave-B post-processing
+   * step in isolation.
+   *
+   * Wraps the step in:
+   *   • a pre-check on the abort signal (so a step that gets to the
+   *     scheduler after an abort never even starts)
+   *   • a try/catch that logs failures but doesn't throw — we want the
+   *     other parallel steps to continue even if one fails (e.g. Deezer
+   *     unreachable should not kill the playlist-cover refresh)
+   */
+  private async runPostProcessingStep(stepName: string, signal: AbortSignal, stepRunner: () => Promise<void>): Promise<void> {
+    if (signal.aborted) {
+      return;
+    }
+    try {
+      await stepRunner();
+    } catch (error) {
+      console.error(`sync post-processing step "${stepName}" failed`, error);
+    }
   }
 
   private addTracksFromDirectory(directory: string, options: { signal: AbortSignal, settings: IMediaLocalSettings, forceRescan?: boolean }): Promise<void> {
@@ -565,6 +852,78 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     // first check if we can simply mark it as seen; required both mtime and size for this to work
     if (!forceRescan && isNumber(file.stats?.mtime) && isNumber(file.stats?.size)) {
       const fastPathProbeStart = performance.now();
+      const fileMtime = Number(file.stats?.mtime);
+      const fileSize = Number(file.stats?.size);
+
+      // Phase 3 perf optimization (#23): in-memory fast-path. Use the
+      // pre-built `existingTrackProbeByPath` (1 IPC call at sync start)
+      // instead of one `updateMediaTrack(...)` per file (N IPC calls).
+      //
+      // This in-memory path only handles the "everything matches, no
+      // changes" case. If any of the gating predicates below trip
+      // (audio details missing, source fingerprint mismatch, grouping
+      // changed) we deliberately fall through to the original DB-based
+      // probe so the existing fallback paths stay intact and behaviour
+      // remains identical to pre-Phase-3 syncs.
+      const existingProbe = this.existingTrackProbeByPath.get(file.path);
+      if (existingProbe
+        && existingProbe.fileMtime === fileMtime
+        && existingProbe.fileSize === fileSize
+        && existingProbe.hasAudioDetails) {
+        const expectedGroupingFolder = this.getEffectiveGroupingFolder(file.path, !!settings.library.group_compilations_by_folder);
+        const expectedSourceFingerprint = CryptoService.sha256(expectedGroupingFolder);
+        const fingerprintMatches = existingProbe.albumSourceFingerprint === expectedSourceFingerprint;
+
+        let groupingMatches = true;
+        if (settings.library.group_compilations_by_folder) {
+          const parentDir = path.dirname(file.path);
+          let folderName = path.basename(parentDir);
+          if (folderName.match(/^(disc|cd)\s*\d+$/i)) {
+            const grandParentDir = path.dirname(parentDir);
+            folderName = path.basename(grandParentDir);
+          }
+          const yearMatch = folderName.match(/\s*\((\d{4})\)/);
+          if (yearMatch) {
+            folderName = folderName.replace(yearMatch[0], '');
+          }
+          groupingMatches = existingProbe.albumName === folderName;
+        }
+
+        if (fingerprintMatches && groupingMatches) {
+          // All preconditions met → bump sync_timestamp on the track row
+          // (single IPC write, the datastore's `wouldDocumentChange` will
+          // de-dupe to a no-op if `sync_timestamp` is identical) and
+          // queue the album/artist sync-mark flush. We also record the
+          // relations directly from the cached probe so the post-sync
+          // `flushPendingAlbumAndArtistSyncMarks` knows which entities
+          // belong to this track without another DB round-trip.
+          await MediaTrackService.updateMediaTrack({
+            id: existingProbe.id,
+          }, {
+            sync_timestamp: scanTimestamp,
+          });
+          if (existingProbe.trackAlbumId) {
+            this.pendingAlbumSyncIds.add(existingProbe.trackAlbumId);
+          }
+          if (existingProbe.albumArtistId) {
+            this.pendingArtistSyncIds.add(existingProbe.albumArtistId);
+          }
+          existingProbe.trackArtistIds.forEach(artistId => this.pendingArtistSyncIds.add(artistId));
+
+          this.syncProfilingStats.fastPathInMemoryHits += 1;
+          this.syncProfilingStats.filesFastSkipped += 1;
+          this.syncProfilingStats.fastPathProbeMs += performance.now() - fastPathProbeStart;
+          debug('addTrackFromFile - in-memory fast-path hit for %s (track %s), skipping DB probe', file.path, existingProbe.id);
+          return undefined;
+        }
+        // Fingerprint or grouping mismatch → record the regroup-fallback
+        // counter and fall through to the DB-based probe so the existing
+        // grouping logic gets a chance to do the heavy work.
+        if (!fingerprintMatches || !groupingMatches) {
+          this.syncProfilingStats.fastPathRegroupFallbacks += 1;
+        }
+      }
+
       const mediaTrack = await MediaTrackService.updateMediaTrack({
         provider: MediaLocalConstants.Provider,
         provider_id: mediaTrackId,

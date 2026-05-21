@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
 import _ from 'lodash';
 
-import { CollectionViewControls, MediaArtists } from '../../components';
+import { MediaArtists } from '../../components';
+import { useRegisterTopMenuBarSort } from '../../components/top-menu-bar/top-menu-bar.sort-store';
 import { RootState } from '../../reducers';
 import { I18nService, MediaArtistService } from '../../services';
 import { ArtistViewMode } from '../../services/media-artist.service';
@@ -12,7 +13,6 @@ import {
   COLLECTION_COVER_SIZE_EVENT,
   clampCollectionCoverSize,
   getCollectionCoverSize,
-  setCollectionCoverSize,
 } from '../../utils/collection-cover-size.utils';
 
 type SortOption = 'artist' | 'added' | 'genre';
@@ -125,22 +125,36 @@ export function ArtistsPage() {
     }));
   };
 
+  // Artist label depends on the current view mode — the same control sorts
+  // either "Artists" or "Album Artists" depending on what the user has
+  // configured in the global UI settings. We surface that to the user via
+  // a context-aware label (falls back to the generic "Artist" string if no
+  // mode-specific i18n key is registered yet).
+  const artistSortLabel = useMemo(() => {
+    if (artistViewMode === 'album_artists') {
+      return I18nService.getString('label_album_sort_album_artist')
+        || I18nService.getString('label_album_sort_artist');
+    }
+    return I18nService.getString('label_album_sort_artist');
+  }, [artistViewMode]);
+
+  const topMenuBarSortConfig = useMemo(() => ({
+    options: [
+      { value: 'artist', label: artistSortLabel },
+      { value: 'added', label: I18nService.getString('label_album_sort_added') },
+      { value: 'genre', label: I18nService.getString('label_genre') },
+    ],
+    currentValue: sortBy,
+    direction: sortDirection,
+    onSortChange: (value: string) => updateSort(value as SortOption, sortDirection),
+    onDirectionToggle: () => updateSort(sortBy, sortDirection === 'asc' ? 'desc' : 'asc'),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [artistSortLabel, sortBy, sortDirection]);
+
+  useRegisterTopMenuBarSort(topMenuBarSortConfig);
+
   return (
     <div className="container-fluid">
-      <CollectionViewControls
-        coverSize={coverSize}
-        onCoverSizeChange={value => setCoverSize(setCollectionCoverSize(value))}
-        sortBy={sortBy}
-        sortDirection={sortDirection}
-        onSortByChange={value => updateSort(value as SortOption, sortDirection)}
-        onSortDirectionToggle={() => updateSort(sortBy, sortDirection === 'asc' ? 'desc' : 'asc')}
-        sortToggleTooltip={I18nService.getString('tooltip_album_sort_toggle')}
-        sortOptions={[
-          { value: 'artist', label: I18nService.getString('label_album_sort_artist') },
-          { value: 'added', label: I18nService.getString('label_album_sort_added') },
-          { value: 'genre', label: I18nService.getString('label_genre') },
-        ]}
-      />
       <div className="row">
         <MediaArtists mediaArtists={sortedArtists} coverSize={coverSize}/>
       </div>

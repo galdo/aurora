@@ -288,29 +288,14 @@ export function SettingsPage() {
     dapTransport,
   ]);
   const originalRepositoryLink = Links.ProjectOriginal || Links.Project;
-  const forkFeatureItems = [
-    I18nService.getString('settings_info_feature_cd_import'),
-    I18nService.getString('settings_info_feature_album_sorting'),
-    I18nService.getString('settings_info_feature_podcasts'),
-    I18nService.getString('settings_info_feature_playlists'),
-    I18nService.getString('settings_info_feature_dap_sync'),
-    I18nService.getString('settings_info_feature_multilanguage'),
-    I18nService.getString('settings_info_feature_equalizer'),
-    I18nService.getString('settings_info_feature_ui'),
-  ];
-  const aiSourceLinks = [
-    {
-      href: Links.SourceTrae,
-      label: I18nService.getString('settings_info_ai_source_trae'),
-    },
-    {
-      href: Links.SourceGptCodex,
-      label: I18nService.getString('settings_info_ai_source_gpt_codex'),
-    },
-    {
-      href: Links.SourceGeminiPro,
-      label: I18nService.getString('settings_info_ai_source_gemini_pro'),
-    },
+  const pulseLauncherFeatureItems = [
+    I18nService.getString('settings_info_pulse_launcher_feature_home'),
+    I18nService.getString('settings_info_pulse_launcher_feature_library'),
+    I18nService.getString('settings_info_pulse_launcher_feature_dap'),
+    I18nService.getString('settings_info_pulse_launcher_feature_podcasts'),
+    I18nService.getString('settings_info_pulse_launcher_feature_widgets'),
+    I18nService.getString('settings_info_pulse_launcher_feature_focus'),
+    I18nService.getString('settings_info_pulse_launcher_feature_offline'),
   ];
   const whatsNewTitle = I18nService.getString('label_settings_whats_new');
   const whatsNewHtml = React.useMemo(() => sanitizeHtmlContent(String(whatsNewPayload?.releaseNotes || '')), [whatsNewPayload?.releaseNotes]);
@@ -712,8 +697,8 @@ export function SettingsPage() {
                         onClick={() => {
                           MediaLibraryService.cancelDapLibrarySync();
                         }}
-                        title="Kopiervorgang abbrechen"
-                        aria-label="Kopiervorgang abbrechen"
+                        title={I18nService.getString('tooltip_settings_dap_cancel_sync')}
+                        aria-label={I18nService.getString('tooltip_settings_dap_cancel_sync')}
                       >
                         <Icon name={Icons.Close}/>
                       </button>
@@ -723,11 +708,11 @@ export function SettingsPage() {
                         className={cx('dap-progress-action-button', 'sync')}
                         disabled={!canStartDapSync}
                         onClick={handleManualDapSync}
-                        title="DAP synchronisieren"
-                        aria-label="DAP synchronisieren"
+                        title={I18nService.getString('tooltip_settings_dap_start_sync')}
+                        aria-label={I18nService.getString('tooltip_settings_dap_start_sync')}
                       >
                         <Icon name={Icons.Refresh}/>
-                        <span>Sync</span>
+                        <span>{I18nService.getString('label_settings_dap_sync_button')}</span>
                       </button>
                     )}
                   </span>
@@ -748,7 +733,7 @@ export function SettingsPage() {
                 </div>
                 <div className={cx('dap-progress-meta')}>
                   <span className={cx('dap-progress-meta-item')}>
-                    Geprüft
+                    {I18nService.getString('label_settings_dap_progress_checked')}
                     {' '}
                     {dapSyncProgress.processedItems}
                     {' / '}
@@ -756,19 +741,19 @@ export function SettingsPage() {
                   </span>
                   <span className={cx('dap-progress-meta-separator')}>•</span>
                   <span className={cx('dap-progress-meta-item')}>
-                    Kopiert
+                    {I18nService.getString('label_settings_dap_progress_copied')}
                     {' '}
                     {dapSyncProgress.copiedFiles}
                   </span>
                   <span className={cx('dap-progress-meta-separator')}>•</span>
                   <span className={cx('dap-progress-meta-item')}>
-                    Unverändert
+                    {I18nService.getString('label_settings_dap_progress_unchanged')}
                     {' '}
                     {dapUnchangedFiles}
                   </span>
                   <span className={cx('dap-progress-meta-separator')}>•</span>
                   <span className={cx('dap-progress-meta-item')}>
-                    Gelöscht
+                    {I18nService.getString('label_settings_dap_progress_deleted')}
                     {' '}
                     {dapSyncProgress.deletedFiles}
                   </span>
@@ -794,19 +779,19 @@ export function SettingsPage() {
               </div>
               <div className={cx('settings-row')} style={{ marginTop: '12px' }}>
                 <div>
-                  <div className={cx('settings-subheading')}>Sync-Status zurücksetzen</div>
+                  <div className={cx('settings-subheading')}>{I18nService.getString('label_settings_dap_reset_state_title')}</div>
                   <div className={cx('settings-description')}>
-                    Setzt den gespeicherten Sync-Status zurück. Beim nächsten Sync werden alle Dateien erneut geprüft und bei Bedarf kopiert (z.B. nach Formatierung der SD-Karte).
+                    {I18nService.getString('label_settings_dap_reset_state_description')}
                   </div>
                 </div>
                 <Button
                   variant={['secondary']}
                   onButtonSubmit={() => {
                     MediaLibraryService.abortAndResetDapLibrarySyncState();
-                    window.alert('Sync-Status wurde zurückgesetzt. Beim nächsten Sync werden alle Dateien erneut übertragen.');
+                    window.alert(I18nService.getString('label_settings_dap_reset_state_done'));
                   }}
                 >
-                  Zurücksetzen
+                  {I18nService.getString('button_settings_dap_reset_state')}
                 </Button>
               </div>
             </div>
@@ -856,12 +841,12 @@ export function SettingsPage() {
                   <div className={cx('settings-subheading')}>
                     {I18nService.getString('label_settings_dlna_server')}
                     {' / '}
-                    UPnP Media Server
+                    {I18nService.getString('label_settings_dlna_upnp_suffix')}
                   </div>
                   <div className={cx('settings-description')}>
                     {I18nService.getString('label_settings_dlna_server_description')}
                     {' '}
-                    When enabled, it starts automatically and is published as a UPnP MediaServer (DMS) via SSDP discovery.
+                    {I18nService.getString('label_settings_dlna_upnp_description_suffix')}
                   </div>
                   <div className={cx('settings-compact-meta')}>
                     <span className={cx('settings-compact-label')}>{I18nService.getString('label_settings_status')}</span>
@@ -1097,45 +1082,37 @@ export function SettingsPage() {
             <div className={cx('settings-info-item')}>
               <Icon name={Icons.Github}/>
               <div>
-                <div className={cx('settings-info-title')}>{I18nService.getString('settings_info_fork_title')}</div>
+                <div className={cx('settings-info-title')}>{I18nService.getString('settings_info_thanks_title')}</div>
                 <div className={cx('settings-description')}>
-                  {I18nService.getString('settings_info_fork_desc_1')}
+                  {I18nService.getString('settings_info_thanks_desc_1')}
                 </div>
                 <div className={cx('settings-description')}>
-                  {I18nService.getString('settings_info_fork_desc_2')}
+                  {I18nService.getString('settings_info_thanks_desc_2')}
                 </div>
                 <div className={cx('settings-description')}>
-                  {I18nService.getString('settings_info_fork_desc_3')}
+                  {I18nService.getString('settings_info_thanks_desc_3')}
                 </div>
-                <div className={cx('settings-info-subtitle')}>{I18nService.getString('settings_info_feature_list_title')}</div>
-                <ul className={cx('settings-info-feature-list')}>
-                  {forkFeatureItems.map(featureItem => (
-                    <li key={featureItem}>{featureItem}</li>
-                  ))}
-                </ul>
                 <Link href={originalRepositoryLink} className={cx('settings-info-link')}>
                   {I18nService.getString('link_open_original_repo')}
                 </Link>
               </div>
             </div>
             <div className={cx('settings-info-item')}>
-              <Icon name={Icons.Refresh}/>
+              <Icon name={Icons.Github}/>
               <div>
-                <div className={cx('settings-info-title')}>{I18nService.getString('settings_info_ai_title')}</div>
+                <div className={cx('settings-info-title')}>{I18nService.getString('settings_info_pulse_launcher_title')}</div>
                 <div className={cx('settings-description')}>
-                  {I18nService.getString('settings_info_ai_desc')}
+                  {I18nService.getString('settings_info_pulse_launcher_desc_1')}
                 </div>
-                <div className={cx('settings-info-source-links')}>
-                  {aiSourceLinks.map(sourceLink => (
-                    <Link
-                      key={sourceLink.href}
-                      href={sourceLink.href}
-                      className={cx('settings-info-source-link')}
-                    >
-                      {sourceLink.label}
-                    </Link>
+                <div className={cx('settings-description')}>
+                  {I18nService.getString('settings_info_pulse_launcher_desc_2')}
+                </div>
+                <div className={cx('settings-info-subtitle')}>{I18nService.getString('settings_info_pulse_launcher_features_title')}</div>
+                <ul className={cx('settings-info-feature-list')}>
+                  {pulseLauncherFeatureItems.map(featureItem => (
+                    <li key={featureItem}>{featureItem}</li>
                   ))}
-                </div>
+                </ul>
               </div>
             </div>
             <div className={cx('settings-info-item')}>
@@ -1175,7 +1152,7 @@ export function SettingsPage() {
             )}
           </div>
           <div className={cx('settings-info-logo')}>
-            <img src={AppLogo} alt="Aurora Pulse Logo" className={cx('settings-info-logo-image')}/>
+            <img src={AppLogo} alt={I18nService.getString('label_settings_app_logo_alt')} className={cx('settings-info-logo-image')}/>
           </div>
         </aside>
       </div>
