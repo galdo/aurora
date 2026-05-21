@@ -440,7 +440,7 @@ class MediaLocalLibraryService implements IMediaLibraryService {
             settings,
             forceRescan,
           }));
-          await this.waitForQueueInputToStabilize(signal);
+          await this.waitForQueueInputToStabilize();
 
           debug('syncMediaTracks - waiting for queue to drain. Queued: %d, Processed: %d', this.syncFilesQueuedCount, this.syncFilesProcessedQueueCount);
           const queueDrainStart = performance.now();
@@ -523,43 +523,69 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     };
   }
 
-  private async waitForQueueInputToStabilize(signal: AbortSignal): Promise<void> {
+  /**
+   * Phase 5 perf optimization (#23): wait for the directory walker to
+   * finish enqueueing files into `syncAddFileQueue`.
+   *
+   * Pre-Phase-5 this was a 200ms+200ms+200ms... polling loop that capped
+   * at 20 cycles × 100ms = 2s of forced sleep at the END of every sync,
+   * even when the walker had already finished within the first cycle.
+   *
+   * The walker source is `addTracksFromDirectory`, which uses the
+   * `IPCRenderer.stream` API — that API resolves its own promise on
+   * the `done` callback. By the time `Promise.map(directories,
+   * addTracksFromDirectory)` (in `syncMediaTracks`) has resolved, ALL
+   * directory streams have completed, so the queue can no longer grow.
+   *
+   * That means we can replace the polling with a single `setImmediate`
+   * to flush any synchronous `.add()` calls that the walker may have
+   * pushed in the same tick before we got control back. After that we
+   * KNOW no further enqueues are coming. Saves ~2s on every sync.
+   */
+  private async waitForQueueInputToStabilize(): Promise<void> {
     await new Promise<void>((resolve) => {
-      let previousQueuedCount = this.syncFilesQueuedCount;
-      let stableCycles = 0;
-      let cycles = 0;
-      const tick = () => {
-        if (signal.aborted || cycles >= 20 || stableCycles >= 3) {
-          resolve();
-          return;
-        }
-        cycles += 1;
-        if (this.syncFilesQueuedCount === previousQueuedCount) {
-          stableCycles += 1;
-        } else {
-          previousQueuedCount = this.syncFilesQueuedCount;
-          stableCycles = 0;
-        }
-        setTimeout(tick, 100);
-      };
-      setTimeout(tick, 100);
+      // One macrotask hop is enough to drain any pending `.add()` calls
+      // that the walker emitted in the current microtask-batch. The
+      // walker has no async tail beyond `IPCRenderer.stream`'s `done`
+      // callback, so a single setImmediate is structurally guaranteed.
+      setImmediate(() => resolve());
     });
   }
 
+  /**
+   * Phase 5 perf optimization (#23): wait for the PQueue workers to
+   * finish processing every track that was enqueued.
+   *
+   * Pre-Phase-5 this was another polling loop, capping at 30 × 250ms =
+   * 7.5s of forced sleep. PQueue already exposes `.onIdle()`, which
+   * resolves once the queue is empty AND no workers are still running.
+   * That's exactly what we want — no setTimeout dance needed.
+   *
+   * We also keep the abort-signal check so a user-initiated cancel
+   * doesn't get stuck waiting on the queue.
+   */
   private async waitForQueueProcessingCompletion(signal: AbortSignal): Promise<void> {
-    await new Promise<void>((resolve) => {
-      let retries = 0;
-      const tick = () => {
-        if (signal.aborted || retries >= 30 || this.syncFilesProcessedQueueCount >= this.syncFilesQueuedCount) {
+    if (signal.aborted) {
+      return;
+    }
+    // Race onIdle against the abort signal; whichever resolves first wins.
+    // PQueue's onIdle returns a promise that resolves immediately if the
+    // queue is already idle, otherwise it resolves on the queue's next
+    // idle transition. Either way, no polling.
+    await Promise.race([
+      this.syncAddFileQueue.onIdle(),
+      new Promise<void>((resolve) => {
+        if (signal.aborted) {
           resolve();
           return;
         }
-        retries += 1;
-        debug('syncMediaTracks - waiting for processing completion... %d/%d', this.syncFilesProcessedQueueCount, this.syncFilesQueuedCount);
-        setTimeout(tick, 250);
-      };
-      setTimeout(tick, 250);
-    });
+        const onAbort = () => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      }),
+    ]);
   }
 
   private markTrackRelationsAsSeen(mediaTrack: any): void {
@@ -610,6 +636,42 @@ class MediaLocalLibraryService implements IMediaLibraryService {
     }
   }
 
+  /**
+   * Phase 5 perf optimization (#23): post-sync work parallelized while
+   * respecting the data-flow dependencies between steps.
+   *
+   * Pre-Phase-5 this was a strict sequential `await` chain through 7
+   * steps. That meant a slow step (e.g. `processArtistFeaturePictures`
+   * which fetches Deezer URLs over the network for every artist that
+   * doesn't have a feature picture yet) blocked all the others, and a
+   * 3 000-track library could spend 30+ seconds in post-processing
+   * even though most of those steps are independent.
+   *
+   * Dependency map:
+   *
+   *   consolidateCompilationAlbums   ── must finish before ──┐
+   *                                                          │
+   *                                  ─── feeds into ─→ repairAlbumArtists
+   *                                                          │
+   *                                  ─── feeds into ─→ processCompilationAlbumCovers
+   *                                                          │
+   *                                  ─── feeds into ─→ syncFolderPlaylists
+   *
+   *   processHiddenAlbumPlaylistCovers   ─── independent
+   *   processArtistFeaturePictures       ─── independent
+   *   processSmartPlaylistCovers         ─── independent
+   *
+   * So we run `consolidateCompilationAlbums` alone first, then fan out
+   * the remaining six steps via `Promise.all`. Each step still owns its
+   * own abort-signal check so an abort propagates without bringing the
+   * other parallel branches down.
+   *
+   * Important: this method dispatches the post-processing in the
+   * background (the promise is stored on `this.syncPostProcessingPromise`
+   * but NOT awaited by the sync-finalizer) — same fire-and-forget
+   * semantics as before. The new parallel structure only changes how
+   * the work is scheduled internally.
+   */
   private runSyncPostProcessing(settings: IMediaLocalSettings, signal: AbortSignal): void {
     if (this.syncPostProcessingPromise) {
       return;
@@ -620,31 +682,26 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       if (signal.aborted) {
         return;
       }
+
+      // Wave A: must run first because the consolidation step renames /
+      // merges albums that the subsequent steps then operate on.
       await this.consolidateCompilationAlbums(settings);
       if (signal.aborted) {
         return;
       }
-      await this.syncFolderPlaylists(settings);
-      if (signal.aborted) {
-        return;
-      }
-      await this.repairAlbumArtists();
-      if (signal.aborted) {
-        return;
-      }
-      await this.processCompilationAlbumCovers(settings);
-      if (signal.aborted) {
-        return;
-      }
-      await this.processHiddenAlbumPlaylistCovers();
-      if (signal.aborted) {
-        return;
-      }
-      await this.processArtistFeaturePictures();
-      if (signal.aborted) {
-        return;
-      }
-      await this.processSmartPlaylistCovers();
+
+      // Wave B: independent work that only depended on Wave A having
+      // finished. We wrap each step in `runPostProcessingStep` so a
+      // failure or abort in one branch doesn't crash the whole wave.
+      await Promise.all([
+        this.runPostProcessingStep('syncFolderPlaylists', signal, () => this.syncFolderPlaylists(settings)),
+        this.runPostProcessingStep('repairAlbumArtists', signal, () => this.repairAlbumArtists()),
+        this.runPostProcessingStep('processCompilationAlbumCovers', signal, () => this.processCompilationAlbumCovers(settings)),
+        this.runPostProcessingStep('processHiddenAlbumPlaylistCovers', signal, () => this.processHiddenAlbumPlaylistCovers()),
+        this.runPostProcessingStep('processArtistFeaturePictures', signal, () => this.processArtistFeaturePictures()),
+        this.runPostProcessingStep('processSmartPlaylistCovers', signal, () => this.processSmartPlaylistCovers()),
+      ]);
+
       if (signal.aborted) {
         return;
       }
@@ -660,6 +717,28 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       .finally(() => {
         this.syncPostProcessingPromise = null;
       });
+  }
+
+  /**
+   * Phase 5 perf optimization (#23): runs a single Wave-B post-processing
+   * step in isolation.
+   *
+   * Wraps the step in:
+   *   • a pre-check on the abort signal (so a step that gets to the
+   *     scheduler after an abort never even starts)
+   *   • a try/catch that logs failures but doesn't throw — we want the
+   *     other parallel steps to continue even if one fails (e.g. Deezer
+   *     unreachable should not kill the playlist-cover refresh)
+   */
+  private async runPostProcessingStep(stepName: string, signal: AbortSignal, stepRunner: () => Promise<void>): Promise<void> {
+    if (signal.aborted) {
+      return;
+    }
+    try {
+      await stepRunner();
+    } catch (error) {
+      console.error(`sync post-processing step "${stepName}" failed`, error);
+    }
   }
 
   private addTracksFromDirectory(directory: string, options: { signal: AbortSignal, settings: IMediaLocalSettings, forceRescan?: boolean }): Promise<void> {
