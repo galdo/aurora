@@ -75,7 +75,39 @@ interface IFastPathTrackProbe {
 }
 
 class MediaLocalLibraryService implements IMediaLibraryService {
-  private readonly syncAddFileQueue = new PQueue({ concurrency: 10, autoStart: true, timeout: 5 * 60 * 1000 }); // timeout 5 minutes / track
+  /**
+   * Phase 4 perf optimization (#23): per-track concurrency cap for the
+   * scan worker queue.
+   *
+   * Pre-Phase-4 we ran 10 workers in parallel even though the main process
+   * could only resize one cover at a time (sharp + sha1 ran on the main
+   * thread). Now sharp runs in a `worker_threads` pool of `cpu_count - 1`
+   * (capped 1..4), so we can usefully widen the renderer queue too —
+   * but NOT linearly, because each worker still takes a Promise-microtask
+   * roundtrip per track and NEDB serialises writes anyway.
+   *
+   * `cpu_count * 2` (clamped 6..16) is the sweet spot we verified on
+   * dev machines: enough parallelism to keep both the sharp-worker pool
+   * and the IPC pipeline saturated, without piling up so many in-flight
+   * tracks that V8 GC starts to dominate. Falls back to 12 when
+   * `os.cpus()` is unavailable (some sandboxed environments).
+   */
+  private static readonly syncAddFileQueueConcurrency = (() => {
+    try {
+      // eslint-disable-next-line global-require
+      const cpuCount = (require('os').cpus() || []).length || 6;
+      return Math.max(6, Math.min(16, cpuCount * 2));
+    } catch (_e) {
+      return 12;
+    }
+  })();
+
+  private readonly syncAddFileQueue = new PQueue({
+    concurrency: MediaLocalLibraryService.syncAddFileQueueConcurrency,
+    autoStart: true,
+    timeout: 5 * 60 * 1000,
+  }); // timeout 5 minutes / track
+
   private readonly syncLock = new Semaphore(1);
   private syncAbortController: AbortController | null = null;
   private syncMediaTracksPromise: Promise<void> | null = null;
