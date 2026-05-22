@@ -1,5 +1,3 @@
-![Aurora Pulse · Vibe](./news.png)
-
 # 🌐 **The Aurora Pulse Website is live**
 
 ### **One ecosystem, finally with a home of its own.**
