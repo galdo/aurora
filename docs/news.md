@@ -1,68 +1,45 @@
-# 🚀 **Introducing Vibe Launcher**
+![Aurora Pulse · Vibe](./news.png)
 
-### **Your Aurora Pulse companion — now officially available on Android.**
+# 🌐 **The Aurora Pulse Website is live**
 
-Today is a huge moment for us.
+### **One ecosystem, finally with a home of its own.**
 
-We’re beyond excited — and honestly incredibly proud — to finally announce the official launch of **Vibe Launcher**, the dedicated Android companion app for **Aurora Pulse**.
+After many late evenings, countless small UI tweaks and a lot of community feedback, we’re excited to share another milestone:
 
-What started as an idea, countless sketches, late-night coding sessions, testing phases, and community feedback has now become reality.
+**👉 [galdo.github.io/aurora](https://galdo.github.io/aurora/) is officially online.**
 
-Built from the ground up with the same love for music that drives Aurora Pulse, **Vibe Launcher brings your local music experience directly to your smartphone and DAP (Digital Audio Player)** — beautifully, seamlessly, and entirely on your terms.
-
----
-
-## ✨ **Key Features**
-
-* **Seamless Library Sync** — Wirelessly sync your Aurora Pulse library to your Android device.
-* **Gapless Playback** — Enjoy uninterrupted listening, exactly as intended.
-* **Hi-Res Audio Support** — Full support for **FLAC, ALAC, DSD**, and high-resolution audio formats.
-* **DLNA Streaming** — Receive Stream from Aurora Pulse or any DLNA Control Device in your network.
-* **Offline First** — Your music stays yours. No cloud required.
-* **Queue Management** — Powerful playback and playlist control right at your fingertips.
+A single, polished landing page that finally tells the whole Aurora Pulse story side by side with its Android companion **Vibe – Music & Podcast Launcher**. It’s the place we wanted to point people to for a long time — and it’s been built around the same principles that drive the apps themselves: clear, focused, audiophile-friendly, and respectful of your data.
 
 ---
 
-## 🎨 **A Completely New Design Language**
+## ✨ **What you’ll find there**
 
-Vibe Launcher introduces an entirely **new visual design concept** — something we’ve been crafting and refining for months.
-
-From fluid animations and adaptive layouts to a cleaner, more immersive interface optimized for mobile screens, this is more than just a launcher — it’s the beginning of a new Aurora Pulse experience.
-
-And this is only the start:
-
-This new design direction will gradually make its way into **Aurora Pulse on desktop**, helping create one consistent, beautiful ecosystem across all your devices.
+* **The two-screen story.** Aurora Pulse on the desktop as your *mission control*, Vibe on Android as the encore — explained clearly with screenshots from both sides.
+* **Feature highlights at a glance.** FLAC-centric library, 10-band EQ with AutoEQ profile import, DAP sync over USB-ADB or filesystem, robust DLNA renderer control, CD ripping, podcasts — all in one place.
+* **DLNA & Vibe Launcher details.** Why we keep tightening queue handling, why your home screen *is* the player on Android, and how the two surfaces stay in sync.
+* **Direct downloads.** macOS (Apple Silicon & Intel), Windows, Linux Flatpak, and the official Vibe launcher on Google Play — no detours, no marketing maze.
+* **Privacy made simple.** A short, plain-language privacy policy that reflects what the apps actually do: stay local, no behavioral telemetry, no cloud lock-in.
 
 ---
 
-## ❤️ **Thank You — Truly**
+## 🎨 **Why a website at all?**
 
-This launch would **not** exist without this community.
+Because Aurora Pulse and Vibe are no longer “just a player and a launcher”. They’re becoming a **deliberate ecosystem** — one library, two surfaces, zero lock-in. A landing page makes that promise visible at a glance, and gives newcomers a friendly starting point that isn’t a wall of release notes.
 
-To everyone who participated in testing, reported bugs, shared feedback, suggested ideas, encouraged us, or simply believed in what Aurora Pulse could become:
-
-**Thank you.**
-
-You helped shape Vibe Launcher into what it is today.
-
-Every message, every report, every discussion helped us improve the experience — and we’re genuinely grateful to have such an incredible community behind this project.
-
-We’re proud of what we built.
-
-But even more than that:
-
-**We’re proud of what we built together.**
-
-And this journey? It’s only just beginning.
+It’s also our way of saying: **this is built to last**. Stable releases, clear docs, a public GitHub, and now a proper home on the web.
 
 ---
 
-## 📲 **Download Vibe Launcher Now**
+## ❤️ **Thank you**
 
-Vibe Launcher has officially left closed testing and is now **available worldwide on Google Play**.
+If you’ve filed an issue, sent a screenshot of an edge case, suggested a tag-handling tweak, or simply hit ⭐ on the repo — thank you. The site exists because the project does, and the project exists because of you.
 
-👉 **Download now:**
+If you like what you see and want to support the work, the **Buy Me a Coffee** button is right at the top of the new page. Every one of those is genuinely appreciated.
 
-[![Get it on Google Play](https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png)](https://play.google.com/store/apps/details?id=app.better_craft.vibelauncher)
+---
 
-*Thank you for being part of the Aurora Pulse family. We genuinely couldn’t have done this without you.*
+## 📡 **Visit the site**
+
+👉 **[galdo.github.io/aurora](https://galdo.github.io/aurora/)**
+
+See you there — and as always, thanks for being part of the journey. 🎧
