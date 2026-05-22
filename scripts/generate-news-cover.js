@@ -2,8 +2,19 @@
 /* eslint-disable no-console */
 // Generates docs/news.png — a portrait cover (1080x1350) for the
 // "Aurora Pulse Website is live" news post.
-// Renders an SVG with the brand gradient + headline + URL and converts
-// it to PNG via the locally installed sharp from src/node_modules.
+//
+// Design notes (revision 2):
+// - Strong, green-only palette derived from Aurora Green #1ee49a:
+//     deep:    #001b14
+//     mid:     #073527
+//     base:    #0e8a5b
+//     primary: #1ee49a
+//     soft:    #6ff5c2
+//     mint:    #b3fbe1
+// - "AURORA PULSE" and "Vibe" are stacked on two separate lines
+//   (one above the other) so they no longer overlap visually, with
+//   their own colored dot markers.
+// - Headline + URL pill stay in green tones, no orange.
 const path = require('path');
 const fs = require('fs');
 
@@ -16,53 +27,85 @@ const H = 1350;
 const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%"  stop-color="#020408"/>
-      <stop offset="55%" stop-color="#0b1320"/>
-      <stop offset="100%" stop-color="#000000"/>
+    <!-- Background: deep emerald → near-black, all green family -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0%"   stop-color="#001b14"/>
+      <stop offset="55%"  stop-color="#03241a"/>
+      <stop offset="100%" stop-color="#000604"/>
     </linearGradient>
-    <radialGradient id="glow1" cx="20%" cy="18%" r="55%">
+
+    <!-- Two green glows in different shades, both centered toward the
+         top-left and bottom-right to add depth without leaving the
+         green family. -->
+    <radialGradient id="glow1" cx="22%" cy="20%" r="60%">
       <stop offset="0%"  stop-color="#1ee49a" stop-opacity="0.55"/>
-      <stop offset="60%" stop-color="#1ee49a" stop-opacity="0"/>
+      <stop offset="55%" stop-color="#1ee49a" stop-opacity="0.0"/>
     </radialGradient>
-    <radialGradient id="glow2" cx="85%" cy="80%" r="55%">
-      <stop offset="0%"  stop-color="#ff8a3d" stop-opacity="0.55"/>
-      <stop offset="65%" stop-color="#ff8a3d" stop-opacity="0"/>
+    <radialGradient id="glow2" cx="80%" cy="82%" r="55%">
+      <stop offset="0%"  stop-color="#0e8a5b" stop-opacity="0.55"/>
+      <stop offset="60%" stop-color="#0e8a5b" stop-opacity="0.0"/>
     </radialGradient>
+    <radialGradient id="glow3" cx="50%" cy="60%" r="40%">
+      <stop offset="0%"  stop-color="#6ff5c2" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#6ff5c2" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Headline gradient — only green tones (mint → primary → deep) -->
     <linearGradient id="grad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"  stop-color="#1ee49a"/>
-      <stop offset="100%" stop-color="#ff8a3d"/>
+      <stop offset="0%"   stop-color="#b3fbe1"/>
+      <stop offset="50%"  stop-color="#1ee49a"/>
+      <stop offset="100%" stop-color="#0e8a5b"/>
     </linearGradient>
-    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="2"/>
-    </filter>
+
+    <!-- Pill border gradient -->
+    <linearGradient id="grad2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#1ee49a"/>
+      <stop offset="100%" stop-color="#6ff5c2"/>
+    </linearGradient>
   </defs>
 
-  <!-- background -->
+  <!-- Background stack -->
   <rect width="100%" height="100%" fill="url(#bg)"/>
   <rect width="100%" height="100%" fill="url(#glow1)"/>
   <rect width="100%" height="100%" fill="url(#glow2)"/>
+  <rect width="100%" height="100%" fill="url(#glow3)"/>
 
-  <!-- top brand pill -->
-  <g transform="translate(540, 200)" text-anchor="middle"
+  <!-- Subtle 1px green grid hint at the very edge to feel "audio
+       interface"-ish without being noisy -->
+  <rect x="40" y="40" width="${W - 80}" height="${H - 80}" rx="32" ry="32"
+        fill="none" stroke="#1ee49a" stroke-opacity="0.12" stroke-width="1.5"/>
+
+  <!-- Top brand block: TWO STACKED LINES (so they don't collide) -->
+  <g transform="translate(540, 175)" text-anchor="middle"
      font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
-     fill="#ffffff">
-    <rect x="-220" y="-46" width="440" height="72" rx="36" ry="36"
-          fill="#000000" fill-opacity="0.5" stroke="#1ee49a" stroke-opacity="0.55" stroke-width="2"/>
-    <circle cx="-184" cy="-10" r="9" fill="#1ee49a"/>
-    <text x="-160" y="0" font-size="30" font-weight="600" letter-spacing="2"
-          fill="#e7faf1" dominant-baseline="middle" text-anchor="start">
-      AURORA  PULSE
-    </text>
-    <circle cx="64" cy="-10" r="6" fill="#ffffff" fill-opacity="0.5"/>
-    <text x="84" y="0" font-size="30" font-weight="600" letter-spacing="2"
-          fill="#ffd5b3" dominant-baseline="middle" text-anchor="start">
-      VIBE
-    </text>
+     fill="#e7faf1">
+
+    <!-- Frame around both rows -->
+    <rect x="-300" y="-60" width="600" height="170" rx="28" ry="28"
+          fill="#001b14" fill-opacity="0.55"
+          stroke="#1ee49a" stroke-opacity="0.55" stroke-width="2"/>
+
+    <!-- Row 1: AURORA PULSE -->
+    <g transform="translate(0, 0)">
+      <circle cx="-150" cy="-2" r="9" fill="#1ee49a"/>
+      <text x="-130" y="0" font-size="34" font-weight="700" letter-spacing="3"
+            fill="#e7faf1" dominant-baseline="middle" text-anchor="start">
+        AURORA  PULSE
+      </text>
+    </g>
+
+    <!-- Row 2: VIBE — Music & Podcast Launcher -->
+    <g transform="translate(0, 70)">
+      <circle cx="-260" cy="-2" r="7" fill="#6ff5c2"/>
+      <text x="-242" y="0" font-size="26" font-weight="500" letter-spacing="3"
+            fill="#b3fbe1" dominant-baseline="middle" text-anchor="start">
+        VIBE  ·  MUSIC  &amp;  PODCAST  LAUNCHER
+      </text>
+    </g>
   </g>
 
-  <!-- main headline -->
-  <g transform="translate(540, 480)" text-anchor="middle"
+  <!-- Main headline -->
+  <g transform="translate(540, 510)" text-anchor="middle"
      font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
      fill="#ffffff">
     <text y="0"   font-size="92" font-weight="800" letter-spacing="-2">The website</text>
@@ -71,33 +114,33 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
     </text>
   </g>
 
-  <!-- divider -->
-  <rect x="380" y="700" width="320" height="3" rx="2" ry="2" fill="url(#grad)"/>
+  <!-- Divider -->
+  <rect x="380" y="730" width="320" height="3" rx="2" ry="2" fill="url(#grad)"/>
 
-  <!-- subline -->
-  <g transform="translate(540, 760)" text-anchor="middle"
+  <!-- Subline -->
+  <g transform="translate(540, 790)" text-anchor="middle"
      font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
-     fill="#cdd9e8">
-    <text y="0"  font-size="38" font-weight="500" opacity="0.95">Aurora Pulse · Desktop</text>
-    <text y="60" font-size="38" font-weight="500" opacity="0.95">Vibe · Music &amp; Podcast Launcher</text>
+     fill="#cdf3e2">
+    <text y="0"  font-size="38" font-weight="500" opacity="0.95">One library · Two surfaces</text>
+    <text y="60" font-size="38" font-weight="500" opacity="0.95">Desktop &amp; Android. Zero lock-in.</text>
   </g>
 
-  <!-- url badge -->
-  <g transform="translate(540, 980)" text-anchor="middle"
+  <!-- URL pill -->
+  <g transform="translate(540, 1010)" text-anchor="middle"
      font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace"
-     fill="#ffffff">
+     fill="#e7faf1">
     <rect x="-380" y="-50" width="760" height="100" rx="50" ry="50"
-          fill="#000000" fill-opacity="0.6"
-          stroke="url(#grad)" stroke-width="3"/>
+          fill="#001b14" fill-opacity="0.65"
+          stroke="url(#grad2)" stroke-width="3"/>
     <text y="14" font-size="38" font-weight="700" letter-spacing="1">galdo.github.io/aurora</text>
   </g>
 
-  <!-- footer tag -->
-  <g transform="translate(540, 1200)" text-anchor="middle"
+  <!-- Footer tag -->
+  <g transform="translate(540, 1220)" text-anchor="middle"
      font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
-     fill="#7e8aa0">
-    <text y="0"  font-size="26" font-weight="500" letter-spacing="3">LOCAL-FIRST · AUDIOPHILE · MULTI-PLATFORM</text>
-    <text y="50" font-size="22" font-weight="400" opacity="0.7">macOS · Windows · Linux · Android</text>
+     fill="#7ad9b3">
+    <text y="0"  font-size="26" font-weight="600" letter-spacing="3">LOCAL-FIRST · AUDIOPHILE · MULTI-PLATFORM</text>
+    <text y="50" font-size="22" font-weight="400" opacity="0.75">macOS · Windows · Linux · Android</text>
   </g>
 </svg>
 `;
