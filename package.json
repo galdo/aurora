@@ -29,7 +29,8 @@
     "package:mac": "npm run prepare:sharp:mac:arm64 && npm run prepare:mpv:mac:arm64 && npm run package -- --mac --arm64 --c.mac.identity=null && npm run prepare:sharp:mac:x64 && npm run prepare:mpv:mac:x64 && npm run package -- --mac --x64 --c.mac.identity=null",
     "package:win": "npm run prepare:sharp:win:arm64 && npm run package -- --win --arm64 && npm run prepare:sharp:win:ia32 && npm run package -- --win --ia32 && npm run prepare:sharp:win:x64 && npm run package -- --win --x64",
     "prepare:flatpak:icons": "bash ./flatpak/scripts/generate-icons.sh",
-    "package:linux:flatpak:x64": "npm run prepare:sharp:linux:x64 && npm run prepare:flatpak:icons && npm run package -- --linux flatpak --x64",
+    "// NOTE flatpak app-id": "electron-builder 24.x has no per-target appId in package.json — but `--config.appId=...` on the CLI works and overrides the global appId only for this build. We use the reverse-DNS form expected by Flathub / GNOME Software, while keeping the legacy 'com.galdo.aurorapulse' appId for macOS/Windows updates.",
+    "package:linux:flatpak:x64": "npm run prepare:sharp:linux:x64 && npm run prepare:flatpak:icons && npm run package -- --linux flatpak --x64 --config.appId=app.better_craft.aurorapulse",
     "package:cross": "npm run package:mac && npm run package:win",
     "prepare:sharp:host": "node ./.erb/scripts/PrepareSharpHost.js",
     "export:library:json": "node ./scripts/export-library-json.js",
@@ -150,8 +151,6 @@
       }
     },
     "flatpak": {
-      "// NOTE": "Override the Flatpak app-id so the build no longer ships under the legacy 'com.galdo.aurorapulse' namespace. Electron's appId is kept for backwards compatibility on macOS/Windows.",
-      "id": "app.better_craft.aurorapulse",
       "license": "MIT",
       "runtime": "org.freedesktop.Platform",
       "runtimeVersion": "23.08",

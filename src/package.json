@@ -1,6 +1,15 @@
 {
   "name": "aurora-pulse-app",
+  "productName": "Aurora Pulse",
   "version": "1.5.7-beta2",
+  "description": "Aurora Pulse — a beautifully crafted, local-first music player with DLNA streaming, podcast support, gapless playback and more.",
+  "homepage": "https://github.com/galdo/aurora",
+  "license": "MIT",
+  "author": {
+    "name": "better_craft",
+    "email": "support@better-craft.app",
+    "url": "https://github.com/galdo/aurora"
+  },
   "main": "./main.prod.js",
   "scripts": {
     "electron-rebuild": "node -r ../.erb/scripts/BabelRegister.js ../.erb/scripts/ElectronRebuild.js",
