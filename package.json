@@ -1,8 +1,13 @@
 {
   "name": "aurora-pulse",
   "productName": "Aurora Pulse",
-  "version": "1.5.7-beta1",
-  "description": "A local-first music player built with Electron",
+  "version": "1.5.7-beta2",
+  "description": "Aurora Pulse — a beautifully crafted, local-first music player with DLNA streaming, podcast support, gapless playback and more.",
+  "author": {
+    "name": "better_craft",
+    "email": "support@better-craft.app",
+    "url": "https://github.com/galdo/aurora"
+  },
   "scripts": {
     "build": "concurrently \"npm run build:main\" \"npm run build:renderer\"",
     "build:main": "cross-env NODE_ENV=production webpack --config ./.erb/configs/webpack.config.main.prod.babel.js",
@@ -23,7 +28,8 @@
     "prepare:mpv:mac:x64": "bash ./scripts/prepare-mpv-macos.sh x64",
     "package:mac": "npm run prepare:sharp:mac:arm64 && npm run prepare:mpv:mac:arm64 && npm run package -- --mac --arm64 --c.mac.identity=null && npm run prepare:sharp:mac:x64 && npm run prepare:mpv:mac:x64 && npm run package -- --mac --x64 --c.mac.identity=null",
     "package:win": "npm run prepare:sharp:win:arm64 && npm run package -- --win --arm64 && npm run prepare:sharp:win:ia32 && npm run package -- --win --ia32 && npm run prepare:sharp:win:x64 && npm run package -- --win --x64",
-    "package:linux:flatpak:x64": "npm run prepare:sharp:linux:x64 && npm run package -- --linux flatpak --x64",
+    "prepare:flatpak:icons": "bash ./flatpak/scripts/generate-icons.sh",
+    "package:linux:flatpak:x64": "npm run prepare:sharp:linux:x64 && npm run prepare:flatpak:icons && npm run package -- --linux flatpak --x64",
     "package:cross": "npm run package:mac && npm run package:win",
     "prepare:sharp:host": "node ./.erb/scripts/PrepareSharpHost.js",
     "export:library:json": "node ./scripts/export-library-json.js",
@@ -107,15 +113,52 @@
         "flatpak",
         "tar.gz"
       ],
-      "category": "Development",
-      "icon": "assets/icons"
+      "executableName": "aurora-pulse",
+      "synopsis": "Local-first music player with DLNA streaming",
+      "description": "Aurora Pulse is a beautifully crafted, local-first music player that puts your personal music library front and center. It supports a wide range of audio formats (FLAC, MP3, AAC, OGG, WAV, …), DLNA/UPnP streaming, podcasts, gapless playback, CD ripping, DAP synchronization and MPRIS desktop integration.",
+      "category": "AudioVideo",
+      "icon": "assets/icons",
+      "maintainer": "better_craft <support@better-craft.app>",
+      "vendor": "better_craft",
+      "mimeTypes": [
+        "audio/mpeg",
+        "audio/flac",
+        "audio/x-flac",
+        "audio/ogg",
+        "audio/x-vorbis+ogg",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/mp4",
+        "audio/aac",
+        "audio/x-aiff",
+        "audio/x-m4a",
+        "audio/x-ms-wma",
+        "audio/opus",
+        "application/ogg"
+      ],
+      "desktop": {
+        "entry": {
+          "Name": "Aurora Pulse",
+          "GenericName": "Music Player",
+          "Comment": "Local-first music player with DLNA streaming",
+          "Categories": "AudioVideo;Audio;Music;Player;",
+          "Keywords": "music;player;audio;local;flac;mp3;podcast;dlna;upnp;streaming;library;",
+          "StartupWMClass": "Aurora Pulse",
+          "StartupNotify": "true",
+          "X-GNOME-UsesNotifications": "true"
+        }
+      }
     },
     "flatpak": {
+      "// NOTE": "Override the Flatpak app-id so the build no longer ships under the legacy 'com.galdo.aurorapulse' namespace. Electron's appId is kept for backwards compatibility on macOS/Windows.",
+      "id": "app.better_craft.aurorapulse",
+      "license": "MIT",
       "runtime": "org.freedesktop.Platform",
       "runtimeVersion": "23.08",
       "sdk": "org.freedesktop.Sdk",
       "base": "org.electronjs.Electron2.BaseApp",
       "baseVersion": "23.08",
+      "branch": "stable",
       "finishArgs": [
         "--share=ipc",
         "--socket=x11",
@@ -123,7 +166,68 @@
         "--socket=pulseaudio",
         "--device=dri",
         "--share=network",
-        "--filesystem=home"
+        "--filesystem=xdg-music:ro",
+        "--filesystem=xdg-download:ro",
+        "--filesystem=xdg-documents:ro",
+        "--filesystem=/media:ro",
+        "--filesystem=/run/media:ro",
+        "--talk-name=org.freedesktop.Notifications",
+        "--talk-name=org.mpris.MediaPlayer2.*",
+        "--own-name=org.mpris.MediaPlayer2.AuroraPulse"
+      ],
+      "files": [
+        [
+          "flatpak/app.better_craft.aurorapulse.metainfo.xml",
+          "share/metainfo/app.better_craft.aurorapulse.metainfo.xml"
+        ],
+        [
+          "flatpak/icons/16x16/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/16x16/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/24x24/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/24x24/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/32x32/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/32x32/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/48x48/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/48x48/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/64x64/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/64x64/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/96x96/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/96x96/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/128x128/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/128x128/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/192x192/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/192x192/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/256x256/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/256x256/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/384x384/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/384x384/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/512x512/app.better_craft.aurorapulse.png",
+          "share/icons/hicolor/512x512/apps/app.better_craft.aurorapulse.png"
+        ],
+        [
+          "flatpak/icons/scalable/apps/app.better_craft.aurorapulse.svg",
+          "share/icons/hicolor/scalable/apps/app.better_craft.aurorapulse.svg"
+        ]
       ]
     },
     "directories": {

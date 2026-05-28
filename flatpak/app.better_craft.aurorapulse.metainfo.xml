@@ -2,9 +2,16 @@
 <component type="desktop-application">
   <id>app.better_craft.aurorapulse</id>
   <name>Aurora Pulse</name>
-  <summary>A local-first music player with DLNA streaming support</summary>
+  <summary>Local-first music player with DLNA streaming</summary>
+
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
+
+  <update_contact>support_AT_better-craft.app</update_contact>
+
+  <developer id="app.better_craft">
+    <name>better_craft</name>
+  </developer>
 
   <description>
     <p>
@@ -12,37 +19,101 @@
       personal music library front and center. It supports a wide range of audio formats
       including FLAC, MP3, AAC, OGG, WAV and more.
     </p>
-    <p>Features include:</p>
+    <p>Features:</p>
     <ul>
-      <li>Local library management with automatic metadata and cover art</li>
-      <li>DLNA/UPnP streaming to network renderers</li>
-      <li>Podcast support with discovery and subscriptions</li>
+      <li>Local library management with automatic metadata and embedded cover art</li>
+      <li>DLNA/UPnP streaming to network renderers (speakers, AVRs, smart TVs)</li>
+      <li>Podcast discovery, subscriptions and downloads</li>
       <li>Gapless playback and crossfade</li>
-      <li>CD ripping and DAP synchronization</li>
-      <li>Light and dark themes</li>
+      <li>CD ripping and Digital Audio Player (DAP) synchronization</li>
+      <li>MPRIS integration for desktop media keys</li>
+      <li>Light and dark themes, fully keyboard navigable</li>
     </ul>
+    <p>
+      Aurora Pulse is local-first: your library, listening history and settings stay on
+      your device. No account required, no telemetry.
+    </p>
   </description>
 
   <launchable type="desktop-id">app.better_craft.aurorapulse.desktop</launchable>
 
+  <icon type="stock">app.better_craft.aurorapulse</icon>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Music</category>
+    <category>Player</category>
+  </categories>
+
+  <keywords>
+    <keyword>music</keyword>
+    <keyword>player</keyword>
+    <keyword>audio</keyword>
+    <keyword>flac</keyword>
+    <keyword>mp3</keyword>
+    <keyword>podcast</keyword>
+    <keyword>dlna</keyword>
+    <keyword>upnp</keyword>
+    <keyword>streaming</keyword>
+    <keyword>library</keyword>
+  </keywords>
+
   <url type="homepage">https://github.com/galdo/aurora</url>
   <url type="bugtracker">https://github.com/galdo/aurora/issues</url>
-
-  <developer id="app.better_craft">
-    <name>better_craft</name>
-  </developer>
+  <url type="vcs-browser">https://github.com/galdo/aurora</url>
+  <url type="help">https://github.com/galdo/aurora/blob/main/aurora-pulse-launcher-manual.md</url>
+  <url type="donation">https://github.com/sponsors/galdo</url>
 
   <screenshots>
     <screenshot type="default">
       <caption>Main interface showing the music library</caption>
       <image>https://raw.githubusercontent.com/galdo/aurora/main/docs/images/screenshot-main-ui.png</image>
     </screenshot>
+    <screenshot>
+      <caption>Library browsing</caption>
+      <image>https://raw.githubusercontent.com/galdo/aurora/main/docs/images/placeholder-library.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Playback view</caption>
+      <image>https://raw.githubusercontent.com/galdo/aurora/main/docs/images/placeholder-playback.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Equalizer</caption>
+      <image>https://raw.githubusercontent.com/galdo/aurora/main/docs/images/placeholder-equalizer.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Podcast subscriptions</caption>
+      <image>https://raw.githubusercontent.com/galdo/aurora/main/docs/images/placeholder-podcasts.png</image>
+    </screenshot>
   </screenshots>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#5fb4ff</color>
+    <color type="primary" scheme_preference="dark">#1f3b66</color>
+  </branding>
 
   <releases>
     <release version="1.5.6" date="2026-05-17">
+      <url>https://github.com/galdo/aurora/releases/tag/v1.5.6</url>
       <description>
-        <p>Latest release with DLNA improvements and bug fixes.</p>
+        <p>DLNA streaming improvements and bug fixes.</p>
+        <ul>
+          <li>More reliable DLNA renderer discovery and command handling</li>
+          <li>Improved gapless playback for FLAC files</li>
+          <li>Smaller memory footprint while scanning large libraries</li>
+          <li>Various stability fixes</li>
+        </ul>
+      </description>
+    </release>
+    <release version="1.5.0" date="2026-04-02">
+      <description>
+        <p>Adds CD ripping, DAP synchronization and refreshed UI.</p>
+      </description>
+    </release>
+    <release version="1.3.0" date="2026-01-15">
+      <description>
+        <p>Podcast support, equalizer and crossfade.</p>
       </description>
     </release>
   </releases>
@@ -52,9 +123,16 @@
   <supports>
     <control>pointing</control>
     <control>keyboard</control>
+    <control>touch</control>
   </supports>
 
+  <recommends>
+    <display_length compare="ge">768</display_length>
+  </recommends>
+
   <requires>
-    <display_length compare="ge">900</display_length>
+    <display_length compare="ge">360</display_length>
+    <internet>offline-only</internet>
   </requires>
+
 </component>

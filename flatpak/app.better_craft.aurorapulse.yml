@@ -7,6 +7,14 @@ base-version: '23.08'
 command: aurora-pulse
 separate-locales: false
 
+# Ensures that the AppStream metadata coming from metainfo.xml is properly
+# compiled into /app/share/app-info, so software centers (GNOME Software,
+# KDE Discover, Flatpak's own UI) display the full metadata instead of
+# falling back to the app-id, default icon and "A flatpak application".
+build-options:
+  env:
+    APPSTREAM_COMPOSE: '1'
+
 finish-args:
   - --share=ipc
   - --socket=x11
@@ -23,31 +31,69 @@ finish-args:
   - --talk-name=org.mpris.MediaPlayer2.*
   - --own-name=org.mpris.MediaPlayer2.AuroraPulse
 
+cleanup:
+  - /share/man
+
 modules:
   - name: aurora-pulse
     buildsystem: simple
     build-commands:
+      # Install Electron app payload
       - install -d /app/lib/aurora-pulse
       - cp -r aurora-pulse-linux-x64/* /app/lib/aurora-pulse/
       - install -Dm755 aurora-pulse-wrapper.sh /app/bin/aurora-pulse
-      - install -Dm644 app.better_craft.aurorapulse.desktop /app/share/applications/app.better_craft.aurorapulse.desktop
-      - install -Dm644 app.better_craft.aurorapulse.metainfo.xml /app/share/metainfo/app.better_craft.aurorapulse.metainfo.xml
-      - install -Dm644 icons/256x256/app.better_craft.aurorapulse.png /app/share/icons/hicolor/256x256/apps/app.better_craft.aurorapulse.png
-      - install -Dm644 icons/128x128/app.better_craft.aurorapulse.png /app/share/icons/hicolor/128x128/apps/app.better_craft.aurorapulse.png
-      - install -Dm644 icons/64x64/app.better_craft.aurorapulse.png /app/share/icons/hicolor/64x64/apps/app.better_craft.aurorapulse.png
+
+      # Install desktop file + AppStream metainfo
+      - install -Dm644 app.better_craft.aurorapulse.desktop
+        /app/share/applications/app.better_craft.aurorapulse.desktop
+      - install -Dm644 app.better_craft.aurorapulse.metainfo.xml
+        /app/share/metainfo/app.better_craft.aurorapulse.metainfo.xml
+
+      # Install icons in every hicolor size that is shipped in flatpak/icons/.
+      # The icons are pre-rendered from assets/icons/icon-squircle.png by
+      # flatpak/scripts/generate-icons.sh — they already include the rounded
+      # / squircle shape because GNOME and KDE do NOT apply an icon mask
+      # themselves. The shape has to live inside the PNG/SVG.
+      - |
+        for size in 16 24 32 48 64 96 128 192 256 384 512; do
+          src="icons/${size}x${size}/app.better_craft.aurorapulse.png"
+          if [ -f "$src" ]; then
+            install -Dm644 "$src" \
+              "/app/share/icons/hicolor/${size}x${size}/apps/app.better_craft.aurorapulse.png"
+          fi
+        done
+
+      # Scalable SVG (best result on HiDPI displays — GNOME and KDE prefer
+      # this when present)
+      - install -Dm644 icons/scalable/apps/app.better_craft.aurorapulse.svg
+        /app/share/icons/hicolor/scalable/apps/app.better_craft.aurorapulse.svg
+
+      # Validate metadata so a broken release can never reach users
+      - desktop-file-validate
+        /app/share/applications/app.better_craft.aurorapulse.desktop
+      - appstream-util validate-relax --nonet
+        /app/share/metainfo/app.better_craft.aurorapulse.metainfo.xml
+
     sources:
-      # Update this URL and sha256 for each release
+      # Update url + sha256 for each release. Use the tagged release tarball
+      # (NOT a git branch) so software centers do not display "Version master".
       - type: archive
         url: https://github.com/galdo/aurora/releases/download/v1.5.6/Aurora-Pulse-1.5.6-linux-x64.tar.gz
         sha256: REPLACE_WITH_ACTUAL_SHA256
         dest: aurora-pulse-linux-x64
+
       - type: file
         path: app.better_craft.aurorapulse.desktop
+
       - type: file
         path: app.better_craft.aurorapulse.metainfo.xml
+
+      # The whole icons/ tree is bundled as-is so the build commands above
+      # can iterate over whatever sizes were rendered by generate-icons.sh.
       - type: dir
         path: icons
         dest: icons
+
       - type: script
         dest-filename: aurora-pulse-wrapper.sh
         commands:

@@ -260,7 +260,16 @@ jobs:
       - name: Install flatpak toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder
+          # imagemagick is needed by flatpak/scripts/generate-icons.sh
+          # to render the rounded squircle icon into all hicolor sizes.
+          # appstream-util + desktop-file-utils give us metadata
+          # validation, so a broken release can never reach Flathub.
+          sudo apt-get install -y \
+            flatpak \
+            flatpak-builder \
+            imagemagick \
+            appstream-util \
+            desktop-file-utils
 
       - name: Configure flathub remote
         run: sudo flatpak --system remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo

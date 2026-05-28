@@ -1,12 +1,17 @@
 [Desktop Entry]
+Version=1.0
+Type=Application
 Name=Aurora Pulse
 GenericName=Music Player
-Comment=A local-first music player with DLNA streaming support
+GenericName[de]=Musikwiedergabe
+Comment=Local-first music player with DLNA streaming
+Comment[de]=Lokaler Musikplayer mit DLNA-Streaming
 Exec=aurora-pulse %U
 Icon=app.better_craft.aurorapulse
-Type=Application
 Terminal=false
-Categories=Audio;Music;Player;AudioVideo;
-MimeType=audio/mpeg;audio/flac;audio/ogg;audio/wav;audio/x-wav;audio/mp4;audio/aac;audio/x-aiff;audio/x-m4a;
+StartupNotify=true
 StartupWMClass=Aurora Pulse
-Keywords=music;player;audio;local;flac;streaming;dlna;
+Categories=AudioVideo;Audio;Music;Player;
+Keywords=music;player;audio;local;flac;mp3;podcast;dlna;upnp;streaming;library;
+MimeType=audio/mpeg;audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/wav;audio/x-wav;audio/mp4;audio/aac;audio/x-aiff;audio/x-m4a;audio/x-ms-wma;audio/opus;application/ogg;application/x-cd-image;
+X-GNOME-UsesNotifications=true
