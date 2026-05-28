@@ -151,7 +151,7 @@
       }
     },
     "flatpak": {
-      "license": "MIT",
+      "license": "LICENSE",
       "runtime": "org.freedesktop.Platform",
       "runtimeVersion": "23.08",
       "sdk": "org.freedesktop.Sdk",
