@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.7-beta1] - 2026-05-28
+
+Hotfix-Beta for #62 — slow startup on legacy / lossy-format libraries.
+
+### Fixed
+- **Library sync fast-path now triggers reliably for all formats and legacy databases** (#62). The Phase-3 in-memory fast-path used to require the persisted track row to carry at least one `audio_*` extra (sample rate, bit depth, codec, …) before it would skip a re-parse. That gate had two side-effects we hadn't anticipated:
+  1. Libraries first imported before the `audio_codec` / `audio_file_type` fields existed (early 1.5.x and earlier) never qualified — every startup re-parsed every file from disk, even when `mtime + size` already proved nothing had changed.
+  2. The same gate accidentally penalized lossy formats (MP3, AAC, Opus, …) on user setups where the audio details had simply never been back-filled.
+  Combined with a slow USB drive that's exactly the ~5-minute startup the issue describes. The fast-path now relies solely on `mtime + size + known album grouping`, which is structurally sufficient: if a file on disk is byte-for-byte identical to what we last indexed, none of the `audio_*` extras can have changed either. The full re-scan still kicks in for genuinely new or modified files.
+
+### Diagnostics
+- **Sync profiling summary now ships in production logs.** `[Aurora] library sync done in <ms> ms — files=…, fastPathHits=… (xx %), inMemoryHits=…, regroupFallbacks=…, probeMap=… entries (built in … ms), metadataReadMs=…` is emitted via `console.info` after every sync. This makes it possible to triage performance regressions from a user log without having to ask them to start Aurora with `DEBUG=…` flags. The detailed per-phase breakdown remains available via `debug(aurora:provider:media_local:*)` for engineering.
+
 ## [1.5.6] - 2026-05-21
 
 Stable release consolidating the 1.5.6-beta1 … 1.5.6-beta6 series.

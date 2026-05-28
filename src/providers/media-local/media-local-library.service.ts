@@ -300,6 +300,25 @@ class MediaLocalLibraryService implements IMediaLibraryService {
           // skip it so the walker takes the full-scan path for this track.
           return;
         }
+        // Hotfix v1.5.7 (#62): the fast-path used to require at least one
+        // `audio_*` extra field to be present on the track row. That gate
+        // was meant to catch tracks from very old syncs that pre-date the
+        // metadata-write code, but it had two unintended side-effects:
+        //
+        //   1. Any user whose library was first imported before the
+        //      `audio_codec` / `audio_file_type` fields were introduced
+        //      would never qualify — every startup re-parsed every file,
+        //      even though `mtime + size` already prove the file is
+        //      unchanged. On large MP3 libraries on slow USB drives this
+        //      manifested as the dreaded ~5-minute startup that #62
+        //      describes.
+        //   2. The gate was strictly an optimisation hint; the data the
+        //      fast-path actually needs is `mtime + size + a known album
+        //      grouping` — none of which depend on the audio_* extras.
+        //
+        // We still record `hasAudioDetails` on the probe so we can surface
+        // it in profiling stats, but it is no longer a precondition for
+        // taking the fast-path.
         const hasAudioDetails = [
           trackExtra.audio_sample_rate_hz,
           trackExtra.audio_bit_depth,
@@ -342,6 +361,39 @@ class MediaLocalLibraryService implements IMediaLibraryService {
   private logSyncProfilingStats(syncDurationMs: number): void {
     const stats = this.syncProfilingStats;
     const fileProcessedCount = Math.max(1, stats.filesProcessed);
+    const fastSkipPct = stats.filesProcessed > 0
+      ? Math.round((stats.filesFastSkipped / stats.filesProcessed) * 100)
+      : 0;
+
+    // Hotfix v1.5.7 (#62 / Option D): publish a single-line, production-visible
+    // summary of the most diagnostic counters. Before, the full breakdown only
+    // ever surfaced via `DEBUG=aurora:provider:media_local:* …`, which means
+    // user-facing performance regressions could go unnoticed for a full
+    // release cycle (as the #62 fast-path bypass did).
+    //
+    // This compact line is intentionally kept small enough to fit in any
+    // standard log inspector and gives us at a glance:
+    //   • total sync wall-clock time
+    //   • how many files were on disk
+    //   • how many of those took the fast-path (the key health metric —
+    //     for a no-change re-sync this should be ~100 %)
+    //   • how many fell into the regroup-fallback (catches the
+    //     compilations/grouping edge-case)
+    //   • probe-map size + build cost (catches DB scaling regressions)
+    //
+    // The full per-phase breakdown is still emitted via `debug(...)` for
+    // anyone running with the namespace enabled.
+    // eslint-disable-next-line no-console
+    console.info(
+      `[Aurora] library sync done in ${Math.round(syncDurationMs)} ms — `
+      + `files=${stats.filesProcessed}, `
+      + `fastPathHits=${stats.filesFastSkipped} (${fastSkipPct}%), `
+      + `inMemoryHits=${stats.fastPathInMemoryHits}, `
+      + `regroupFallbacks=${stats.fastPathRegroupFallbacks}, `
+      + `probeMap=${stats.probeMapEntries} entries (built in ${Math.round(stats.probeMapBuildMs)} ms), `
+      + `metadataReadMs=${Math.round(stats.metadataReadMs)}`,
+    );
+
     debug(
       'syncMediaTracks - profiling summary - totalMs=%d, directoryReadMs=%d, queueDrainMs=%d, relationFlushMs=%d, finishSyncMs=%d, reloadCollectionsMs=%d, postProcessingMs=%d, '
       + 'filesQueued=%d, filesProcessed=%d, filesFastSkipped=%d, fastPathProbeMs=%d, fastPathRegroupFallbacks=%d, metadataReadMs=%d, artistResolveMs=%d, albumUpsertMs=%d, '
@@ -866,10 +918,16 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       // probe so the existing fallback paths stay intact and behaviour
       // remains identical to pre-Phase-3 syncs.
       const existingProbe = this.existingTrackProbeByPath.get(file.path);
+      // Hotfix v1.5.7 (#62): the in-memory fast-path no longer requires the
+      // probe row to carry audio detail extras. mtime + size already prove
+      // the file on disk hasn't changed since the previous successful sync,
+      // and the persisted album/artist relations are independent of the
+      // audio_* fields. Keeping `hasAudioDetails` in the gating predicate
+      // forced every MP3 (or any other format whose metadata pre-dates the
+      // current schema) through the full-scan path on every startup.
       if (existingProbe
         && existingProbe.fileMtime === fileMtime
-        && existingProbe.fileSize === fileSize
-        && existingProbe.hasAudioDetails) {
+        && existingProbe.fileSize === fileSize) {
         const expectedGroupingFolder = this.getEffectiveGroupingFolder(file.path, !!settings.library.group_compilations_by_folder);
         const expectedSourceFingerprint = CryptoService.sha256(expectedGroupingFolder);
         const fingerprintMatches = existingProbe.albumSourceFingerprint === expectedSourceFingerprint;
@@ -936,28 +994,17 @@ class MediaLocalLibraryService implements IMediaLibraryService {
       this.syncProfilingStats.fastPathProbeMs += performance.now() - fastPathProbeStart;
 
       if (mediaTrack) {
-        const mediaTrackExtra = (mediaTrack.extra || {}) as {
-          audio_sample_rate_hz?: number;
-          audio_bit_depth?: number;
-          audio_bitrate_kbps?: number;
-          audio_codec?: string;
-          audio_file_type?: string;
-        };
-        const hasAudioDetails = [
-          mediaTrackExtra.audio_sample_rate_hz,
-          mediaTrackExtra.audio_bit_depth,
-          mediaTrackExtra.audio_bitrate_kbps,
-          mediaTrackExtra.audio_codec,
-          mediaTrackExtra.audio_file_type,
-        ].some(value => !!value);
+        // Hotfix v1.5.7 (#62): same rationale as for the in-memory probe —
+        // mtime + size already prove the on-disk file is unchanged, so the
+        // mere absence of audio_* extras is no longer a reason to throw the
+        // user back into a full re-scan. The audio_* fields will get
+        // back-filled the next time the track is genuinely new or modified.
         const expectedGroupingFolder = this.getEffectiveGroupingFolder(file.path, !!settings.library.group_compilations_by_folder);
         const expectedSourceFingerprint = CryptoService.sha256(expectedGroupingFolder);
         const currentSourceFingerprint = String((mediaTrack.track_album.extra as any)?.source_fingerprint || '').trim();
         const shouldForceRegroup = currentSourceFingerprint !== expectedSourceFingerprint;
 
-        if (!hasAudioDetails) {
-          debug('addTrackFromFile - track %s missing audio detail fields, falling back to full scan', file.path);
-        } else if (shouldForceRegroup) {
+        if (shouldForceRegroup) {
           this.syncProfilingStats.fastPathRegroupFallbacks += 1;
           debug('addTrackFromFile - track %s requires regroup by source fingerprint, falling back to full scan', file.path);
         } else if (settings.library.group_compilations_by_folder) {
