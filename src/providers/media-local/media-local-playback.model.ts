@@ -934,7 +934,40 @@ export class MediaLocalPlayback implements IMediaPlayback {
     }
 
     const extension = path.extname(normalizedSource).toLowerCase();
-    return isAudioCdTrack && (extension === '.aiff' || extension === '.aif' || extension === '.aifc');
+    if (isAudioCdTrack && (extension === '.aiff' || extension === '.aif' || extension === '.aifc')) {
+      return true;
+    }
+    // ALAC (.m4a) is not natively decodable by Chromium's Web Audio API;
+    // fall back to WAV conversion so Howler can play it without format support.
+    if (extension === '.m4a') {
+      return MediaLocalPlayback.isAlacFile(sourcePath);
+    }
+    return false;
+  }
+
+  private static isAlacFile(sourcePath: string): boolean {
+    try {
+      const fd = fs.openSync(sourcePath, 'r');
+      // Read enough bytes to reach the ftyp box and the first codec atom.
+      // A minimal MP4 ftyp box starts at byte 4 with 'ftyp'; brand follows at byte 8.
+      // ALAC files carry brand 'M4A ' or 'mp42' and an 'alac' codec box later.
+      // We probe 512 bytes which covers virtually all real-world M4A headers.
+      const buf = Buffer.alloc(512);
+      const bytesRead = fs.readSync(fd, buf, 0, 512, 0);
+      fs.closeSync(fd);
+      if (bytesRead < 12) {
+        return false;
+      }
+      // Search the first 512 bytes for the 4-byte 'alac' marker (codec atom).
+      for (let i = 0; i <= bytesRead - 4; i += 1) {
+        if (buf[i] === 0x61 && buf[i + 1] === 0x6c && buf[i + 2] === 0x61 && buf[i + 3] === 0x63) {
+          return true;
+        }
+      }
+      return false;
+    } catch (_err) {
+      return false;
+    }
   }
 
   private shouldUseNativeBitPerfectDsd(sourcePath: string): boolean {

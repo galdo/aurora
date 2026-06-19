@@ -383,12 +383,26 @@ jobs:
           body: |
             ## Aurora Pulse ${{ needs.meta.outputs.version }}
 
-            Stable release. See the release notes below for functional changes.
+            Beta pre-release — adds ALAC (Apple Lossless) playback and ships rounded-corner icons for Linux and Windows. macOS builds are unchanged.
+
+            ### Added
+            - **ALAC (Apple Lossless / `.m4a`) playback.** Files encoded with the ALAC codec are now detected at play time via a lightweight 512-byte header probe and automatically converted to WAV before being handed to the audio engine. Metadata (title, album, cover art, sample rate, bit depth, …) was already parsed correctly by `music-metadata`; only Chromium's Web Audio pipeline needed the fallback. The converted WAV is cached so subsequent plays of the same file are instant. Plain AAC `.m4a` files are unaffected and continue to play natively.
+
+            ### Changed
+            - **Rounded-corner icon for Linux (GNOME / KDE / Flatpak).** GNOME and the Flatpak software-center renderer display application icons 1:1 from the PNG/SVG — no automatic icon mask is applied. All hicolor sizes in `flatpak/icons/` (16 × 16 through 1024 × 1024) are now rendered from `icon-squircle.png`, which has the rounded squircle shape baked in. The icon in GNOME Shell, KDE Plasma, GNOME Software, and KDE Discover now shows smooth, rounded corners instead of hard 90° edges.
+            - **Rounded-corner icon for Windows.** `assets/icons/icon.ico` is rebuilt from the same squircle master (7 sizes: 16 – 256 px, 32-bit RGBA). The rounded shape now appears in the Windows taskbar, Start menu, Alt-Tab switcher, and Explorer.
+
+            ### Notes for Linux users on the legacy app-id
+            If you installed an earlier `1.5.x` Flatpak from a GitHub Release (under `com.galdo.aurorapulse`), uninstall it before installing this build:
+            ```bash
+            flatpak uninstall --user com.galdo.aurorapulse
+            flatpak install --user AuroraPulse-linux-x86_64-${{ needs.meta.outputs.version }}.flatpak
+            ```
 
             ### Installation
             - **macOS:** Open the DMG, drag **Aurora Pulse** into Applications. If Gatekeeper blocks the first launch, right-click the app → **Open**.
             - **Windows:** Run the `.exe` installer. If SmartScreen appears, use **More info** → **Run anyway**.
-            - **Linux (Flatpak):** Install the `.flatpak` with your Flatpak UI or `flatpak install`.
+            - **Linux (Flatpak):** Install the `.flatpak` with your Flatpak UI or `flatpak install --user AuroraPulse-linux-x86_64-${{ needs.meta.outputs.version }}.flatpak`.
           files: |
             release/macos-arm64/*.dmg
             release/macos-arm64/*.zip

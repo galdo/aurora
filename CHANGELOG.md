@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.7-beta3] - 2026-06-19
+
+### Added
+- **ALAC (Apple Lossless) playback support.** `.m4a` files encoded with the ALAC codec are now detected via a lightweight header probe and automatically converted to WAV at play time (reusing the existing Audio-CD conversion pipeline). Metadata parsing (title, album, cover art, sample rate, bit depth, …) already worked before via `music-metadata`; only the Chromium Web Audio decode path needed the fallback. The conversion is cached, so subsequent plays of the same file are instant.
+
 ## [1.5.7-beta1] - 2026-05-28
 
 Hotfix-Beta for #62 — slow startup on legacy / lossy-format libraries.
